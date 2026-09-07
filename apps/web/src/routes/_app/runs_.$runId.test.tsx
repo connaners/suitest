@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory, createRouter } from "@tanstack/react-router";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -242,5 +243,66 @@ describe("RunDetailPage", () => {
       expect(refs.artifactsCallCount.value).toBeGreaterThan(beforeArtifacts);
       expect(refs.stepsCallCount.value).toBeGreaterThan(beforeSteps);
     });
+  });
+
+  it("rerun_button_disabled_while_run_is_live", async () => {
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+    expect(screen.getByTestId("run-rerun-button")).toBeDisabled();
+  });
+
+  it("rerun_button_posts_and_navigates_to_the_new_run", async () => {
+    let rerunCalls = 0;
+    server.use(
+      http.get(`*/api/v1/runs/${RUN_ID}`, () =>
+        HttpResponse.json({
+          id: RUN_ID,
+          public_id: "RUN-1001",
+          project_id: "prj_demo",
+          name: "Checkout flow rejects expired cards",
+          branch: "main",
+          commit_sha: "abcd123",
+          env: "staging",
+          status: "FAIL",
+          trigger: "MANUAL",
+          tier_at_runtime: "ZERO",
+          started_at: "2026-05-27T10:00:00Z",
+          completed_at: "2026-05-27T10:00:30Z",
+          duration_ms: 30000,
+          summary: { total_steps: 4, passed_steps: 3, failed_steps: 1, duration_ms: 30000 },
+          created_at: "2026-05-27T10:00:00Z",
+          updated_at: "2026-05-27T10:00:30Z",
+        }),
+      ),
+      http.post(`*/api/v1/runs/${RUN_ID}/rerun`, () => {
+        rerunCalls += 1;
+        return HttpResponse.json(
+          { id: "run_RUN-502", public_id: "RUN-502", status: "QUEUED" },
+          { status: 200 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderRunDetail();
+    // The button renders disabled while the run query is in flight — wait for
+    // the FAIL run data to enable it, then click.
+    const rerunButton = await screen.findByTestId("run-rerun-button", undefined, {
+      timeout: 3000,
+    });
+    await waitFor(() => expect(rerunButton).not.toBeDisabled());
+    await user.click(rerunButton);
+    await waitFor(() => expect(rerunCalls).toBe(1));
+  });
+
+  it("shows_edit_cases_link_and_per_case_edit_link", async () => {
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+
+    expect(screen.getByTestId("run-edit-cases-link")).toHaveAttribute("href", "/cases");
+
+    // The failing case is auto-selected → its detail carries an Edit case link.
+    const detail = await screen.findByTestId("case-detail");
+    const editLink = within(detail).getByTestId("case-edit-link");
+    expect(editLink).toHaveAttribute("href", "/cases?case=TC-102");
   });
 });
