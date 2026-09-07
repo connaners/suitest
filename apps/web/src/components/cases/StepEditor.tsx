@@ -137,41 +137,6 @@ export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): R
   const [repairStep, setRepairStep] = useState<DraftStep | null>(null);
 
   // ------------------------------------------------------------------
-  // POST /test-cases/:id/steps — append a blank step
-  // ------------------------------------------------------------------
-  const addStepMutation = useMutation({
-    mutationFn: async () => {
-      const payload = {
-        action: "",
-        expected: "",
-        code: null,
-        mcpProvider: "playwright-mcp",
-        targetKind: "FE_WEB" as TargetKind,
-      };
-      const res = await api.post<TestCaseDetail>(`/test-cases/${caseId}/steps`, payload);
-      return res.data;
-    },
-    onSuccess: (detail) => {
-      const newSteps: DraftStep[] = (detail.steps ?? []).map((s) => ({
-        id: s.id,
-        order: s.order,
-        action: s.action,
-        expected: s.expected,
-        code: s.code ?? null,
-        mcp_provider: s.mcp_provider,
-        target_kind: s.target_kind,
-      }));
-      onStepsChange(newSteps);
-      void queryClient.invalidateQueries({ queryKey: ["test-cases", caseId] });
-      setError(null);
-    },
-    onError: (err: unknown) => {
-      const msg = err instanceof Error ? err.message : "Failed to add step";
-      setError(msg);
-    },
-  });
-
-  // ------------------------------------------------------------------
   // PATCH /test-cases/:id/steps — bulk replace (save edits / remove)
   // ------------------------------------------------------------------
   const replaceStepsMutation = useMutation({
@@ -324,7 +289,7 @@ export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): R
   );
 
   const saving =
-    replaceStepsMutation.isPending || addStepMutation.isPending || reorderMutation.isPending;
+    replaceStepsMutation.isPending || reorderMutation.isPending;
 
   // Only persisted steps can participate in drag (no unpersisted drafts)
   const sortableIds = persistedStepIds(steps);
@@ -348,9 +313,20 @@ export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): R
             type="button"
             size="sm"
             data-testid="step-add-btn"
-            disabled={saving}
             onClick={() => {
-              addStepMutation.mutate();
+              // Client-side draft: no API call until "Save steps". The
+              // "__new__" id prefix marks it as unpersisted (drag-disabled,
+              // replaced wholesale by the PATCH on save).
+              const draft: DraftStep = {
+                id: `__new__${crypto.randomUUID()}`,
+                order: steps.length + 1,
+                action: "",
+                expected: "",
+                code: null,
+                mcp_provider: "playwright-mcp",
+                target_kind: "FE_WEB",
+              };
+              onStepsChange([...steps, draft]);
             }}
           >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />

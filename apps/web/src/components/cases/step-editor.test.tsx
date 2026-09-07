@@ -173,47 +173,34 @@ describe("StepEditor", () => {
   });
 
   // --------------------------------------------------------------------------
-  // AC-2: + New step calls POST /test-cases/:id/steps
-  // --------------------------------------------------------------------------
-  it("clicking + New step calls POST and adds a row", async () => {
+  // AC-2: "+ New step" appends a client-side draft row (no POST) — the
+  // draft is persisted by "Save steps" (PATCH bulk replace).
+  it("clicking + New step appends a local draft row without POST", async () => {
     const user = userEvent.setup();
     let postCalled = false;
 
     server.use(
       http.post("*/api/v1/test-cases/:caseId/steps", () => {
         postCalled = true;
-        return HttpResponse.json(
-          {
-            ...FULL_CASE_RESPONSE,
-            steps: [
-              ...FULL_CASE_RESPONSE.steps,
-              {
-                id: "stp_03",
-                case_id: `case_${CASE_ID}`,
-                order: 3,
-                action: "",
-                expected: "",
-                executable: true,
-                mcp_provider: "playwright-mcp",
-                target_kind: "FE_WEB",
-                code: null,
-                data: null,
-              },
-            ],
-          },
-          { status: 201 },
-        );
+        return HttpResponse.json({ detail: "should not be called" }, { status: 500 });
       }),
     );
 
-    const onStepsChange: (steps: DraftStep[]) => void = vi.fn();
-    renderEditor([STEP_1, STEP_2], onStepsChange);
+    const captured: DraftStep[][] = [];
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <StepEditorStateful initial={[STEP_1, STEP_2]} onCapture={(s) => captured.push(s)} />
+      </QueryClientProvider>,
+    );
 
     await user.click(screen.getByTestId("step-add-btn"));
 
-    await waitFor(() => {
-      expect(postCalled).toBe(true);
-    });
+    // A third draft row appears immediately, marked as unpersisted.
+    expect(screen.getAllByTestId("step-row")).toHaveLength(3);
+    expect(postCalled).toBe(false);
+    const last = captured.at(-1) ?? [];
+    expect(last[2]?.id.startsWith("__new__")).toBe(true);
+    expect(last[2]?.action).toBe("");
   });
 
   // --------------------------------------------------------------------------
