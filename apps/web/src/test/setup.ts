@@ -16,6 +16,32 @@ if (globalThis.window !== undefined) {
   globalThis.scroll = vi.fn();
 }
 
+// Some jsdom builds ship without a working localStorage (undefined at
+// runtime), which crashes every `zustand/persist` setState and any bare
+// `localStorage` access. Install a Map-backed shim ONLY when the real
+// storage is missing so real-browser behavior is untouched.
+if (typeof globalThis.localStorage === "undefined") {
+  const backing = new Map<string, string>();
+  const shim: Storage = {
+    get length(): number {
+      return backing.size;
+    },
+    clear: (): void => {
+      backing.clear();
+    },
+    getItem: (key: string): string | null => backing.get(key) ?? null,
+    key: (index: number): string | null => [...backing.keys()][index] ?? null,
+    removeItem: (key: string): void => {
+      backing.delete(key);
+    },
+    setItem: (key: string, value: string): void => {
+      backing.set(key, value);
+    },
+  };
+  globalThis.localStorage = shim;
+  globalThis.sessionStorage = shim;
+}
+
 // jsdom has no ImageData constructor, but the screenshot-diff math (M12-1)
 // constructs `new ImageData(...)`. Provide a minimal polyfill covering both
 // real overloads — `new ImageData(width, height)` allocates a zeroed array,

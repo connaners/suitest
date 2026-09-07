@@ -16,6 +16,8 @@ import { Suspense } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DashboardSkeleton } from "@/components/dashboard/skeleton";
+import { OnboardingCard } from "@/components/dashboard/OnboardingCard";
+import { FirstProjectBootstrap } from "@/components/shared/FirstProjectBootstrap";
 import { PassRateChart } from "@/components/dashboard/PassRateChart";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
@@ -33,6 +35,7 @@ import {
   useRecentRuns,
 } from "@/hooks/use-dashboard";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { useActiveProject } from "@/stores/use-active-project";
 import type { components } from "@/lib/api-types";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
@@ -314,9 +317,17 @@ function DashboardError({ reset }: { reset: () => void }): React.ReactElement {
 }
 
 function DashboardBody(): React.ReactElement {
+  const projectId = useActiveProject((s) => s.projectId);
+  // Project-scoped analytics 422 without a projectId — a fresh workspace
+  // would dead-end on the ErrorBoundary. Bootstrap the first project instead
+  // of rendering widgets that can never resolve.
+  if (projectId === null) {
+    return <FirstProjectBootstrap />;
+  }
   return (
     <Suspense fallback={<DashboardSkeleton />}>
       <div className="flex flex-col gap-[18px]">
+        <OnboardingCard />
         <KpiSection />
         <div className="grid grid-cols-2 gap-[18px]">
           <PassRateCard />

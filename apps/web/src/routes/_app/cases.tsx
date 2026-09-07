@@ -17,7 +17,6 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useTranslation } from "react-i18next";
 
 import { CreateCaseDialog } from "@/components/cases/CreateCaseDialog";
-import { CreateProjectDialog } from "@/components/cases/CreateProjectDialog";
 import { CreateSuiteDialog } from "@/components/cases/CreateSuiteDialog";
 import { ExportUatDialog } from "@/components/cases/ExportUatDialog";
 import { GenerateModal } from "@/components/cases/GenerateModal";
@@ -34,6 +33,7 @@ import { AgentInsightCallout } from "@/components/shared/AgentInsightCallout";
 import { DisabledTooltip } from "@/components/shared/DisabledTooltip";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
+import { FirstProjectBootstrap } from "@/components/shared/FirstProjectBootstrap";
 import { SourceDot } from "@/components/shared/SourceDot";
 import { SourcePill } from "@/components/shared/SourcePill";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -1671,35 +1671,6 @@ function CasesError({ reset }: { reset: () => void }): React.ReactElement {
   );
 }
 
-// First-project bootstrap (dogfood blocker #1). A fresh ZERO install has a
-// default workspace but no projects; every project-scoped query 422s without
-// an active project, so we short-circuit to a create-project prompt before any
-// data hook runs.
-function NoProjectBootstrap(): React.ReactElement {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <EmptyState
-        icon={FolderTree}
-        title="Create your first project"
-        subtitle="Projects hold your test suites and cases. Make one to start testing."
-        action={{
-          label: "New project",
-          variant: "default",
-          onClick: () => {
-            setOpen(true);
-          },
-        }}
-      />
-      <CreateProjectDialog
-        open={open}
-        onClose={() => {
-          setOpen(false);
-        }}
-      />
-    </>
-  );
-}
 
 // Hide the AI tab in ZERO via wrapper — leverages Gated for ergonomic
 // composition, so the CasesHeader doesn't have to know about capabilities.
@@ -1709,7 +1680,7 @@ function CasesContainer(): React.ReactElement {
     <section className="flex h-full min-h-0 flex-col gap-4" data-testid="cases-screen">
       <ErrorBoundary fallback={({ reset }) => <CasesError reset={reset} />}>
         <Suspense fallback={<CasesSkeleton />}>
-          {projectId === null ? <NoProjectBootstrap /> : <CasesBody />}
+          {projectId === null ? <FirstProjectBootstrap /> : <CasesBody />}
         </Suspense>
       </ErrorBoundary>
     </section>
