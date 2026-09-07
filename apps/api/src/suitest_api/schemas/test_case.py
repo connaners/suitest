@@ -209,13 +209,19 @@ class TestCaseUpdate(BaseModel):
 
 
 class StepReplace(BaseModel):
-    """Body for ``PATCH /test-cases/:id/steps`` — atomic replace."""
+    """Body for ``PATCH /test-cases/:id/steps`` — atomic replace.
+
+    Accepts the same shapes as the editor sends: a step whose ``action`` is
+    empty is a user draft (never executable) and is stored as-is. Running the
+    case re-runs the ZERO-tier strict check per step; a persisted draft simply
+    fails at run time unless it is filled in first.
+    """
 
     __test__ = False  # not a pytest test class
 
     model_config = _WRITE_CONFIG
 
-    steps: list[StepCreate] = Field(default_factory=list)
+    steps: list[StepAppend] = Field(default_factory=list)
 
 
 class StepReorderRequest(BaseModel):

@@ -8668,11 +8668,11 @@
       },
       "StepReplace": {
         "additionalProperties": false,
-        "description": "Body for ``PATCH /test-cases/:id/steps`` \u2014 atomic replace.",
+        "description": "Body for ``PATCH /test-cases/:id/steps`` \u2014 atomic replace.\n\nAccepts the same shapes as the editor sends: a step whose ``action`` is\nempty is a user draft (never executable) and is stored as-is. Running the\ncase re-runs the ZERO-tier strict check per step; a persisted draft simply\nfails at run time unless it is filled in first.",
         "properties": {
           "steps": {
             "items": {
-              "$ref": "#/components/schemas/StepCreate"
+              "$ref": "#/components/schemas/StepAppend"
             },
             "title": "Steps",
             "type": "array"
