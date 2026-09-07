@@ -463,8 +463,12 @@ async def get_test_case(
         # explicit check makes the contract obvious if the repo changes.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="test case not found")
     tier = await resolve_workspace_tier(request, session, ctx.workspace_id)
-    steps = await repo.get_steps(case_id)
-    tags = await repo.get_tags(case_id)
+    # ``case_id`` here may be the public id (``TC-1102``) resolved above via
+    # ``get_by_public_id``; steps and tags are keyed by the INTERNAL id, so
+    # re-key off ``case.id`` — using the raw path segment silently returned an
+    # empty list for any case addressed by public id.
+    steps = await repo.get_steps(case.id)
+    tags = await repo.get_tags(case.id)
     suite = await SuiteRepo(session).get_by_id(case.suite_id)
     effective_approach = (
         case.testing_approach
