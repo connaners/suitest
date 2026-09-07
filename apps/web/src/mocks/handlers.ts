@@ -220,6 +220,9 @@ export const handlers: HttpHandler[] = [
     }),
   ),
 
+  // Workspace API keys (M3) — empty by default; per-test overrides add keys.
+  http.get(`${BASE}/workspaces/:wsId/api-keys`, () => HttpResponse.json({ items: [] })),
+
   // Test cases
   http.get(`${BASE}/test-cases`, () => HttpResponse.json(cases)),
   http.get(`${BASE}/test-cases/:caseId`, ({ params }) => {

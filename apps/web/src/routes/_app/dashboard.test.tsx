@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "@/mocks/server";
 import { routeTree } from "@/routeTree.gen";
 import { CLOUD_CAPS, ZERO_CAPS, resetCaps, setCaps } from "@/test/capabilities";
+import { useActiveProject } from "@/stores/use-active-project";
 
 // Recharts doesn't play well with jsdom (ResponsiveContainer needs layout).
 // Stub the modules used by the dashboard chart so the lazy import resolves
@@ -34,6 +35,11 @@ const ME = {
   avatar_url: null,
   memberships: [],
 };
+
+function renderDashboardWithProject(projectId: string | null): void {
+  useActiveProject.setState({ projectId });
+  renderDashboard();
+}
 
 function meHandler() {
   return http.get("*/api/v1/auth/me", () => HttpResponse.json(ME));
@@ -60,15 +66,18 @@ describe("Dashboard screen", () => {
   beforeEach(() => {
     setCaps(ZERO_CAPS);
     server.use(meHandler());
-    vi.stubGlobal("location", {
-      pathname: "/dashboard",
-      assign: vi.fn(),
-      origin: "http://localhost",
-    });
+    // The dashboard gates on an active project (project-scoped analytics
+    // 422 without one). Production seeds it in `_app.beforeLoad`; tests
+    // seed the store directly.
+    useActiveProject.setState({ projectId: "prj_demo" });
   });
   afterEach(() => {
     resetCaps();
     vi.unstubAllGlobals();
+    useActiveProject.setState({ projectId: null });
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("suitest.onboardingDismissed");
+    }
   });
 
   it("renders the loading skeleton before data resolves", async () => {
@@ -151,5 +160,37 @@ describe("Dashboard screen", () => {
       },
       { timeout: 3000 },
     );
+  });
+
+  it("shows the first-project bootstrap instead of analytics when no project", async () => {
+    renderDashboardWithProject(null);
+    expect(
+      await screen.findByText(/Create your first project/i, undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-kpis")).not.toBeInTheDocument();
+  });
+
+  it("renders the onboarding checklist with pending steps when a project exists", async () => {
+    renderDashboardWithProject("prj_demo");
+    const card = await screen.findByTestId("onboarding-card", undefined, { timeout: 3000 });
+    expect(card).toHaveTextContent(/Get started/i);
+    // No cases / runs / keys in the default fixtures beyond the seeded
+    // project → case/run/api-key steps render as pending actions.
+    expect(screen.getByTestId("onboarding-step-project")).toHaveTextContent(/Create a project/);
+    expect(screen.getByTestId("onboarding-step-case")).toBeInTheDocument();
+    expect(screen.getByTestId("onboarding-step-run")).toBeInTheDocument();
+    expect(screen.getByTestId("onboarding-action-apikey")).toHaveAttribute(
+      "href",
+      "/settings?tab=api-keys",
+    );
+  });
+
+  it("hides the onboarding card after dismissal and persists it", async () => {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("suitest.onboardingDismissed", "1");
+    }
+    renderDashboardWithProject("prj_demo");
+    await screen.findByTestId("dashboard-kpis", undefined, { timeout: 3000 });
+    expect(screen.queryByTestId("onboarding-card")).not.toBeInTheDocument();
   });
 });

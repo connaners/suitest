@@ -17,6 +17,8 @@ import { useActiveWorkspace } from "@/stores/use-active-workspace";
 interface SettingsSearch {
   /** Set by the `_app` must_change_password guard to force the Account tab. */
   force_password?: string;
+  /** Deep-link support (e.g. the onboarding card opens the API Keys tab). */
+  tab?: string;
 }
 
 /** Roles allowed to see the Members tab (OWNER + ADMIN). */
@@ -36,6 +38,7 @@ function SettingsScreen(): React.ReactElement {
 
   const forcePassword = search.force_password === "1" || user.must_change_password === true;
   const showMembers = canSeeMembers(role);
+  const tab = search.tab;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -53,8 +56,7 @@ function SettingsScreen(): React.ReactElement {
           You must change your password before continuing.
         </div>
       ) : null}
-
-      <Tabs defaultValue="account">
+      <Tabs defaultValue="account" {...(tab !== undefined ? { value: tab } : {})}>
         <TabsList>
           <TabsTrigger value="account">Account</TabsTrigger>
           {showMembers ? <TabsTrigger value="members">Members</TabsTrigger> : null}
@@ -235,7 +237,11 @@ function AccountTab(): React.ReactElement {
 export const Route = createFileRoute("/_app/settings")({
   validateSearch: (search: Record<string, unknown>): SettingsSearch => {
     const force = search["force_password"];
-    return typeof force === "string" ? { force_password: force } : {};
+    const tab = search["tab"];
+    return {
+      ...(typeof force === "string" ? { force_password: force } : {}),
+      ...(typeof tab === "string" ? { tab } : {}),
+    };
   },
   component: SettingsScreen,
 });
