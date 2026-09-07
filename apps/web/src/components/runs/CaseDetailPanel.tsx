@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Camera, Download, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -113,6 +114,14 @@ export function CaseDetailPanel({
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={rollupToBadge(group.rollup)} label={rollupLabel(group.rollup)} />
           <span className="font-mono text-[11px] text-fg-5">{group.casePublicId}</span>
+          <Link
+            to="/cases"
+            search={{ case: group.casePublicId }}
+            className="rounded px-1.5 py-0.5 text-[11px] font-medium text-fg-3 underline-offset-2 hover:bg-bg-elev-2 hover:text-fg-1 hover:underline"
+            data-testid="case-edit-link"
+          >
+            Edit case
+          </Link>
           <span
             className="rounded bg-bg-elev-2 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-fg-4"
             data-testid="case-kind-badge"
