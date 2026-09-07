@@ -142,9 +142,18 @@ class StepCreate(BaseModel):
 
 
 class StepAppend(StepCreate):
-    """Body shape for ``POST /test-cases/:id/steps`` — ``order`` always ignored."""
+    """Body shape for ``POST /test-cases/:id/steps`` — ``order`` always ignored.
+
+    ``action`` MAY be empty here: the web StepEditor appends a blank draft
+    step for the user to fill in before saving. The ZERO-tier strict check
+    (``STEPS_REQUIRE_CODE_IN_ZERO_LLM``) still runs when the case is *run*,
+    and a full replace (PATCH) re-validates completeness — an empty step
+    just cannot be executed while it is still a draft.
+    """
 
     __test__ = False  # not a pytest test class
+
+    action: Annotated[str, Field(min_length=0)]
 
 
 class TestCaseCreate(BaseModel):

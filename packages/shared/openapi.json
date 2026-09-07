@@ -8510,10 +8510,10 @@
       },
       "StepAppend": {
         "additionalProperties": false,
-        "description": "Body shape for ``POST /test-cases/:id/steps`` \u2014 ``order`` always ignored.",
+        "description": "Body shape for ``POST /test-cases/:id/steps`` \u2014 ``order`` always ignored.\n\n``action`` MAY be empty here: the web StepEditor appends a blank draft\nstep for the user to fill in before saving. The ZERO-tier strict check\n(``STEPS_REQUIRE_CODE_IN_ZERO_LLM``) still runs when the case is *run*,\nand a full replace (PATCH) re-validates completeness \u2014 an empty step\njust cannot be executed while it is still a draft.",
         "properties": {
           "action": {
-            "minLength": 1,
+            "minLength": 0,
             "title": "Action",
             "type": "string"
           },
