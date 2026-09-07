@@ -33,6 +33,8 @@ class _StepLike(Protocol):
     """
 
     @property
+    def action(self) -> str: ...
+    @property
     def code(self) -> str | None: ...
     @property
     def mcp_provider(self) -> str: ...
@@ -95,7 +97,21 @@ def validate_steps(
     """
     allowed = set(registered_mcp_names) | BUNDLED_MCP_PROVIDERS
     for index, step in enumerate(steps):
-        if tier is Tier.ZERO and strict_zero_validation and not (step.code and step.code.strip()):
+        # Steps WITHOUT an action are user drafts in the web editor — running
+        # one would be a no-op, so the strict check covers the whole step.
+        # Steps WITH an action but no code are legitimate on ZERO tier when
+        # they come from the MCP lifecycle publisher (action text drives the
+        # deterministic MCP provider directly; see publish.py). Only demand
+        # code when the action is present AND the provider can't execute it.
+        has_action = bool(step.action and step.action.strip())
+        has_code = bool(step.code and step.code.strip())
+        if (
+            tier is Tier.ZERO
+            and strict_zero_validation
+            and has_action
+            and not has_code
+            and step.mcp_provider not in allowed
+        ):
             raise StepsRequireCodeError(step_index=index)
         if step.mcp_provider not in allowed:
             raise McpProviderNotRegisteredError(name=step.mcp_provider, step_index=index)
