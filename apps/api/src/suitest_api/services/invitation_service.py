@@ -36,6 +36,31 @@ class InvitationNotFoundError(InvitationError):
     """Invite/token not found or inactive."""
 
 
+class InvitationEmailMismatchError(InvitationError):
+    """Accepting requires the invited email — the link is personal."""
+
+
+@dataclass(frozen=True)
+class InvitationLink:
+    invitation: Invitation
+    raw_token: str
+    link: str
+
+
+@dataclass(frozen=True)
+class AcceptOutcome:
+    """Result of accepting an invitation."""
+
+    user: User
+    """The account the invitation resolved to."""
+
+    issues_session: bool
+    """True when the caller authenticated as this user now (fresh account or
+    claimed placeholder) — a session cookie may be issued. False when the
+    email already belongs to an active account: the invitee must sign in with
+    their existing credentials instead."""
+
+
 def hash_token(token: str) -> str:
     """Return SHA-256 hex digest for a bearer token."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -44,13 +69,6 @@ def hash_token(token: str) -> str:
 def new_invite_token() -> str:
     """Generate a URL-safe invite token."""
     return secrets.token_urlsafe(32)
-
-
-@dataclass(frozen=True)
-class InvitationLink:
-    invitation: Invitation
-    raw_token: str
-    link: str
 
 
 class InvitationService:
@@ -119,11 +137,29 @@ class InvitationService:
         await self.repo.resend(invitation, token_hash=hash_token(token), ttl_hours=self.ttl_hours)
         return InvitationLink(invitation=invitation, raw_token=token, link=self._link(token))
 
-    async def accept(self, *, token: str, name: str, password: str) -> User:
+    async def accept(self, *, token: str, email: str, name: str, password: str) -> AcceptOutcome:
+        """Accept a personal invitation.
+
+        ``email`` must equal the invited address: the link is personal, and
+        the account it creates/claims is keyed to that address. Without this
+        check anyone holding a forwarded link could register (or take over)
+        as the invitee — the reported "B ends up recorded as A" incident.
+
+        An active account for that email is NEVER modified here (no password
+        reset, no activation): accepting links you to the workspace, it does
+        not prove you own the account. Only a fresh account or an inactive
+        placeholder (created by direct member add, unusable ``!``-prefixed
+        hash) may be claimed with the link's password.
+        """
         invitation = await self.validate_token(token)
+        normalized = email.strip().lower()
+        if normalized != invitation.email.lower():
+            raise InvitationEmailMismatchError
+
         existing = await self.session.scalar(
             select(User).where(func.lower(User.email) == invitation.email.lower())
         )
+        placeholder = existing is not None and (not existing.is_active or not existing.is_verified)
         if existing is None:
             user = User(
                 id=uuid.uuid4(),
@@ -136,15 +172,21 @@ class InvitationService:
             )
             self.session.add(user)
             await self.session.flush()
-        else:
+            issues_session = True
+        elif placeholder:
             user = existing
-            if not user.is_active:
-                user.is_active = True
-            if not user.is_verified:
-                user.is_verified = True
-            if not user.hashed_password or user.hashed_password.startswith("!"):
-                user.hashed_password = PasswordHelper().hash(password)
-                user.must_change_password = False
+            user.is_active = True
+            user.is_verified = True
+            user.hashed_password = PasswordHelper().hash(password)
+            user.must_change_password = False
+            if not user.name:
+                user.name = name.strip()
+            issues_session = True
+        else:
+            # Active account: attach the membership, but require sign-in —
+            # accepting the invite must not reset or reactivate the account.
+            user = existing
+            issues_session = False
             if not user.name:
                 user.name = name.strip()
         membership = await self.memberships.get(invitation.workspace_id, user.id)
@@ -158,7 +200,7 @@ class InvitationService:
             )
         await self.repo.mark_accepted(invitation)
         await self.session.flush()
-        return user
+        return AcceptOutcome(user=user, issues_session=issues_session)
 
     def _link(self, token: str) -> str:
         return f"{self.web_url}/accept-invite?token={token}"

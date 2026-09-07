@@ -160,7 +160,7 @@ Surfaces tier + autonomy + MCP + embeddings state. **No auth required** — fron
 | POST | `/api/v1/invitations/:id/revoke` | ADMIN/OWNER revokes invitation |
 | POST | `/api/v1/invitations/:id/resend` | ADMIN/OWNER rotates token and returns new raw link once |
 | GET | `/api/v1/invitations/validate?token=` | Public invite validation for `/accept-invite` |
-| POST | `/api/v1/auth/accept-invite` | Public accept invite; creates/activates user, membership, and session cookie |
+| POST | `/api/v1/auth/accept-invite` | Public accept invite; body requires `email` matching the invitation (personal, single-use link). Creates the invited account or claims an inactive placeholder and issues a session cookie. If the email already owns an active account, only the membership is attached (`requires_login: true`, no cookie) — the account itself is never modified |
 | POST | `/api/v1/admin/users/:userId/reset-password` | `is_superuser` only; returns one-time temporary password |
 | GET | `/api/v1/admin/password-reset-requests` | `is_superuser` only; lists encrypted reset links after decryption |
 

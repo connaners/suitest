@@ -15,6 +15,7 @@ from suitest_api.auth.db import get_async_session
 from suitest_api.auth.manager import auth_backend, current_active_user, get_jwt_strategy
 from suitest_api.services.invitation_service import (
     InvitationConflictError,
+    InvitationEmailMismatchError,
     InvitationForbiddenError,
     InvitationNotFoundError,
     InvitationService,
@@ -52,12 +53,19 @@ class InvitationValidateResponse(BaseModel):
 
 class AcceptInviteRequest(BaseModel):
     token: str = Field(min_length=1)
+    # The invited address. Accepting only works when this matches the
+    # invitation — the link is personal, not a shared signup link.
+    email: EmailStr
     name: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=8)
 
 
 class AcceptInviteResponse(BaseModel):
     ok: bool = True
+    # False when the invited email already owns an active account: the
+    # membership was attached, but the caller must sign in with their
+    # existing credentials (no session cookie is issued).
+    requires_login: bool = False
 
 
 def _service(session: AsyncSession) -> InvitationService:
@@ -210,8 +218,9 @@ async def accept_invitation(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     try:
-        user = await _service(session).accept(
+        outcome = await _service(session).accept(
             token=body.token,
+            email=body.email,
             name=body.name,
             password=body.password,
         )
@@ -219,13 +228,29 @@ async def accept_invitation(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="invite not found"
         ) from exc
+    except InvitationEmailMismatchError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This invitation was issued to a different email address.",
+        ) from exc
     await session.commit()
+    if not outcome.issues_session:
+        # The invited email already owns an active account. The membership is
+        # attached, but no session cookie is issued: the invitee signs in with
+        # their existing credentials. Never reset that account from a link.
+        return JSONResponse(
+            content=AcceptInviteResponse(ok=True, requires_login=True).model_dump(),
+            status_code=status.HTTP_200_OK,
+        )
     # FastAPI-Users' CookieTransport login yields a 204 carrying only the
     # Set-Cookie header. The accept-invite contract returns a JSON body
     # (``AcceptInviteResponse``) AND sets the session cookie, so build a 200
     # JSON response and graft the auth cookie onto it.
-    login_response = await auth_backend.login(get_jwt_strategy(), user)
-    response = JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
+    login_response = await auth_backend.login(get_jwt_strategy(), outcome.user)
+    response = JSONResponse(
+        content=AcceptInviteResponse(ok=True, requires_login=False).model_dump(),
+        status_code=status.HTTP_200_OK,
+    )
     for key, value in login_response.raw_headers:
         if key.lower() == b"set-cookie":
             response.raw_headers.append((key, value))

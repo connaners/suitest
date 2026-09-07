@@ -23,6 +23,9 @@ function messageForInviteError(error: unknown): string {
     if (error.code === "INVITATION_ACCEPTED") {
       return "This invitation link was already accepted.";
     }
+    if (error.status === 403) {
+      return "This invitation was issued to a different email address. Use the invited address, or ask your admin for a new invite.";
+    }
   }
   return "This invitation link is invalid.";
 }
@@ -32,6 +35,7 @@ function AcceptInvite(): React.ReactElement {
   const token = search.token ?? "";
   const [invite, setInvite] = useState<InvitationValidation | null>(null);
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -51,6 +55,7 @@ function AcceptInvite(): React.ReactElement {
         const data = await validateInvitation(token);
         if (active) {
           setInvite(data);
+          setEmail(data.email);
           setLoading(false);
         }
       } catch (err) {
@@ -73,8 +78,14 @@ function AcceptInvite(): React.ReactElement {
     setSubmitting(true);
     setError(null);
     try {
-      await acceptInvitation({ token, name, password });
-      window.location.assign("/dashboard");
+      const result = await acceptInvitation({ token, email, name, password });
+      if (result.requires_login) {
+        // The invited email already owns an active account — sign in with
+        // those existing credentials instead of the form password.
+        window.location.assign("/login?next=/dashboard");
+      } else {
+        window.location.assign("/dashboard");
+      }
     } catch (err) {
       setError(messageForInviteError(err));
       setSubmitting(false);
@@ -116,13 +127,32 @@ function AcceptInvite(): React.ReactElement {
                 <dd className="font-mono text-[12px] text-fg-1">{invite.role}</dd>
               </div>
             </dl>
-
             <form
               onSubmit={(event) => {
                 void onSubmit(event);
               }}
               className="space-y-4"
             >
+              <div className="space-y-2">
+                <label htmlFor="invite-email" className="text-[12.5px] font-medium text-fg-1">
+                  Email
+                </label>
+                <input
+                  id="invite-email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                  className="w-full rounded-md border border-border bg-bg-base px-3 py-2 text-[13px] text-fg-1 outline-none placeholder:text-fg-5 focus:border-accent"
+                  data-testid="accept-invite-email"
+                />
+                <p className="text-[11.5px] text-fg-4">
+                  Must match the invited address — this link is personal.
+                </p>
+              </div>
+
               <div className="space-y-2">
                 <label htmlFor="name" className="text-[12.5px] font-medium text-fg-1">
                   Name

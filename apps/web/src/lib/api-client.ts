@@ -861,8 +861,17 @@ export interface InvitationValidation {
 
 export interface AcceptInviteInput {
   token: string;
+  /** The invited address — must match the invitation (personal link). */
+  email: string;
   name: string;
   password: string;
+}
+
+export interface AcceptInviteResult {
+  ok: boolean;
+  /** True when the invited email already owns an active account: the
+   * membership was attached, but the caller must sign in instead. */
+  requires_login: boolean;
 }
 
 export async function validateInvitation(token: string): Promise<InvitationValidation> {
@@ -872,8 +881,9 @@ export async function validateInvitation(token: string): Promise<InvitationValid
   return res.data;
 }
 
-export async function acceptInvitation(input: AcceptInviteInput): Promise<void> {
-  await api.post("/auth/accept-invite", input);
+export async function acceptInvitation(input: AcceptInviteInput): Promise<AcceptInviteResult> {
+  const res = await api.post<AcceptInviteResult>("/auth/accept-invite", input);
+  return res.data;
 }
 
 // ---------------------------------------------------------------------------
