@@ -95,6 +95,10 @@ type Tab = "all" | "manual" | "ai" | "mcp" | "failing";
 
 const BULK_LIMIT = 100;
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
+// Splitter bounds for the cases list / detail master-detail layout.
+const LEFT_DEFAULT = 380;
+const LEFT_MIN = 280;
+const LEFT_MAX = 720;
 
 /** A case is "failing" when its last run ended in FAIL or ERROR. */
 function isFailing(c: Case): boolean {
@@ -331,7 +335,7 @@ function BulkActionBar({
     <div
       data-testid="bulk-action-bar"
       className={cn(
-        "z-10 flex shrink-0 items-center gap-3 border-t border-border bg-bg-elev-2 px-4 py-2",
+        "z-10 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-border bg-bg-elev-2 px-4 py-2",
         "shadow-[0_-2px_8px_rgba(0,0,0,.4)]",
       )}
     >
@@ -1385,6 +1389,18 @@ function CasesBody(): React.ReactElement {
   const [strategyDialogOpen, setStrategyDialogOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [approachFilter, setApproachFilter] = useState<TestingApproach | "">("");
+  // Draggable splitter: width of the left (list) pane in px. Persisted per
+  // session in localStorage so the layout survives reloads.
+  const [leftWidth, setLeftWidth] = useState(() => {
+    if (typeof localStorage !== "undefined") {
+      const raw = localStorage.getItem("suitest.casesLeftWidth");
+      const parsed = raw ? Number(raw) : NaN;
+      if (Number.isFinite(parsed) && parsed >= LEFT_MIN && parsed <= LEFT_MAX) {
+        return parsed;
+      }
+    }
+    return LEFT_DEFAULT;
+  });
 
   // GenerateModal state — `null` strategy = open at the target-select step;
   // a concrete strategy deep-links from the split-button dropdown.
@@ -1392,7 +1408,32 @@ function CasesBody(): React.ReactElement {
   const [generateStrategy, setGenerateStrategy] = useState<GeneratorStrategy | undefined>(
     undefined,
   );
-
+  // Splitter drag: track the pointer while resizing, clamp to bounds, and
+  // persist on release so the layout survives reloads.
+  const startResize = useCallback(
+    (down: React.PointerEvent<HTMLDivElement>) => {
+      down.preventDefault();
+      const startX = down.clientX;
+      const startWidth = leftWidth;
+      const onMove = (move: PointerEvent): void => {
+        const next = Math.min(LEFT_MAX, Math.max(LEFT_MIN, startWidth + (move.clientX - startX)));
+        setLeftWidth(next);
+      };
+      const onUp = (): void => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        setLeftWidth((final) => {
+          if (typeof localStorage !== "undefined") {
+            localStorage.setItem("suitest.casesLeftWidth", String(final));
+          }
+          return final;
+        });
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [leftWidth],
+  );
   const handleGenerate = useCallback((strategy?: GeneratorStrategy) => {
     setGenerateStrategy(strategy);
     setGenerateOpen(true);
@@ -1540,10 +1581,11 @@ function CasesBody(): React.ReactElement {
           }}
         />
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)] xl:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-1 gap-0" data-testid="cases-split-container">
           <aside
+            style={{ width: leftWidth, minWidth: LEFT_MIN, maxWidth: LEFT_MAX }}
             className={cn(
-              "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-bg-elev-1",
+              "flex min-h-0 shrink-0 flex-col overflow-hidden rounded-l-lg border border-border bg-bg-elev-1",
               "shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_16px_40px_-24px_rgba(0,0,0,0.9)]",
             )}
             data-testid="cases-left-pane"
@@ -1646,9 +1688,19 @@ function CasesBody(): React.ReactElement {
               onClear={handleClearSelection}
             />
           </aside>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize list and detail panes"
+            onPointerDown={startResize}
+            data-testid="cases-splitter"
+            className="group relative w-2 shrink-0 cursor-col-resize"
+          >
+            <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border group-hover:bg-accent/60" />
+          </div>
           <section
             className={cn(
-              "min-h-0 min-w-0 overflow-y-auto rounded-lg border border-border bg-bg-elev-1 p-5",
+              "min-h-0 min-w-0 flex-1 overflow-y-auto rounded-r-lg border border-l-0 border-border bg-bg-elev-1 p-5",
               "shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_16px_40px_-24px_rgba(0,0,0,0.9)]",
             )}
             data-testid="cases-right-pane"
