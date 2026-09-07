@@ -100,7 +100,12 @@ async def test_accept_invite_creates_user_membership_and_session(api_db: ApiDb) 
     async with public:
         accepted = await public.post(
             "/api/v1/auth/accept-invite",
-            json={"token": token, "name": "QA User", "password": "secret123"},
+            json={
+                "token": token,
+                "email": "qa@example.com",
+                "name": "QA User",
+                "password": "secret123",
+            },
         )
 
     assert accepted.status_code == 200
@@ -135,3 +140,82 @@ async def test_invite_rejects_existing_workspace_member(api_db: ApiDb) -> None:
         )
 
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_requires_matching_email(api_db: ApiDb) -> None:
+    """A forwarded link must not let B register as A: email must match."""
+    admin = await api_db.seed_user(email="admin@example.com", name="Admin")
+    ws = await api_db.seed_workspace(slug="acme", name="Acme")
+    await api_db.seed_membership(workspace_id=ws.id, user_id=admin.id, role=Role.ADMIN)
+    authed = await _client_for(api_db, admin)
+    async with authed:
+        created = await authed.post(
+            f"/api/v1/workspaces/{ws.id}/invitations",
+            json={"email": "alice@example.com", "role": "QA"},
+        )
+    token = created.json()["link"].split("token=", 1)[1]
+
+    public = await _client_for(api_db, None)
+    async with public:
+        response = await public.post(
+            "/api/v1/auth/accept-invite",
+            json={
+                "token": token,
+                "email": "bob@example.com",
+                "name": "Bob",
+                "password": "secret123",
+            },
+        )
+
+    assert response.status_code == 403
+    async with api_db.maker() as session:
+        assert await session.scalar(select(User).filter_by(email="bob@example.com")) is None
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_existing_active_account_requires_login(api_db: ApiDb) -> None:
+    """An active account is linked, never taken over: no reset, no session."""
+    admin = await api_db.seed_user(email="admin@example.com", name="Admin")
+    existing = await api_db.seed_user(email="alice@example.com", name="Alice")
+    ws = await api_db.seed_workspace(slug="acme", name="Acme")
+    await api_db.seed_membership(workspace_id=ws.id, user_id=admin.id, role=Role.ADMIN)
+    original_hash = existing.hashed_password
+    authed = await _client_for(api_db, admin)
+    async with authed:
+        created = await authed.post(
+            f"/api/v1/workspaces/{ws.id}/invitations",
+            json={"email": "alice@example.com", "role": "QA"},
+        )
+    token = created.json()["link"].split("token=", 1)[1]
+
+    public = await _client_for(api_db, None)
+    async with public:
+        response = await public.post(
+            "/api/v1/auth/accept-invite",
+            json={
+                "token": token,
+                "email": "alice@example.com",
+                "name": "Alice Hijacker",
+                "password": "attacker-pass",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requires_login"] is True
+    assert "set-cookie" not in response.headers
+    async with api_db.maker() as session:
+        user = await session.get(User, existing.id)
+        assert user is not None
+        # Password and name are untouched by the invite acceptance.
+        assert user.hashed_password == original_hash
+        assert user.name == "Alice"
+        assert user.is_active
+        membership = await session.scalar(
+            select(Membership).where(
+                Membership.workspace_id == ws.id, Membership.user_id == user.id
+            )
+        )
+        assert membership is not None
+        assert membership.role == Role.QA

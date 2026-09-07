@@ -75,7 +75,7 @@ describe("<AcceptInviteRoute>", () => {
     expect(screen.queryByRole("button", { name: /create account/i })).not.toBeInTheDocument();
   });
 
-  it("submits name and password, then redirects to dashboard", async () => {
+  it("submits matching email, name, and password, then redirects to dashboard", async () => {
     let acceptBody: unknown = null;
     server.use(
       http.get("*/api/v1/invitations/validate", () =>
@@ -88,13 +88,18 @@ describe("<AcceptInviteRoute>", () => {
       ),
       http.post("*/api/v1/auth/accept-invite", async ({ request }) => {
         acceptBody = await request.json();
-        return HttpResponse.json({ ok: true });
+        return HttpResponse.json({ ok: true, requires_login: false });
       }),
     );
 
     renderAcceptInvite("/accept-invite?token=abc123");
 
     const user = userEvent.setup();
+    // The email field comes prefilled from the public validate endpoint.
+    const emailInput = await screen.findByTestId("accept-invite-email");
+    expect(emailInput).toHaveValue("maya@example.test");
+    await user.clear(emailInput);
+    await user.type(emailInput, "maya@example.test");
     await user.type(await screen.findByRole("textbox", { name: /name/i }), "Maya Putri");
     await user.type(screen.getByLabelText(/^password$/i), "correct horse battery staple");
     await user.click(screen.getByRole("button", { name: /create account/i }));
@@ -102,11 +107,72 @@ describe("<AcceptInviteRoute>", () => {
     await waitFor(() => {
       expect(acceptBody).toEqual({
         token: "abc123",
+        email: "maya@example.test",
         name: "Maya Putri",
         password: "correct horse battery staple",
       });
       expect(window.location.assign).toHaveBeenCalledWith("/dashboard");
     });
+  });
+
+  it("redirects to login when the invite resolves to an existing account", async () => {
+    server.use(
+      http.get("*/api/v1/invitations/validate", () =>
+        HttpResponse.json({
+          email: "maya@example.test",
+          workspace_name: "Nusantara Retail",
+          role: "QA",
+          expires_at: "2026-06-07T10:00:00Z",
+        }),
+      ),
+      http.post("*/api/v1/auth/accept-invite", () =>
+        HttpResponse.json({ ok: true, requires_login: true }),
+      ),
+    );
+
+    renderAcceptInvite();
+
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: /name/i }), "Maya Putri");
+    await user.type(screen.getByLabelText(/^password$/i), "correct horse battery staple");
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => {
+      expect(window.location.assign).toHaveBeenCalledWith("/login?next=/dashboard");
+    });
+  });
+
+  it("surfaces a mismatch error when the submitted email differs from the invite", async () => {
+    server.use(
+      http.get("*/api/v1/invitations/validate", () =>
+        HttpResponse.json({
+          email: "maya@example.test",
+          workspace_name: "Nusantara Retail",
+          role: "QA",
+          expires_at: "2026-06-07T10:00:00Z",
+        }),
+      ),
+      http.post("*/api/v1/auth/accept-invite", () =>
+        HttpResponse.json(
+          { detail: "This invitation was issued to a different email address." },
+          { status: 403 },
+        ),
+      ),
+    );
+
+    renderAcceptInvite();
+
+    const user = userEvent.setup();
+    await user.clear(await screen.findByTestId("accept-invite-email"));
+    await user.type(screen.getByTestId("accept-invite-email"), "bob@example.test");
+    await user.type(await screen.findByRole("textbox", { name: /name/i }), "Bob");
+    await user.type(screen.getByLabelText(/^password$/i), "correct horse battery staple");
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+
+    expect(
+      await screen.findByText(/issued to a different email address/i),
+    ).toBeInTheDocument();
+    expect(window.location.assign).not.toHaveBeenCalled();
   });
 
   it("shows revoked or invalid submit errors", async () => {

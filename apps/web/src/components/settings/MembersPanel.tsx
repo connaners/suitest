@@ -60,7 +60,7 @@ export function MembersPanel({ workspaceId, currentRole }: MembersPanelProps): R
   });
 
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [createdLink, setCreatedLink] = useState<string | null>(null);
+  const [created, setCreated] = useState<InvitationOut | null>(null);
 
   const invalidateInvites = (): void => {
     void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "invitations"] });
@@ -75,7 +75,7 @@ export function MembersPanel({ workspaceId, currentRole }: MembersPanelProps): R
     mutationFn: (id: string) => resendInvitation(id),
     onSuccess: (res) => {
       if (res.link) {
-        setCreatedLink(res.link);
+        setCreated(res);
       }
       invalidateInvites();
     },
@@ -90,7 +90,7 @@ export function MembersPanel({ workspaceId, currentRole }: MembersPanelProps): R
             <button
               type="button"
               onClick={() => {
-                setCreatedLink(null);
+                setCreated(null);
                 setInviteOpen(true);
               }}
               className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-[13px] font-medium text-accent-fg hover:opacity-90"
@@ -195,20 +195,24 @@ export function MembersPanel({ workspaceId, currentRole }: MembersPanelProps): R
             </div>
           )}
 
-          {createdLink ? (
+          {created?.link ? (
             <div
               className="space-y-2 rounded-lg border border-border bg-bg-elev-1 p-4"
               data-testid="invite-link-panel"
             >
-              <p className="text-[12.5px] font-medium text-fg-1">Invitation link</p>
+              <p className="text-[12.5px] font-medium text-fg-1">
+                Personal link for {created.email}
+              </p>
               <p className="text-[12px] text-fg-4">
-                Share this link with the invitee. It is shown once.
+                Send this link only to {created.email}. It works once and lets
+                that person claim their own account — it cannot be reused by
+                anyone else.
               </p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 truncate rounded-md border border-border bg-bg-base px-3 py-2 font-mono text-[12px] text-fg-1">
-                  {createdLink}
+                  {created.link}
                 </code>
-                <CopyButton value={createdLink} label="Copy link" />
+                <CopyButton value={created.link} label="Copy link" />
               </div>
             </div>
           ) : null}
@@ -221,7 +225,7 @@ export function MembersPanel({ workspaceId, currentRole }: MembersPanelProps): R
         onOpenChange={setInviteOpen}
         onCreated={(inv) => {
           if (inv.link) {
-            setCreatedLink(inv.link);
+            setCreated(inv);
           }
           invalidateInvites();
         }}

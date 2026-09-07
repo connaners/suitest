@@ -3,6 +3,11 @@
     "schemas": {
       "AcceptInviteRequest": {
         "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
           "name": {
             "maxLength": 120,
             "minLength": 1,
@@ -22,6 +27,7 @@
         },
         "required": [
           "token",
+          "email",
           "name",
           "password"
         ],
@@ -33,6 +39,11 @@
           "ok": {
             "default": true,
             "title": "Ok",
+            "type": "boolean"
+          },
+          "requires_login": {
+            "default": false,
+            "title": "Requires Login",
             "type": "boolean"
           }
         },
