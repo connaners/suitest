@@ -66,15 +66,14 @@ jobs:
               - 'packages/suitest-npx/**'
               - '.github/workflows/ci.yml'
 
-  # packages/mcp-npx vendors the lifecycle sources at prepack, so a lifecycle
-  # change that does not also touch packages/mcp-npx ships inside a new npm
-  # tarball under an unchanged version. release-please cannot see that
-  # coupling — the linked-versions plugin was tried and had no working mode —
-  # so the PR has to carry the mcp-npx bump itself.
+  # packages/mcp-npx vendors the lifecycle sources at prepack. Every release
+  # publishes @suiflex/suitest-mcp, so a lifecycle change that does not also
+  # touch packages/mcp-npx would ship a stale vendored copy. release-please
+  # cannot see that coupling, so the PR has to carry a mcp-npx change itself.
   lifecycle-ships-with-mcp:
-    name: Lifecycle change bumps the npm package
-    # release-please's own lifecycle PR touches only packages/lifecycle by
-    # design — it is the release, not a change that needs one.
+    name: Lifecycle change touches the npm package
+    # release-please's own release PR touches many paths by design — it is the
+    # release, not a change that needs one.
     if: >-
       github.event_name == 'pull_request' &&
       needs.changes.outputs.lifecycle == 'true' &&
@@ -87,9 +86,9 @@ jobs:
         run: |
           echo "::error::This PR changes packages/lifecycle but not packages/mcp-npx." >&2
           echo "packages/mcp-npx vendors the lifecycle sources at prepack, so the" >&2
-          echo "npm package would ship this change under an unchanged version." >&2
-          echo "Touch packages/mcp-npx in the same PR — a CHANGELOG or comment" >&2
-          echo "line is enough to make release-please cut a new mcp release." >&2
+          echo "npm package would ship this change with a stale vendored copy." >&2
+          echo "Touch packages/mcp-npx in the same PR — a comment or doc line is" >&2
+          echo "enough to keep the vendored sources honest." >&2
           exit 1
 
   python-lint:

@@ -1,11 +1,12 @@
 name: release-ts-sdk
 
-# M4-6: build + publish @suiflex/suitest-sdk to npm on a `tssdk-v*` tag through
-# OIDC Trusted Publishing. On PRs, the build + typecheck validate the package.
+# M4-6: build + publish @suiflex/suitest-sdk to npm on the shared `v*` release
+# tag through OIDC Trusted Publishing. On PRs, the build + typecheck validate
+# the package.
 
 on:
   push:
-    tags: ["tssdk-v*"]
+    tags: ["v*"]
   pull_request:
     paths:
       - "sdk/typescript/**"
@@ -13,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing TypeScript SDK release tag to publish to npm
+        description: Existing v* release tag to publish to npm
         required: true
         type: string
 
@@ -68,7 +69,7 @@ jobs:
       - run: npm run build
       - name: Tag matches package version
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#tssdk-v}"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
           [ "$TAG_VERSION" = "$PKG_VERSION" ] || {
             echo "tag $GITHUB_REF_NAME != package.json $PKG_VERSION" >&2; exit 1; }
@@ -102,7 +103,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          TAG_VERSION="${RELEASE_TAG#tssdk-v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
           [ "$TAG_VERSION" = "$PKG_VERSION" ] || {
             echo "tag $RELEASE_TAG != package.json $PKG_VERSION" >&2; exit 1; }

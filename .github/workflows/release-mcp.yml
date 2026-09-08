@@ -1,21 +1,18 @@
 name: release-mcp
 
-# Publish the two MCP server packages, each on its own tag:
-#   - `mcp-v*`       → @suiflex/suitest-mcp      → npm  (npx -y @suiflex/suitest-mcp)
-#   - `lifecycle-v*` → suiflex-suitest-lifecycle → PyPI (uvx --from suiflex-suitest-lifecycle suitest-mcp)
+# Publish the two MCP server packages on the shared `v*` release tag:
+#   - @suiflex/suitest-mcp      → npm  (npx -y @suiflex/suitest-mcp)
+#   - suiflex-suitest-lifecycle → PyPI (uvx --from suiflex-suitest-lifecycle suitest-mcp)
 #
 # They share this file because they are the same server in two package
-# managers, but every job is gated on its own tag family — a lifecycle tag
-# must not reach the npm jobs, and an mcp tag must not reach the PyPI one.
-# Lifecycle used to ride the mcp tag, which meant its version could only ever
-# be published as a side effect of an mcp release.
+# managers. With one workspace version both publish on every release.
 #
 # npm uses OIDC Trusted Publishing; no long-lived NPM_TOKEN is required. PyPI
 # still uses PYPI_TOKEN. On PRs, the build + smoke + dry-run steps validate.
 
 on:
   push:
-    tags: ["mcp-v*", "lifecycle-v*"]
+    tags: ["v*"]
   pull_request:
     paths:
       - "packages/mcp-npx/**"
@@ -27,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing mcp-v* or lifecycle-v* release tag to publish
+        description: Existing v* release tag to publish
         required: true
         type: string
 
@@ -39,7 +36,7 @@ jobs:
     name: "@suiflex/suitest-mcp → npm"
     if: >-
       github.event_name == 'pull_request' ||
-      startsWith(github.ref, 'refs/tags/mcp-v')
+      startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -71,7 +68,7 @@ jobs:
 
   publish-npm:
     name: "@suiflex/suitest-mcp → npm"
-    if: startsWith(github.ref, 'refs/tags/mcp-v')
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [npm]
     runs-on: ubuntu-latest
     # OIDC Trusted Publishing: npm trusts this repository, workflow, and the
@@ -93,7 +90,7 @@ jobs:
         run: npm install -g npm@11.5.2
       - name: Tag matches package version
         run: |
-          TAG_VERSION="${RELEASE_TAG:-${GITHUB_REF_NAME#mcp-v}}"
+          TAG_VERSION="${RELEASE_TAG:-${GITHUB_REF_NAME#v}}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
           [ "$TAG_VERSION" = "$PKG_VERSION" ] || {
             echo "tag $GITHUB_REF_NAME != package.json $PKG_VERSION" >&2; exit 1; }
@@ -102,7 +99,7 @@ jobs:
 
   publish-installers:
     name: "suitest-mcp → homebrew-tap + scoop-bucket"
-    if: startsWith(github.ref, 'refs/tags/mcp-v')
+    if: startsWith(github.ref, 'refs/tags/v')
     # After the npm publish, so a formula never points at a version npm rejected.
     needs: [publish-npm]
     runs-on: ubuntu-latest
@@ -135,7 +132,7 @@ jobs:
 
   recover-npm:
     name: "Recover @suiflex/suitest-mcp npm publish"
-    if: startsWith(inputs.tag, 'mcp-v')
+    if: startsWith(inputs.tag, 'v')
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -158,7 +155,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          TAG_VERSION="${RELEASE_TAG#mcp-v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
           [ "$TAG_VERSION" = "$PKG_VERSION" ] || {
             echo "tag $RELEASE_TAG != package.json $PKG_VERSION" >&2; exit 1; }
@@ -168,8 +165,8 @@ jobs:
   pypi:
     name: "suiflex-suitest-lifecycle → PyPI"
     if: >-
-      startsWith(github.ref, 'refs/tags/lifecycle-v') ||
-      startsWith(inputs.tag, 'lifecycle-v')
+      startsWith(github.ref, 'refs/tags/v') ||
+      startsWith(inputs.tag, 'v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
