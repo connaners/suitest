@@ -41,16 +41,15 @@ import { SelectorRepairDialog } from "@/components/cases/SelectorRepairDialog";
 import { Gated } from "@/components/gating/Gated";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StatusBadge } from "@/components/shared/StatusBadge";
 import { api } from "@/lib/api-client";
+import { outcomeToBadge } from "@/lib/badge-maps";
 import type { components } from "@/lib/api-types";
 import { cn } from "@/lib/utils";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 type TargetKind = components["schemas"]["TargetKind"];
 type TestCaseDetail = components["schemas"]["TestCaseDetail"];
+type StepOutcome = components["schemas"]["StepOutcome"];
 
 /**
  * DraftStep mirrors TestStepPublic but `id` may be a temporary client-side
@@ -97,14 +96,6 @@ function removeAndReorder(steps: DraftStep[], stepId: string): DraftStep[] {
   return remaining.map((step, index) => ({ ...step, order: index + 1 }));
 }
 
-function persistedStepIds(steps: DraftStep[]): string[] {
-  const ids: string[] = [];
-  for (const step of steps) {
-    if (isPersisted(step.id)) ids.push(step.id);
-  }
-  return ids;
-}
-
 const TARGET_KINDS: TargetKind[] = [
   "FE_WEB",
   "FE_MOBILE",
@@ -124,14 +115,20 @@ function isPersisted(id: string): boolean {
 // ---------------------------------------------------------------------------
 // StepEditor component
 // ---------------------------------------------------------------------------
-
 interface StepEditorProps {
   caseId: string;
+  /** Current steps (drafts allowed — ids prefixed "__new__"). */
   steps: DraftStep[];
   onStepsChange: (steps: DraftStep[]) => void;
+  /** Last-run outcome per step order — pass-through for the pass/fail badge. */
+  outcomeByOrder?: Map<number, StepOutcome>;
 }
-
-export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): React.ReactElement {
+export function StepEditor({
+  caseId,
+  steps,
+  onStepsChange,
+  outcomeByOrder,
+}: StepEditorProps): React.ReactElement {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [repairStep, setRepairStep] = useState<DraftStep | null>(null);
@@ -253,8 +250,9 @@ export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): R
   );
 
   // ------------------------------------------------------------------
-  // Drag end handler — M1-14
-  // Only reorder when both active and over are persisted step ids.
+  // Drag end handler — M1-14; drafts participate too. Server-side reorder
+  // only re-orders persisted rows: when a draft is involved, ordering lands
+  // on the server with the next Save steps (bulk replace).
   // ------------------------------------------------------------------
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -263,9 +261,6 @@ export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): R
 
       const activeId = String(active.id);
       const overId = String(over.id);
-
-      // Guard: both must be persisted
-      if (!isPersisted(activeId) || !isPersisted(overId)) return;
 
       const oldIndex = steps.findIndex((s) => s.id === activeId);
       const newIndex = steps.findIndex((s) => s.id === overId);
@@ -279,7 +274,6 @@ export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): R
       // Optimistic local update
       onStepsChange(reordered);
 
-      // Only reorder persisted steps — all current steps must be persisted
       const allPersisted = reordered.every((s) => isPersisted(s.id));
       if (!allPersisted) return;
 
@@ -291,8 +285,7 @@ export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): R
   const saving =
     replaceStepsMutation.isPending || reorderMutation.isPending;
 
-  // Only persisted steps can participate in drag (no unpersisted drafts)
-  const sortableIds = persistedStepIds(steps);
+  const sortableIds = steps.map((s) => s.id);
 
   return (
     <section className="flex flex-col gap-2" data-testid="step-editor">
@@ -358,7 +351,7 @@ export function StepEditor({ caseId, steps, onStepsChange }: StepEditorProps): R
                   step={step}
                   index={idx}
                   disabled={saving}
-                  sortable={isPersisted(step.id)}
+                  outcome={outcomeByOrder?.get(idx + 1)}
                   onFieldChange={handleFieldChange}
                   onRemove={handleRemove}
                   onRepair={() => {
@@ -398,7 +391,7 @@ interface StepRowProps {
   step: DraftStep;
   index: number;
   disabled: boolean;
-  sortable: boolean;
+  outcome?: StepOutcome | undefined;
   onFieldChange: (stepId: string, field: keyof DraftStep, value: string) => void;
   onRemove: (stepId: string) => void;
   onRepair: () => void;
@@ -408,14 +401,14 @@ function StepRow({
   step,
   index,
   disabled,
-  sortable,
+  outcome,
   onFieldChange,
   onRemove,
   onRepair,
 }: StepRowProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: step.id,
-    disabled: !sortable || disabled,
+    disabled,
   });
 
   const style: React.CSSProperties = {
@@ -431,26 +424,35 @@ function StepRow({
       data-testid="step-row"
       className="rounded-md border border-border bg-bg-elev-1 p-3"
     >
-      {/* Header row: drag handle + order badge + action input + remove button */}
+      {/* Header row: drag handle + order badge + action input + outcome + remove */}
       <div className="mb-2 flex items-center gap-2">
-        {sortable ? (
-          <button
-            type="button"
-            data-testid="step-drag-handle"
-            className={cn(
-              "shrink-0 cursor-grab text-fg-4 hover:text-fg-3 active:cursor-grabbing",
-              disabled && "pointer-events-none opacity-50",
-            )}
-            aria-label="Drag to reorder"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          data-testid="step-drag-handle"
+          className={cn(
+            "shrink-0 cursor-grab text-fg-4 hover:text-fg-3 active:cursor-grabbing",
+            disabled && "pointer-events-none opacity-50",
+          )}
+          aria-label="Drag to reorder"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
         <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-bg-elev-2 font-mono text-[10.5px] text-fg-4">
           {index + 1}
         </span>
+        {!isPersisted(step.id) ? (
+          <span
+            className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wide text-accent"
+            data-testid="step-draft-badge"
+          >
+            new
+          </span>
+        ) : null}
+        {outcome ? (
+          <StatusBadge status={outcomeToBadge(outcome)} label={outcome} />
+        ) : null}
         <Input
           data-testid="step-action-input"
           className={cn(
@@ -478,7 +480,7 @@ function StepRow({
         >
           <Trash2 className="h-3 w-3" aria-hidden="true" />
         </Button>
-        {sortable && step.target_kind === "FE_WEB" && step.code ? (
+        {step.target_kind === "FE_WEB" && step.code ? (
           <Gated feature="autonomy_assist">
             <Button
               type="button"

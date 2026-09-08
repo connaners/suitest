@@ -722,7 +722,6 @@ function CaseDetailPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [serverStepIds, detailName],
   );
-  const stepsAreFallback = serverSteps.length === 0 && Boolean(detail);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const caseType = useMemo(() => deriveCaseType(serverSteps), [serverStepIds]);
   const outcomeByOrder = useMemo(() => {
@@ -956,23 +955,14 @@ function CaseDetailPanel({
         </TabsContent>
 
         <TabsContent value="steps" className="flex flex-col gap-4">
-          <StepList
-            steps={derivedSteps}
-            isFallback={stepsAreFallback}
+          {/* Outcome badges per step (from the last run) map onto the editor
+              rows by order, so editing and evidence share one view. */}
+          <StepEditor
+            caseId={detail.public_id}
+            steps={stepsToShow}
+            onStepsChange={handleStepsChange}
             outcomeByOrder={outcomeByOrder}
           />
-          <details className="group rounded-md border border-border bg-bg-elev-1">
-            <summary className="cursor-pointer select-none px-3 py-2 text-[12px] text-fg-3 hover:text-fg-1">
-              Edit steps
-            </summary>
-            <div className="border-t border-border p-3" data-testid="case-steps">
-              <StepEditor
-                caseId={detail.public_id}
-                steps={stepsToShow}
-                onStepsChange={handleStepsChange}
-              />
-            </div>
-          </details>
           <Gated feature="ai_diagnose" fallback={null}>
             <AgentInsightCallout
               title="Agent diagnosis"
