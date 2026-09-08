@@ -14,53 +14,29 @@ export interface ChatMessageInput {
   content: string;
 }
 
+/** A line that is entirely (or starts as) a `{"tool": …}` request envelope. */
+const TOOL_ENVELOPE_LINE = /^\s*[[{]?\s*\{\s*"tool"\s*:/;
+
 /**
  * Strip inline tool-call syntax from an assistant turn before display: the model
  * sometimes narrates its calls as bare `{"tool": …}` JSON (or `<tool_call>` /
  * ```json fences). The structured `tool` SSE frame is what drives the confirm
  * card, so the raw JSON is just noise in the bubble.
+ *
+ * Line-based: the model emits each envelope on its own line, so dropping lines
+ * that begin a tool object clears the noise without a brace-matching scan.
  */
 export function stripToolEnvelopes(raw: string): string {
-  const text = raw
+  return raw
     .replaceAll("<tool_call>", "")
     .replaceAll("</tool_call>", "")
     .replaceAll("```json", "")
-    .replaceAll("```", "");
-
-  let out = "";
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] === "{" && /^\{\s*"tool"\s*:/.test(text.slice(i, i + 48))) {
-      // Walk to the matching close brace (string-aware) and drop the object.
-      let depth = 0;
-      let inStr = false;
-      let esc = false;
-      let j = i;
-      for (; j < text.length; j += 1) {
-        const ch = text[j];
-        if (inStr) {
-          if (esc) esc = false;
-          else if (ch === "\\") esc = true;
-          else if (ch === '"') inStr = false;
-        } else if (ch === '"') {
-          inStr = true;
-        } else if (ch === "{") {
-          depth += 1;
-        } else if (ch === "}") {
-          depth -= 1;
-          if (depth === 0) {
-            j += 1;
-            break;
-          }
-        }
-      }
-      i = j; // an unterminated object (mid-stream) swallows the rest until it completes
-    } else {
-      out += text[i];
-      i += 1;
-    }
-  }
-  return out.replace(/\n{3,}/g, "\n\n").trim();
+    .replaceAll("```", "")
+    .split("\n")
+    .filter((line) => !TOOL_ENVELOPE_LINE.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export interface ChatToolEvent {
