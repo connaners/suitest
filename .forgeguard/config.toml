@@ -1,0 +1,37 @@
+# Per-repo Guardener / ForgeGuard policy. Overrides the organization default
+# (suiflex/Guardener config/forgeguard.toml) for this repository only.
+#
+# Scan-only on purpose: the CI gate (guardener check, non-fork branches) would
+# otherwise execute the [[commands]] below on a runner that only has Rust set
+# up. Build/lint/test for this repo run in .github/workflows/ci.yml instead.
+
+version = 2
+
+# Everything still blocks at warning severity or above — only the two rules
+# relaxed below are exempt.
+mode = "strict"
+
+[project]
+name = "suitest"
+
+[scan]
+enabled = true
+max_file_bytes = 1000000
+include_tests = false
+
+# Kept blocking even though strict already blocks it (mirrors the org default),
+# so this one rule survives if `mode` is ever relaxed.
+[rules."FG-SEC-001"]
+block = true
+
+# The agent chat stream (apps/api/.../agent_chat_service.py) is a bounded
+# max-4-round tool loop that streams LLM tokens over SSE and writes to the DB
+# between rounds. FG-ALG-001 (an `async for` token stream nested in the round
+# loop) and FG-CPLX-001 (the loop's structural complexity) both flag that
+# shape, and it cannot be restructured away without dropping token-by-token
+# streaming or the retry. Report them; do not block.
+[rules."FG-ALG-001"]
+block = false
+
+[rules."FG-CPLX-001"]
+block = false

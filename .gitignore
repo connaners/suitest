@@ -102,7 +102,10 @@ docs/superpowers
 assets/raw/
 # Local mode scratch (SQLite DB + disk artifacts)
 .suitest/
-.forgeguard/
+# ForgeGuard: keep the committed per-repo policy, ignore the local cache/reports
+/.forgeguard/*
+!/.forgeguard/config.toml
+apps/web/.forgeguard/
 .codex/
 .mcp.json
 .cursor/
