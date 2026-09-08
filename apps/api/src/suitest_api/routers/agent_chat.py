@@ -55,7 +55,7 @@ async def agent_chat(
         if ws_redis is not None:
             await ws_redis.publish(f"workspace:{ctx.workspace_id}", json.dumps(envelope))
 
-    svc = AgentChatService(session, workspace_id=ctx.workspace_id, user_id=ctx.user_id)
+    svc = AgentChatService(session, ctx=ctx)
 
     async def stream() -> AsyncIterator[bytes]:
         async for event in svc.stream(
