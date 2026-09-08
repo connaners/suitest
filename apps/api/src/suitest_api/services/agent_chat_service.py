@@ -48,6 +48,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from sqlalchemy.ext.asyncio import AsyncSession
+    from suitest_db.models.agent import AgentSession
+    from suitest_shared.schemas.agent_chat import ConfirmedTool
 
 # Publishes a ``{"event", "data"}`` envelope to the workspace WS channel.
 WsPublish = Callable[[dict[str, object]], Awaitable[None]]
@@ -116,6 +118,121 @@ class AgentChatService:
         except (ValueError, AttributeError):
             return None
 
+    async def _resolve_session(
+        self,
+        request: ChatRequest,
+        *,
+        model: str,
+        credential: ResolvedCredential,
+        prompt_row_id: str,
+        repo: AgentSessionRepo,
+    ) -> AgentSession:
+        """Reuse the panel's conversation when it passes a valid id, else create one.
+
+        Reusing lets approve/reject follow-ups land in the same replayable thread.
+        """
+        if request.session_id:
+            existing = await repo.get_by_id(request.session_id)
+            if existing is not None and existing.workspace_id == self._workspace_id:
+                return existing
+        return await repo.create(
+            AgentSessionCreate(
+                workspace_id=self._workspace_id,
+                kind=AgentSessionKind.CONVERSATION,
+                model_id=model,
+                provider=credential.provider,
+                user_id=self._as_uuid(self._user_id),
+                prompt_version_id=prompt_row_id,
+                seed=request.seed,
+                temperature=0.3,
+            )
+        )
+
+    def _parse_tool_request(self, round_text: str) -> dict[str, object] | None:
+        """Return the last tool envelope in a model turn, or ``None`` for plain prose."""
+        tool_obj = self._last_tool_envelope(self._strip_tool_fences(round_text))
+        tool = tool_obj.get("tool")
+        if not (isinstance(tool, str) and tool.strip()):
+            return None
+        return tool_obj
+
+    async def _apply_approved_tool(
+        self,
+        approved: ConfirmedTool,
+        *,
+        messages: list[ChatMessage],
+        repo: AgentSessionRepo,
+        ctx: TenantContext,
+        case_service: TestCaseService,
+        agent_session_id: str,
+    ) -> None:
+        """Run the user-approved envelope and append its result for the next round."""
+        try:
+            result = await execute_tool(
+                approved.tool,
+                approved.arguments,
+                session=self._session,
+                ctx=ctx,
+                case_service=case_service,
+                confirmed=True,
+            )
+            result_json = json.dumps(result, default=str)
+            await repo.add_message(
+                agent_session_id,
+                role=MessageRole.TOOL,
+                content=f"{approved.tool} executed (user-approved): {result_json}",
+            )
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content=(
+                        f"TOOL RESULT (user-approved execution of {approved.tool}): "
+                        f"{result_json}\nReport the outcome to the user concisely."
+                    ),
+                )
+            )
+        except ToolInputError as exc:
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content=f"TOOL RESULT {approved.tool}: {json.dumps({'error': str(exc)})}",
+                )
+            )
+        except ToolDeniedError:
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content=f"TOOL RESULT {approved.tool}: permission denied.",
+                )
+            )
+        await self._session.commit()
+        self._session.expire_all()
+
+    async def _run_model_tool(
+        self,
+        tool: str,
+        arguments: dict[str, object],
+        *,
+        ctx: TenantContext,
+        case_service: TestCaseService,
+        confirmed: bool,
+    ) -> str | None:
+        """Execute a model-requested tool. ``None`` means a mutation lacked a confirm."""
+        try:
+            result = await execute_tool(
+                tool,
+                arguments,
+                session=self._session,
+                ctx=ctx,
+                case_service=case_service,
+                confirmed=confirmed,
+            )
+            return json.dumps(result, default=str)
+        except ToolInputError as exc:
+            return json.dumps({"error": str(exc)})
+        except ToolDeniedError:
+            return None
+
     async def stream(
         self,
         request: ChatRequest,
@@ -132,26 +249,9 @@ class AgentChatService:
             self._session, workspace_id=self._workspace_id, prompt_name="converse"
         )
         repo = AgentSessionRepo(self._session)
-        # Reuse an existing conversation when the panel supplies its id, so
-        # approve/reject follow-ups land in the same replayable thread.
-        agent_session = None
-        if request.session_id:
-            existing = await repo.get_by_id(request.session_id)
-            if existing is not None and existing.workspace_id == self._workspace_id:
-                agent_session = existing
-        if agent_session is None:
-            agent_session = await repo.create(
-                AgentSessionCreate(
-                    workspace_id=self._workspace_id,
-                    kind=AgentSessionKind.CONVERSATION,
-                    model_id=model,
-                    provider=credential.provider,
-                    user_id=self._as_uuid(self._user_id),
-                    prompt_version_id=prompt_row.id,
-                    seed=request.seed,
-                    temperature=0.3,
-                )
-            )
+        agent_session = await self._resolve_session(
+            request, model=model, credential=credential, prompt_row_id=prompt_row.id, repo=repo
+        )
 
         # Persist the latest user turn (the rest is prior context already stored).
         last_user = next((m for m in reversed(request.messages) if m.role == "user"), None)
@@ -195,47 +295,16 @@ class AgentChatService:
             if publish is not None:
                 await publish({"event": "agent.tool.call", "data": tool_data})
             yield ChatSseEvent(kind="tool", data=tool_data)
-            try:
-                result = await execute_tool(
-                    approved.tool,
-                    approved.arguments,
-                    session=self._session,
-                    ctx=ctx,
-                    case_service=case_service,
-                    confirmed=True,
-                )
-                result_json = json.dumps(result, default=str)
-                await repo.add_message(
-                    agent_session_id,
-                    role=MessageRole.TOOL,
-                    content=f"{approved.tool} executed (user-approved): {result_json}",
-                )
-                messages.append(
-                    ChatMessage(
-                        role="user",
-                        content=(
-                            f"TOOL RESULT (user-approved execution of {approved.tool}): "
-                            f"{result_json}\nReport the outcome to the user concisely."
-                        ),
-                    )
-                )
-            except ToolInputError as exc:
-                messages.append(
-                    ChatMessage(
-                        role="user",
-                        content=f"TOOL RESULT {approved.tool}: {json.dumps({'error': str(exc)})}",
-                    )
-                )
-            except ToolDeniedError:
-                messages.append(
-                    ChatMessage(
-                        role="user",
-                        content=f"TOOL RESULT {approved.tool}: permission denied.",
-                    )
-                )
-            await self._session.commit()
-            self._session.expire_all()
+            await self._apply_approved_tool(
+                approved,
+                messages=messages,
+                repo=repo,
+                ctx=ctx,
+                case_service=case_service,
+                agent_session_id=agent_session_id,
+            )
 
+        user_text = last_user.content.lower() if last_user else ""
         max_tool_rounds = 4
         for _round in range(max_tool_rounds):
             call = ModelCall(model=model, messages=messages, seed=request.seed, temperature=0.3)
@@ -248,21 +317,18 @@ class AgentChatService:
                 if chunk.done:
                     tokens_out = chunk.tokens_out
 
-            raw = self._strip_tool_fences(round_accumulated)
-            tool_obj = self._last_tool_envelope(raw)
-
-            tool = tool_obj.get("tool")
-            if not (isinstance(tool, str) and tool.strip()):
-                accumulated = round_accumulated
+            accumulated = round_accumulated
+            tool_obj = self._parse_tool_request(round_accumulated)
+            if tool_obj is None:
                 break
-
+            tool = str(tool_obj["tool"])
             arguments = tool_obj.get("arguments", {})
             arguments = arguments if isinstance(arguments, dict) else {}
+
             # The model has no field to mark confirmation; the USER's own
             # message granting permission ("confirmed", "i approve", …) is the
             # authority — AUTONOMY.md requires an explicit human decision, and
             # typing one in the panel is explicit.
-            user_text = last_user.content.lower() if last_user else ""
             confirmed = self._user_confirmed(tool_obj, user_text)
             tool_data = {
                 "tool": tool,
@@ -274,21 +340,11 @@ class AgentChatService:
                 await publish({"event": "agent.tool.call", "data": tool_data})
             yield ChatSseEvent(kind="tool", data=tool_data)
 
-            try:
-                result = await execute_tool(
-                    tool,
-                    arguments,
-                    session=self._session,
-                    ctx=ctx,
-                    case_service=case_service,
-                    confirmed=confirmed,
-                )
-                result_json = json.dumps(result, default=str)
-            except ToolInputError as exc:
-                result_json = json.dumps({"error": str(exc)})
-            except ToolDeniedError:
+            result_json = await self._run_model_tool(
+                tool, arguments, ctx=ctx, case_service=case_service, confirmed=confirmed
+            )
+            if result_json is None:
                 # Mutating tool without a user confirm: stop and surface it.
-                accumulated = round_accumulated
                 break
             messages.append(ChatMessage(role="user", content=f"TOOL RESULT {tool}: {result_json}"))
             # Persist + drop stale identity-map state before the next round
@@ -297,8 +353,6 @@ class AgentChatService:
             # greenlet context when re-read later in this generator.
             await self._session.commit()
             self._session.expire_all()
-        else:
-            accumulated = round_accumulated
 
         await repo.add_message(agent_session_id, role=MessageRole.AGENT, content=accumulated)
         await repo.complete(agent_session_id, tokens_out=tokens_out)
