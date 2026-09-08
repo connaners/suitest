@@ -205,6 +205,22 @@ class TestCaseRepo(AsyncRepository[TestCase, TestCaseCreate, TestCaseUpdate]):
         )
         return (await self.session.scalars(stmt)).all()
 
+    async def list_by_workspace(self, workspace_id: str) -> Sequence[TestCase]:
+        """Every non-deleted case in a workspace via the suite → project chain.
+
+        One query for the whole workspace — callers that only need to scan or
+        filter cases (e.g. the agent ``cases.search`` tool) would otherwise
+        loop per project and issue a query each.
+        """
+        stmt = (
+            select(TestCase)
+            .join(Suite, Suite.id == TestCase.suite_id)
+            .join(Project, Project.id == Suite.project_id)
+            .where(Project.workspace_id == workspace_id, TestCase.deleted_at.is_(None))
+            .order_by(TestCase.public_id.asc())
+        )
+        return (await self.session.scalars(stmt)).all()
+
     async def list_with_steps_by_suite(self, suite_id: str) -> Sequence[TestCase]:
         stmt = (
             select(TestCase)
