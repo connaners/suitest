@@ -96,6 +96,26 @@ async def test_filter_q_ilike_name(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_by_workspace_spans_projects_and_excludes_other_workspaces(
+    session: AsyncSession,
+) -> None:
+    repo = TestCaseRepo(session)
+    ws = await make_workspace(session)
+    p1 = await make_project(session, workspace=ws)
+    p2 = await make_project(session, workspace=ws)
+    s1 = await make_suite(session, project=p1)
+    s2 = await make_suite(session, project=p2)
+    a = await make_test_case(session, suite=s1)
+    b = await make_test_case(session, suite=s2)
+
+    other_suite = await _suite(session)  # different workspace
+    await make_test_case(session, suite=other_suite)
+
+    rows = await repo.list_by_workspace(ws.id)
+    assert {c.id for c in rows} == {a.id, b.id}
+
+
+@pytest.mark.asyncio
 async def test_get_steps_and_with_steps(session: AsyncSession) -> None:
     repo = TestCaseRepo(session)
     suite = await _suite(session)
