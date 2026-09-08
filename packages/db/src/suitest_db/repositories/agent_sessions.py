@@ -112,3 +112,40 @@ class AgentSessionRepo(AsyncRepository[AgentSession, AgentSessionCreate, AgentSe
             .order_by(AgentMessage.created_at.asc(), AgentMessage.id.asc())
         )
         return list((await self.session.scalars(stmt)).all())
+
+    async def get_pending_tool_call(self, call_id: str, *, session_id: str) -> AgentToolCall | None:
+        """Return the ``pending`` tool call ``call_id`` iff it belongs to ``session_id``.
+
+        The join to ``agent_messages`` scopes the lookup to the conversation so an
+        approval cannot reference a pending call from another session or workspace.
+        A non-pending row (already executed / rejected) returns ``None`` — the
+        approval token is single-use.
+        """
+        stmt = (
+            select(AgentToolCall)
+            .join(AgentMessage, AgentMessage.id == AgentToolCall.message_id)
+            .where(
+                AgentToolCall.id == call_id,
+                AgentMessage.session_id == session_id,
+                AgentToolCall.status == "pending",
+            )
+        )
+        row: AgentToolCall | None = await self.session.scalar(stmt)
+        return row
+
+    async def settle_tool_call(
+        self,
+        call_id: str,
+        *,
+        status: str,
+        output: dict[str, object] | None = None,
+        error_msg: str | None = None,
+    ) -> None:
+        """Move a pending tool call to a terminal state after execution."""
+        row = await self.session.get(AgentToolCall, call_id)
+        if row is None:
+            return
+        row.status = status
+        row.output = output
+        row.error_msg = error_msg
+        await self.session.flush()

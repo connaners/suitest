@@ -1435,22 +1435,17 @@
         "type": "object"
       },
       "ConfirmedTool": {
-        "description": "A previously-proposed tool call the user approved in the panel.\n\nExecuted deterministically before the next model round \u2014 approval must\nnever depend on the model re-emitting the envelope.",
+        "description": "The user's approval of a specific pending tool call.\n\nOnly the opaque ``call_id`` of a server-recorded pending call crosses the\nwire \u2014 the tool name and arguments are read back from the database row, so\nneither model output nor natural-language text can authorize a write.",
         "properties": {
-          "arguments": {
-            "additionalProperties": true,
-            "title": "Arguments",
-            "type": "object"
-          },
-          "tool": {
+          "call_id": {
             "maxLength": 64,
             "minLength": 1,
-            "title": "Tool",
+            "title": "Call Id",
             "type": "string"
           }
         },
         "required": [
-          "tool"
+          "call_id"
         ],
         "title": "ConfirmedTool",
         "type": "object"

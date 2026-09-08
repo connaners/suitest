@@ -34,14 +34,14 @@ class ChatRequest(BaseModel):
 
 
 class ConfirmedTool(BaseModel):
-    """A previously-proposed tool call the user approved in the panel.
+    """The user's approval of a specific pending tool call.
 
-    Executed deterministically before the next model round — approval must
-    never depend on the model re-emitting the envelope.
+    Only the opaque ``call_id`` of a server-recorded pending call crosses the
+    wire — the tool name and arguments are read back from the database row, so
+    neither model output nor natural-language text can authorize a write.
     """
 
-    tool: Annotated[str, Field(min_length=1, max_length=64)]
-    arguments: dict[str, object] = Field(default_factory=dict)
+    call_id: Annotated[str, Field(min_length=1, max_length=64)]
 
 
 class ChatSseEvent(BaseModel):
