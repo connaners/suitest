@@ -227,11 +227,10 @@ async def _case_update_meta(
     from suitest_api.schemas.test_case import TestCaseUpdate
 
     row, _suite = await _resolve_case(session, ctx, args.case_id)
-    body = TestCaseUpdate(
-        title=args.title,
-        description=args.description,
-        priority=args.priority,
-    )
+    # Only the keys the caller actually sent — building TestCaseUpdate with every
+    # field would mark omitted ones as explicitly set and clear NOT-NULL columns
+    # (title/priority) on a partial edit.
+    body = TestCaseUpdate.model_validate(args.model_dump(exclude={"case_id"}, exclude_unset=True))
     outcome = await case_service.update(row.id, body, if_unmodified_since=None)
     if outcome is None:
         raise ToolInputError(f"case not found: {args.case_id}")
