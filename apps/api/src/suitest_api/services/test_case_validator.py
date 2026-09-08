@@ -5,7 +5,9 @@ Two domain rules (``docs/API.md §3.3 step validator behaviour``):
 * ``STEPS_REQUIRE_CODE_IN_ZERO_LLM`` — when the workspace runs ``ZERO`` tier
   AND ``workspace.strict_zero_validation=true``, every step MUST carry a
   non-empty ``code``. Action-only steps (no ``code``) are 400 with
-  ``details.stepIndex=N`` so the FE can highlight the offending row.
+  ``details.stepIndex=N`` so the FE can highlight the offending row. An
+  empty-action step is an unfilled editor draft and is skipped here — it is
+  rejected when the case is actually run.
 * ``MCP_PROVIDER_NOT_REGISTERED`` — every step's ``mcp_provider`` must be
   either a bundled builtin (``api-http-mcp``, ``playwright-mcp``,
   ``postgres-mcp``, ``jirac-mcp``, ``github-mcp-server``) OR present in the
@@ -97,21 +99,14 @@ def validate_steps(
     """
     allowed = set(registered_mcp_names) | BUNDLED_MCP_PROVIDERS
     for index, step in enumerate(steps):
-        # Steps WITHOUT an action are user drafts in the web editor — running
-        # one would be a no-op, so the strict check covers the whole step.
-        # Steps WITH an action but no code are legitimate on ZERO tier when
-        # they come from the MCP lifecycle publisher (action text drives the
-        # deterministic MCP provider directly; see publish.py). Only demand
-        # code when the action is present AND the provider can't execute it.
+        # Steps WITHOUT an action are unfilled drafts from the web editor —
+        # never executable, so the editor may store them and the strict check
+        # skips them (running the case still fails until they are filled in).
+        # Any step WITH a real action must carry executable code on ZERO tier:
+        # nothing translates action -> MCP call at runtime here.
         has_action = bool(step.action and step.action.strip())
         has_code = bool(step.code and step.code.strip())
-        if (
-            tier is Tier.ZERO
-            and strict_zero_validation
-            and has_action
-            and not has_code
-            and step.mcp_provider not in allowed
-        ):
+        if tier is Tier.ZERO and strict_zero_validation and has_action and not has_code:
             raise StepsRequireCodeError(step_index=index)
         if step.mcp_provider not in allowed:
             raise McpProviderNotRegisteredError(name=step.mcp_provider, step_index=index)

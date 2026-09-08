@@ -501,6 +501,30 @@ async def test_patch_steps_validates_each_step_code_zero_tier(api_db: ApiDb) -> 
 
 
 @pytest.mark.asyncio
+async def test_patch_steps_zero_tier_allows_empty_action_draft(api_db: ApiDb) -> None:
+    """ZERO + strict: an empty-action draft row is stored, not rejected."""
+    user = await api_db.seed_user(email="tcw-replace-draft@example.com")
+    ws = await api_db.member_workspace(user, slug="tcw-replace-draft-ws")
+    suite = await _project_suite(api_db, ws.id)
+    case = await _seed_case(api_db, suite.id, public_id="TC-R2D")
+
+    body = {
+        "steps": [
+            _step_payload(action="ok", code="ok"),
+            _step_payload(action="", code=None),
+        ]
+    }
+    async with api_db.client(user) as c:
+        resp = await c.patch(
+            f"/api/v1/test-cases/{case.id}/steps",
+            json=body,
+            headers={"X-Workspace-Id": ws.id},
+        )
+    assert resp.status_code == 200, resp.text
+    assert [s["action"] for s in resp.json()["steps"]] == ["ok", ""]
+
+
+@pytest.mark.asyncio
 async def test_patch_steps_concurrent_modification(api_db: ApiDb) -> None:
     user = await api_db.seed_user(email="tcw-replace-409@example.com")
     ws = await api_db.member_workspace(user, slug="tcw-replace-409-ws")
