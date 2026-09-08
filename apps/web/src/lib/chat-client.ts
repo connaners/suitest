@@ -43,6 +43,13 @@ export interface ChatToolEvent {
   tool: string;
   arguments: Record<string, unknown>;
   agent_session_id: string;
+  /**
+   * Opaque id of the server-recorded pending call for a mutating tool; `null`
+   * for a read-only tool that already executed. Approval sends only this id —
+   * the server reads the tool name + arguments back from its own row.
+   */
+  call_id?: string | null;
+  requires_approval?: boolean;
 }
 
 export interface ChatDoneEvent {
@@ -119,11 +126,9 @@ export async function streamChat(
 ): Promise<void> {
   const body: Record<string, unknown> = { messages };
   if (options?.sessionId) body["session_id"] = options.sessionId;
-  if (options?.approvedTool) {
-    body["approved_tool"] = {
-      tool: options.approvedTool.tool,
-      arguments: options.approvedTool.arguments,
-    };
+  if (options?.approvedTool?.call_id) {
+    // Only the opaque call id crosses the wire — the server owns the arguments.
+    body["approved_tool"] = { call_id: options.approvedTool.call_id };
   }
   const res = await fetch(`${SSE_BASE}/agent/chat`, {
     method: "POST",

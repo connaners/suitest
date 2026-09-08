@@ -135,9 +135,9 @@ function AiPanelInner(): React.ReactElement {
     await runTurn(text);
   };
 
-  /** Approve a pending mutation: re-send the exact envelope for execution. */
+  /** Approve a pending mutation: send only the server-issued call id. */
   const approveTool = (tool: ChatToolEvent): void => {
-    if (streaming) return;
+    if (streaming || !tool.call_id) return;
     clearPendingTool(tool);
     void runTurn("Approved — apply it.", { approvedTool: tool });
   };
@@ -231,6 +231,7 @@ function AiPanelInner(): React.ReactElement {
     if (
       !autoApproveRef.current ||
       pending === null ||
+      !pending.call_id ||
       !MUTATION_TOOLS.has(pending.tool) ||
       autoChainRef.current >= AUTO_CHAIN_LIMIT
     ) {
