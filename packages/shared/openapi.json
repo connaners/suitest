@@ -1347,6 +1347,16 @@
       "ChatRequest": {
         "description": "``POST /agent/chat`` body \u2014 the running history + optional session id.",
         "properties": {
+          "approved_tool": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfirmedTool"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "messages": {
             "items": {
               "$ref": "#/components/schemas/ChatMessageInput"
@@ -1422,6 +1432,27 @@
           "rationale"
         ],
         "title": "ClassificationResult",
+        "type": "object"
+      },
+      "ConfirmedTool": {
+        "description": "A previously-proposed tool call the user approved in the panel.\n\nExecuted deterministically before the next model round \u2014 approval must\nnever depend on the model re-emitting the envelope.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "tool": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool"
+        ],
+        "title": "ConfirmedTool",
         "type": "object"
       },
       "ConnectionTestResponse": {
@@ -11380,6 +11411,80 @@
           }
         ],
         "summary": "Agent Chat",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/v1/agent/chat/{session_id}/history": {
+      "get": {
+        "description": "Replay a stored conversation so the panel survives a page reload.\n\nUSER turns map to ``user``; AGENT turns to ``assistant``. 404 when the\nsession does not exist or belongs to another workspace (no scoping leak).",
+        "operationId": "agent_chat_history_api_v1_agent_chat__session_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "title": "Response Agent Chat History Api V1 Agent Chat  Session Id  History Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Agent Chat History",
         "tags": [
           "agent"
         ]
