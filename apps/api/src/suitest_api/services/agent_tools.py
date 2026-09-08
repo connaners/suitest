@@ -203,21 +203,12 @@ async def _cases_search(
     args: CasesSearchArgs, *, session: AsyncSession, ctx: TenantContext
 ) -> dict[str, object]:
     q = args.query.strip().lower()
-    project_ids = [p.id for p in await ProjectRepo(session).list_by_workspace(ctx.workspace_id)]
-    repo = TestCaseRepo(session)
-    items: list[dict[str, object]] = []
-    for project_id in project_ids:
-        if len(items) >= 25:
-            break
-        suite_ids = {s.id for s in await SuiteRepo(session).list_by_project(project_id)}
-        for row in await repo.list_by_project(project_id):
-            if row.suite_id not in suite_ids:
-                continue
-            title = (row.title or "").lower()
-            if q in row.public_id.lower() or q in title:
-                items.append({"public_id": row.public_id, "title": row.title})
-                if len(items) >= 25:
-                    break
+    rows = await TestCaseRepo(session).list_by_workspace(ctx.workspace_id)
+    items = [
+        {"public_id": row.public_id, "title": row.title}
+        for row in rows
+        if q in row.public_id.lower() or q in (row.title or "").lower()
+    ]
     return {"items": items[:25]}
 
 
