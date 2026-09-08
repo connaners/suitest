@@ -26,7 +26,7 @@ versions: read the changelog before every upgrade and keep backups current.
 | `runner` | `ghcr.io/suiflex/suitest-runner` (prebuilt) | executes test runs from the queue |
 | `web` | `ghcr.io/suiflex/suitest-web` (prebuilt) | the web UI, served on port 3000 |
 
-App images are published per `launcher-v*` release; pin one with
+App images are published per `v*` release; pin one with
 `SUITEST_IMAGE_TAG=<version>`, or build from source with
 `docker compose ... up -d --build` (each service also carries a `build:`
 section).
