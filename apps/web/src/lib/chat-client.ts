@@ -15,32 +15,6 @@ export interface ChatMessageInput {
 }
 
 /**
- * Index just past the JSON object that starts at `start` (a `{`), string-aware.
- * Returns `text.length` for an object that never closes (a mid-stream fragment).
- */
-function endOfJsonObject(text: string, start: number): number {
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let j = start; j < text.length; j += 1) {
-    const ch = text[j];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === '"') inStr = false;
-    } else if (ch === '"') {
-      inStr = true;
-    } else if (ch === "{") {
-      depth += 1;
-    } else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return j + 1;
-    }
-  }
-  return text.length;
-}
-
-/**
  * Strip inline tool-call syntax from an assistant turn before display: the model
  * sometimes narrates its calls as bare `{"tool": …}` JSON (or `<tool_call>` /
  * ```json fences). The structured `tool` SSE frame is what drives the confirm
@@ -56,17 +30,34 @@ export function stripToolEnvelopes(raw: string): string {
   let out = "";
   let i = 0;
   while (i < text.length) {
-    const brace = text.indexOf("{", i);
-    if (brace === -1) {
-      out += text.slice(i);
-      break;
-    }
-    if (/^\{\s*"tool"\s*:/.test(text.slice(brace, brace + 48))) {
-      out += text.slice(i, brace); // keep the prose before the envelope
-      i = endOfJsonObject(text, brace); // …then skip the whole object
+    if (text[i] === "{" && /^\{\s*"tool"\s*:/.test(text.slice(i, i + 48))) {
+      // Walk to the matching close brace (string-aware) and drop the object.
+      let depth = 0;
+      let inStr = false;
+      let esc = false;
+      let j = i;
+      for (; j < text.length; j += 1) {
+        const ch = text[j];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (ch === "\\") esc = true;
+          else if (ch === '"') inStr = false;
+        } else if (ch === '"') {
+          inStr = true;
+        } else if (ch === "{") {
+          depth += 1;
+        } else if (ch === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            j += 1;
+            break;
+          }
+        }
+      }
+      i = j; // an unterminated object (mid-stream) swallows the rest until it completes
     } else {
-      out += text.slice(i, brace + 1);
-      i = brace + 1;
+      out += text[i];
+      i += 1;
     }
   }
   return out.replace(/\n{3,}/g, "\n\n").trim();
