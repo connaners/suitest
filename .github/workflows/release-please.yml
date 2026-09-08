@@ -1,28 +1,28 @@
 name: release-please
 
-# Version + changelog automation for every published artifact:
-#   - packages/mcp-npx     → @suiflex/suitest-mcp        → tag mcp-v*       → release-mcp.yml
-#   - packages/lifecycle   → suiflex-suitest-lifecycle   → tag lifecycle-v* → release-mcp.yml
-#   - sdk/typescript       → @suiflex/suitest-sdk        → tag tssdk-v*     → release-ts-sdk.yml
-#   - sdk/python           → suiflex-suitest-sdk         → tag pysdk-v*     → release-python-sdk.yml
-#   - cli                  → suiflex-suitest-cli         → tag cli-v*       → release-python-sdk.yml
-#   - packages/suitest-npx → @suiflex/suitest            → tag launcher-v*  → release-launcher.yml + release-images.yml
+# One version for the whole workspace. Every published artifact shares it and
+# ships on a single `vX.Y.Z` tag:
+#   - packages/suitest-npx → @suiflex/suitest         → release-launcher.yml + release-images.yml
+#   - packages/mcp-npx     → @suiflex/suitest-mcp      → release-mcp.yml
+#   - packages/lifecycle   → suiflex-suitest-lifecycle → release-mcp.yml
+#   - sdk/typescript       → @suiflex/suitest-sdk      → release-ts-sdk.yml
+#   - sdk/python           → suiflex-suitest-sdk       → release-python-sdk.yml
+#   - cli                  → suiflex-suitest-cli       → release-python-sdk.yml
 #
-# All six version independently — no `linked-versions` plugin. It was tried
-# and has no working mode here: merging on produces a group PR with no
-# ${component}/${version} in its title, so nothing can be tagged and every
-# later run aborts; merging off lets members land one at a time, and the
-# plugin then drags whichever member is ahead back down to the version of
-# whichever one had commits. See CONTRIBUTING.md before reintroducing it.
+# release-please tracks a single package rooted at the repo (`.`) and stamps
+# every package.json / pyproject.toml / __init__.py / VERSION from one number
+# via `extra-files`. All the publish workflows above trigger on `v*`, so one
+# tag publishes every package — each release ships all of them, changed or
+# not. Commit scopes (`feat(mcp):`, `fix(launcher):`, …) keep the changelog
+# readable about which parts moved.
 #
 # packages/mcp-npx vendors the lifecycle sources, and that coupling is
 # enforced by the `lifecycle-ships-with-mcp` job in ci.yml, not here.
 #
 # A maintainer starts release preparation explicitly (workflow_dispatch) to
-# open/update a release PR. Merging that PR finalizes it automatically into a
-# tag + GitHub Release, which then triggers the matching publish workflow
-# above via its `push: tags` trigger. Every other PR merge is ignored by the
-# job-level `if`, so this stays quiet on ordinary application PRs.
+# open/update the release PR. Merging that PR finalizes it into a tag +
+# GitHub Release, which then triggers the publish workflows via their
+# `push: tags` trigger. Every other PR merge is ignored by the job-level `if`.
 on:
   workflow_dispatch:
   pull_request:
@@ -32,6 +32,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release-please:
@@ -43,13 +47,84 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'release-please--'))
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v5
+      - uses: actions/checkout@v4
         with:
-          # A PAT is required for the release tag to trigger release-mcp.yml:
-          # tags pushed with the default GITHUB_TOKEN do NOT re-trigger other
-          # workflows. Set RELEASE_PLEASE_TOKEN (repo/workflow scope) to enable
-          # auto-publish; without it the tag is still created but the npm/PyPI
-          # publish must be started manually (re-push the tag or run the workflow).
+          ref: main
+          fetch-depth: 0
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          # A PAT is required for the release tag to trigger the publish
+          # workflows: tags pushed with the default GITHUB_TOKEN do NOT
+          # re-trigger other workflows. Set RELEASE_PLEASE_TOKEN
+          # (repo/workflow scope) to enable auto-publish; without it the tag
+          # is still created but each publish must be started manually
+          # (re-run the workflow with the tag).
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Credit contributors in the newest CHANGELOG.md block: a per-line
+      # @handle, a Thanks list, a New Contributors welcome. Runs on the
+      # pending release branch so the credited changelog is already on `main`
+      # by the time the release PR merges. Maintainer commits are left as-is.
+      - name: Attribute contributors in the changelog
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        run: |
+          branch=$(jq -r '.headBranchName // empty' <<<"$RELEASE_PR")
+          if [ -z "$branch" ]; then
+            branch=$(gh pr list --state open --label "autorelease: pending" \
+              --json headRefName --jq '.[0].headRefName')
+          fi
+          if [ -z "$branch" ]; then
+            echo "no open release PR; nothing to attribute"
+            exit 0
+          fi
+          # Copy the script out before switching branches: the release branch
+          # is only rebuilt when release-please rewrites it, so it can carry
+          # an older copy of this script than the commit that triggered this
+          # run.
+          script=$(mktemp)
+          cp .github/scripts/attribute_changelog.py "$script"
+          git fetch origin "$branch"
+          git checkout "$branch"
+          python3 "$script" CHANGELOG.md
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "changelog already attributed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: attribute changelog contributors"
+          git push origin "$branch"
+
+      # release-please builds the Release body from its own plain changelog
+      # notes. By the time a release is created the credited block is already
+      # on `main`. Replace the body with that block so the credited notes are
+      # what people see on the Release page. Skip if the block is missing or
+      # has no section yet, so a race can't wipe the notes.
+      - name: Use the credited changelog block as the Release body
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          git checkout main
+          version="${TAG#v}"
+          awk -v h="[$version](" '
+            index($0, "## " h) == 1 || index($0, "## Suitest: " h) == 1 { grab = 1; next }
+            grab && /^## / { exit }
+            grab { print }
+          ' CHANGELOG.md | sed '/./,$!d' > release-notes.md
+          if [ -s release-notes.md ] && grep -q '^### ' release-notes.md; then
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            echo "no credited block for $version yet; leaving the body as-is"
+          fi
+          rm -f release-notes.md

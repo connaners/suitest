@@ -436,7 +436,8 @@ Use the `--port` flag: `npx @suiflex/suitest onboard --port 5000`
 
 ## Releases
 
-Suitest ships as two independently versioned packages:
+The whole workspace shares one version and ships on one `vX.Y.Z` tag. The two
+packages you install directly:
 
 | Package | What it carries | Update with |
 |---------|----------------|-------------|

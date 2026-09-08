@@ -1,6 +1,6 @@
 name: release-launcher
 
-# Publish the local-bundle launcher on a `launcher-v*` tag:
+# Publish the local-bundle launcher on the shared `v*` release tag:
 #   - @suiflex/suitest → npm  (npx @suiflex/suitest onboard)
 #
 # The package ships the built assets inside the tarball (~3 MB): the web
@@ -11,7 +11,7 @@ name: release-launcher
 
 on:
   push:
-    tags: ["launcher-v*"]
+    tags: ["v*"]
   pull_request:
     paths:
       - "packages/suitest-npx/**"
@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing launcher release tag to publish to npm
+        description: Existing v* release tag to publish to npm
         required: true
         type: string
 
@@ -98,7 +98,7 @@ jobs:
       - name: Tag matches package version
         working-directory: packages/suitest-npx
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#launcher-v}"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
           [ "$TAG_VERSION" = "$PKG_VERSION" ] || {
             echo "tag $GITHUB_REF_NAME != package.json $PKG_VERSION" >&2; exit 1; }
@@ -150,7 +150,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          TAG_VERSION="${RELEASE_TAG#launcher-v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
           [ "$TAG_VERSION" = "$PKG_VERSION" ] || {
             echo "tag $RELEASE_TAG != package.json $PKG_VERSION" >&2; exit 1; }

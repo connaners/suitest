@@ -188,43 +188,32 @@ than from memory, and open an issue before you start.
 ## Commit conventions
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/), and
-`release-please` parses them to generate the changelog and version bump for
-every published artifact. Nothing is versioned by hand:
+`release-please` parses them to generate the changelog and version bump.
+Nothing is versioned by hand.
 
-| Path | Tag | Published as |
-|------|-----|--------------|
-| `packages/mcp-npx` | `mcp-v*` | npm `@suiflex/suitest-mcp` |
-| `packages/lifecycle` | `lifecycle-v*` | PyPI `suiflex-suitest-lifecycle` |
-| `sdk/typescript` | `tssdk-v*` | npm `@suiflex/suitest-sdk` |
-| `sdk/python` | `pysdk-v*` | PyPI `suiflex-suitest-sdk` |
-| `cli` | `cli-v*` | PyPI `suiflex-suitest-cli` |
-| `.` → `packages/suitest-npx` | `launcher-v*` | npm `@suiflex/suitest` + GHCR images |
+The whole workspace shares **one version** on **one `vX.Y.Z` tag**.
+release-please tracks a single package rooted at the repo and stamps every
+version file from that number; merging the release PR tags `vX.Y.Z`, and every
+publish workflow triggers on it:
 
-The six components version independently. Each has its own line, its own tag,
-and its own release PR; a release PR is safe to merge on its own, and the
-others rebase themselves on the next run.
+| Path | Published as |
+|------|--------------|
+| `.` → `packages/suitest-npx` | npm `@suiflex/suitest` + GHCR images |
+| `packages/mcp-npx` | npm `@suiflex/suitest-mcp` |
+| `packages/lifecycle` | PyPI `suiflex-suitest-lifecycle` |
+| `sdk/typescript` | npm `@suiflex/suitest-sdk` |
+| `sdk/python` | PyPI `suiflex-suitest-sdk` |
+| `cli` | PyPI `suiflex-suitest-cli` |
 
-`packages/mcp-npx` vendors the lifecycle sources at `prepack`, so a change to
-`packages/lifecycle` has to ship as a new `@suiflex/suitest-mcp` release too.
-CI enforces that: the `Lifecycle change bumps the npm package` job fails a PR
-that touches `packages/lifecycle` without touching `packages/mcp-npx`. A
-CHANGELOG or comment line in `packages/mcp-npx` is enough — it just has to
-give release-please a commit to attribute.
+Every release publishes every package, changed or not — that is the cost of a
+single version, and it keeps the six package numbers from ever disagreeing.
+Use a specific commit scope (`feat(mcp):`, `fix(launcher):`, `feat(cli):`) so
+the changelog still shows which parts of a release actually moved.
 
-> **Do not reach for the `linked-versions` plugin to automate that coupling.**
-> It was tried and has no working mode here, both of them proven on `main`:
->
-> - With merging on it folds the group into one PR titled
->   `chore(main): release <group> libraries` — hardcoded in the plugin, not
->   read from config. That title has no `${component}` and no `${version}`, so
->   nothing can be tagged, the merged PRs keep the `autorelease: pending`
->   label, and every later run aborts with *"There are untagged, merged
->   release PRs outstanding"* until the labels are cleared by hand.
-> - With merging off each member gets a taggable PR, but they are then merged
->   one at a time. `preconfigure()` takes the maximum across only the members
->   that had commits that cycle and forces it onto the rest, so the moment one
->   lands, the member that is ahead gets dragged back — merging lifecycle
->   0.9.0 produced a follow-up PR proposing lifecycle 0.8.1.
+`packages/mcp-npx` vendors the lifecycle sources at `prepack`. CI still
+enforces that a `packages/lifecycle` change also touches `packages/mcp-npx`
+(the `Lifecycle change bumps the npm package` job), so the vendored copy never
+drifts.
 
 The remaining packages — `apps/*` and `packages/{core,db,mcp,shared,agent}` —
 are never published on their own; they ship inside the launcher bundle and

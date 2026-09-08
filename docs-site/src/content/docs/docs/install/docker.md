@@ -18,7 +18,7 @@ backing services.
 | `web` | `ghcr.io/suiflex/suitest-web` | 3000 | Web UI (nginx) |
 | `runner` | `ghcr.io/suiflex/suitest-runner` | none | ARQ worker, dispatches steps through MCP |
 
-The app images are prebuilt and published to GHCR on every `launcher-v*`
+The app images are prebuilt and published to GHCR on every `v*`
 release, so a normal install **pulls** them — no local build. Building from
 source (`infra/docker/Dockerfile.*`) remains available for development.
 

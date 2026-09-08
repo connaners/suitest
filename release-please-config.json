@@ -1,66 +1,38 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "separate-pull-requests": true,
+  "release-type": "simple",
+  "include-component-in-tag": false,
   "always-update": true,
-  "include-component-in-tag": true,
+  "bootstrap-sha": "936c0870ad4cded1f1469c67f9df1b181aeb496c",
   "packages": {
-    "packages/mcp-npx": {
-      "release-type": "node",
-      "component": "mcp",
-      "package-name": "@suiflex/suitest-mcp",
-      "extra-files": ["VERSION"]
-    },
-    "packages/lifecycle": {
-      "release-type": "python",
-      "component": "lifecycle",
-      "package-name": "suiflex-suitest-lifecycle",
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "src/suitest_lifecycle/__init__.py"
-        }
-      ]
-    },
-    "sdk/typescript": {
-      "release-type": "node",
-      "component": "tssdk",
-      "package-name": "@suiflex/suitest-sdk"
-    },
-    "sdk/python": {
-      "release-type": "python",
-      "component": "pysdk",
-      "package-name": "suiflex-suitest-sdk",
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "src/suitest_sdk/__init__.py"
-        }
-      ]
-    },
-    "cli": {
-      "release-type": "python",
-      "component": "cli",
-      "package-name": "suiflex-suitest-cli",
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "src/suitest_cli/__init__.py"
-        }
-      ]
-    },
     ".": {
-      "release-type": "simple",
-      "component": "launcher",
-      "package-name": "@suiflex/suitest",
-      "changelog-path": "packages/suitest-npx/CHANGELOG.md",
+      "package-name": "suitest",
+      "changelog-path": "CHANGELOG.md",
       "extra-files": [
-        {
-          "type": "json",
-          "path": "packages/suitest-npx/package.json",
-          "jsonpath": "$.version"
-        }
-      ],
-      "exclude-paths": ["packages/mcp-npx", "packages/lifecycle", "sdk/typescript"]
+        { "type": "json", "path": "packages/suitest-npx/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/mcp-npx/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "sdk/typescript/package.json", "jsonpath": "$.version" },
+        { "type": "toml", "path": "packages/lifecycle/pyproject.toml", "jsonpath": "$.project.version" },
+        { "type": "toml", "path": "sdk/python/pyproject.toml", "jsonpath": "$.project.version" },
+        { "type": "toml", "path": "cli/pyproject.toml", "jsonpath": "$.project.version" },
+        "packages/mcp-npx/VERSION",
+        { "type": "generic", "path": "packages/lifecycle/src/suitest_lifecycle/__init__.py" },
+        { "type": "generic", "path": "sdk/python/src/suitest_sdk/__init__.py" },
+        { "type": "generic", "path": "cli/src/suitest_cli/__init__.py" }
+      ]
     }
-  }
+  },
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance Improvements" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "chore", "section": "Miscellaneous Chores", "hidden": true },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "style", "section": "Styles", "hidden": true },
+    { "type": "refactor", "section": "Code Refactoring", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "build", "section": "Build System", "hidden": true },
+    { "type": "ci", "section": "Continuous Integration", "hidden": true }
+  ]
 }

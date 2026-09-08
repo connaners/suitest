@@ -35,7 +35,7 @@ open http://localhost:3000
 ```
 
 Migrations run automatically (the one-shot `migrate` service). App images are
-prebuilt on GHCR per `launcher-v*` release; `SUITEST_IMAGE_TAG=<version>` pins
+prebuilt on GHCR per `v*` release; `SUITEST_IMAGE_TAG=<version>` pins
 one, `make docker-up-prod` builds from source instead. Log in with the
 `SUITEST_SUPERADMIN_EMAIL` / `SUITEST_SUPERADMIN_PASSWORD` you set in `.env`.
 
@@ -526,7 +526,7 @@ are published automatically from this repo:
 
 | Stage | Where |
 |------|------|
-| 1 | Tag `mcp-v*` → npm publish (OIDC) |
+| 1 | Tag `v*` → npm publish (OIDC) |
 | 2 | `scripts/build-dist-bundle.sh` builds a self-contained tarball (vendored `node_modules`, `.cmd` shim) and its `.sha256` |
 | 3 | Tarball attached to the GitHub Release for that tag |
 | 4 | `scripts/publish-installers.sh` renders `packaging/*.tmpl` and pushes to `suiflex/homebrew-tap` and `suiflex/scoop-bucket` |
