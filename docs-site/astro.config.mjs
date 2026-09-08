@@ -109,7 +109,7 @@ export default defineConfig({
         {
           label: "Releases",
           items: [
-            // Page is generated from packages/*/CHANGELOG.md by
+            // Page is generated from the root CHANGELOG.md by
             // scripts/sync-changelog.mjs (predev/prebuild) — never edited by hand.
             { label: "Release notes", link: "/docs/changelog/" },
           ],
