@@ -12,6 +12,10 @@ import { server } from "@/mocks/server";
 import { routeTree } from "@/routeTree.gen";
 import { CLOUD_CAPS, ZERO_CAPS, resetCaps, setCaps } from "@/test/capabilities";
 import { useActiveProject } from "@/stores/use-active-project";
+import { useActiveWorkspace } from "@/stores/use-active-workspace";
+
+// Onboarding dismissal is keyed per workspace (progress is per-workspace).
+const ONBOARDING_DISMISS_KEY = "suitest.onboardingDismissed:ws_demo";
 
 // Recharts doesn't play well with jsdom (ResponsiveContainer needs layout).
 // Stub the modules used by the dashboard chart so the lazy import resolves
@@ -75,8 +79,9 @@ describe("Dashboard screen", () => {
     resetCaps();
     vi.unstubAllGlobals();
     useActiveProject.setState({ projectId: null });
+    useActiveWorkspace.setState({ workspaceId: null });
     if (typeof localStorage !== "undefined") {
-      localStorage.removeItem("suitest.onboardingDismissed");
+      localStorage.removeItem(ONBOARDING_DISMISS_KEY);
     }
   });
 
@@ -186,8 +191,10 @@ describe("Dashboard screen", () => {
   });
 
   it("hides the onboarding card after dismissal and persists it", async () => {
+    // Dismissal is keyed per workspace, so an active workspace must be set.
+    useActiveWorkspace.setState({ workspaceId: "ws_demo" });
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem("suitest.onboardingDismissed", "1");
+      localStorage.setItem(ONBOARDING_DISMISS_KEY, "1");
     }
     renderDashboardWithProject("prj_demo");
     await screen.findByTestId("dashboard-kpis", undefined, { timeout: 3000 });
