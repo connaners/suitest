@@ -159,7 +159,17 @@ class InvitationService:
         existing = await self.session.scalar(
             select(User).where(func.lower(User.email) == invitation.email.lower())
         )
-        placeholder = existing is not None and (not existing.is_active or not existing.is_verified)
+        # A claimable placeholder is ONLY a row created by "add member by email":
+        # inactive, unverified, and carrying the unusable ``!``-prefixed hash
+        # (``create_placeholder_user``). A legitimate disabled account, or an
+        # active account still awaiting verification, has a real password hash
+        # and must go through the existing-account sign-in path instead.
+        placeholder = (
+            existing is not None
+            and existing.hashed_password.startswith("!")
+            and not existing.is_active
+            and not existing.is_verified
+        )
         if existing is None:
             user = User(
                 id=uuid.uuid4(),
