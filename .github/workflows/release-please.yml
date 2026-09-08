@@ -109,13 +109,14 @@ jobs:
       # on `main`. Replace the body with that block so the credited notes are
       # what people see on the Release page. Skip if the block is missing or
       # has no section yet, so a race can't wipe the notes.
-      - name: Use the credited changelog block as the Release body
+      - name: Set the Release title and use the credited changelog block as the body
         if: ${{ steps.release.outputs.release_created }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.release.outputs.tag_name }}
         run: |
           git checkout main
+          gh release edit "$TAG" --title "Suitest ${TAG}"
           version="${TAG#v}"
           awk -v h="[$version](" '
             index($0, "## " h) == 1 || index($0, "## Suitest: " h) == 1 { grab = 1; next }
