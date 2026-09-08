@@ -84,18 +84,26 @@ class AgentChatService:
             self._session, workspace_id=self._workspace_id, prompt_name="converse"
         )
         repo = AgentSessionRepo(self._session)
-        agent_session = await repo.create(
-            AgentSessionCreate(
-                workspace_id=self._workspace_id,
-                kind=AgentSessionKind.CONVERSATION,
-                model_id=model,
-                provider=credential.provider,
-                user_id=self._as_uuid(self._user_id),
-                prompt_version_id=prompt_row.id,
-                seed=request.seed,
-                temperature=0.3,
+        # Reuse an existing conversation when the panel supplies its id, so
+        # approve/reject follow-ups land in the same replayable thread.
+        agent_session = None
+        if request.session_id:
+            existing = await repo.get_by_id(request.session_id)
+            if existing is not None and existing.workspace_id == self._workspace_id:
+                agent_session = existing
+        if agent_session is None:
+            agent_session = await repo.create(
+                AgentSessionCreate(
+                    workspace_id=self._workspace_id,
+                    kind=AgentSessionKind.CONVERSATION,
+                    model_id=model,
+                    provider=credential.provider,
+                    user_id=self._as_uuid(self._user_id),
+                    prompt_version_id=prompt_row.id,
+                    seed=request.seed,
+                    temperature=0.3,
+                )
             )
-        )
 
         # Persist the latest user turn (the rest is prior context already stored).
         last_user = next((m for m in reversed(request.messages) if m.role == "user"), None)
@@ -125,9 +133,62 @@ class AgentChatService:
             ProjectRepo(self._session),
         )
 
+        # Deterministic approval path: the panel re-sends the exact envelope
+        # the user approved. Execute it FIRST and feed the result to the
+        # model — approval never depends on the model re-emitting the tool.
+        approved = request.approved_tool
+        if approved is not None:
+            tool_data: dict[str, object] = {
+                "tool": approved.tool,
+                "arguments": approved.arguments,
+                "confirmed": True,
+                "agent_session_id": agent_session_id,
+            }
+            if publish is not None:
+                await publish({"event": "agent.tool.call", "data": tool_data})
+            yield ChatSseEvent(kind="tool", data=tool_data)
+            try:
+                result = await execute_tool(
+                    approved.tool,
+                    approved.arguments,
+                    session=self._session,
+                    ctx=ctx,
+                    case_service=case_service,
+                    confirmed=True,
+                )
+                result_json = json.dumps(result, default=str)
+                await repo.add_message(
+                    agent_session_id,
+                    role=MessageRole.TOOL,
+                    content=f"{approved.tool} executed (user-approved): {result_json}",
+                )
+                messages.append(
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            f"TOOL RESULT (user-approved execution of {approved.tool}): "
+                            f"{result_json}\nReport the outcome to the user concisely."
+                        ),
+                    )
+                )
+            except ToolInputError as exc:
+                messages.append(
+                    ChatMessage(
+                        role="user",
+                        content=f"TOOL RESULT {approved.tool}: {json.dumps({'error': str(exc)})}",
+                    )
+                )
+            except ToolDeniedError:
+                messages.append(
+                    ChatMessage(
+                        role="user",
+                        content=f"TOOL RESULT {approved.tool}: permission denied.",
+                    )
+                )
+            await self._session.commit()
+            self._session.expire_all()
+
         max_tool_rounds = 4
-        accumulated = ""
-        tokens_out = 0
         for _round in range(max_tool_rounds):
             call = ModelCall(model=model, messages=messages, seed=request.seed, temperature=0.3)
             provider = provider_for_credential(credential)
@@ -190,7 +251,7 @@ class AgentChatService:
                 )
             )
             confirmed = bool(tool_obj.get("confirmed")) or user_confirmed
-            tool_data: dict[str, object] = {
+            tool_data = {
                 "tool": tool,
                 "arguments": arguments,
                 "confirmed": confirmed,

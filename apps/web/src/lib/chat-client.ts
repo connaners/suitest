@@ -37,6 +37,17 @@ export interface ChatStreamHandlers {
 const isTestEnv = typeof process !== "undefined" && process.env["NODE_ENV"] === "test";
 const SSE_BASE = isTestEnv ? "http://localhost/api/v1" : "/api/v1";
 
+/** Replay a stored conversation: [{role, content}, ...] in order. */
+export async function fetchChatHistory(sessionId: string): Promise<ChatMessageInput[]> {
+  const wsId = useActiveWorkspace.getState().workspaceId;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (wsId) headers["X-Workspace-Id"] = wsId;
+  const res = await fetch(`${SSE_BASE}/agent/chat/${sessionId}/history`, { headers });
+  if (!res.ok) return [];
+  const body = (await res.json()) as { role: string; content: string }[];
+  return body.map((m) => ({ role: m.role as ChatMessageInput["role"], content: m.content }));
+}
+
 function streamHeaders(): HeadersInit {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const wsId = useActiveWorkspace.getState().workspaceId;
@@ -79,12 +90,21 @@ export async function streamChat(
   messages: ChatMessageInput[],
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
+  options?: { approvedTool?: ChatToolEvent | null; sessionId?: string | null },
 ): Promise<void> {
+  const body: Record<string, unknown> = { messages };
+  if (options?.sessionId) body["session_id"] = options.sessionId;
+  if (options?.approvedTool) {
+    body["approved_tool"] = {
+      tool: options.approvedTool.tool,
+      arguments: options.approvedTool.arguments,
+    };
+  }
   const res = await fetch(`${SSE_BASE}/agent/chat`, {
     method: "POST",
     headers: streamHeaders(),
     credentials: "include",
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify(body),
     signal: signal ?? null,
   });
 
