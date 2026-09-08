@@ -128,9 +128,10 @@ describe("Test Cases screen", () => {
     expect(
       await screen.findByTestId("case-detail", undefined, { timeout: 3000 }),
     ).toBeInTheDocument();
-    // Steps live under the Steps tab; open it and assert readable steps render.
+    // Steps live under the Steps tab — now an editable list (one row per
+    // step) instead of the read-only card list.
     await user.click(await screen.findByTestId("case-tab-steps"));
-    expect((await screen.findAllByTestId("case-step")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByTestId("step-row")).length).toBeGreaterThan(0);
   });
 
   it("M1d-23: clicking Delete fires DELETE /test-cases/:id", async () => {

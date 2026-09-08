@@ -104,9 +104,11 @@ describe("StepEditor", () => {
     expect(screen.getByTestId("step-drag-handle")).toBeInTheDocument();
   });
 
-  it("does NOT show drag handle for draft steps (id starts with __new__)", () => {
+  it("shows drag handle for draft steps too (drafts reorder client-side)", () => {
     renderEditor([mkStep({ id: "__new__draft" })]);
-    expect(screen.queryByTestId("step-drag-handle")).toBeNull();
+    expect(screen.getByTestId("step-drag-handle")).toBeInTheDocument();
+    // The draft is visually marked so users can tell it is unsaved.
+    expect(screen.getByTestId("step-draft-badge")).toBeInTheDocument();
   });
 
   // ---------------------------------------------------------------------------
