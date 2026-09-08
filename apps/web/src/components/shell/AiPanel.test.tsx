@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -115,5 +116,19 @@ describe("<AiPanel>", () => {
     // beforeEach already sets capabilities=null; do nothing.
     const { container } = render(<AiPanel />);
     expect(container.textContent).toBe("");
+  });
+
+  it("toggles auto-approve and surfaces the warning", async () => {
+    setCaps(CLOUD_ASSIST_CAPS);
+    localStorage.removeItem("suitest.agentAutoApprove");
+    render(<AiPanel />);
+    const toggle = screen.getByTestId("ai-panel-autoapprove");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByTestId("ai-panel-autoapprove-warning")).toBeNull();
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("ai-panel-autoapprove-warning")).toBeInTheDocument();
+    expect(localStorage.getItem("suitest.agentAutoApprove")).toBe("1");
   });
 });

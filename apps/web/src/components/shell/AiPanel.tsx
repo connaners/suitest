@@ -1,4 +1,4 @@
-import { Send, Sparkles } from "lucide-react";
+import { Loader2, Send, ShieldAlert, Sparkles, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Gated } from "@/components/gating/Gated";
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   fetchChatHistory,
   streamChat,
+  stripToolEnvelopes,
   type ChatMessageInput,
   type ChatToolEvent,
 } from "@/lib/chat-client";
@@ -21,10 +22,25 @@ import { useCapabilities } from "@/stores/use-capabilities";
  * The thread is stored server-side keyed by `agent_session_id` and restored on
  * mount, so a reload keeps the conversation. Pending mutation tool cards offer
  * Approve / Reject: approving re-sends the tool envelope with the user's
- * confirmation; rejecting tells the agent to drop it.
+ * confirmation; rejecting tells the agent to drop it. The "auto-approve" toggle
+ * next to Send applies proposed edits without the per-card click — the toggle
+ * itself is the explicit human decision (AUTONOMY.md), surfaced with a warning.
  */
 
 const SESSION_KEY = "suitest.agentSessionId";
+const AUTO_APPROVE_KEY = "suitest.agentAutoApprove";
+/** Tools that mutate a case — only these need (or can be auto-) approved. */
+const MUTATION_TOOLS = new Set(["case.set_steps", "case.update_meta"]);
+/** Stop an auto-approve chain from running away across model rounds. */
+const AUTO_CHAIN_LIMIT = 6;
+
+function readAutoApprove(): boolean {
+  try {
+    return localStorage.getItem(AUTO_APPROVE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -41,6 +57,20 @@ export function AiPanel(): React.ReactElement {
   );
 }
 
+function ThinkingDots(): React.ReactElement {
+  return (
+    <span className="inline-flex items-center gap-1 py-1" aria-label="Agent is working">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1.5 w-1.5 animate-pulse rounded-full bg-fg-4"
+          style={{ animationDelay: `${i * 150}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 function AiPanelInner(): React.ReactElement {
   const capabilities = useCapabilities((s) => s.capabilities);
   const provider = capabilities?.llm?.provider
@@ -54,8 +84,23 @@ function AiPanelInner(): React.ReactElement {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [autoApprove, setAutoApprove] = useState(readAutoApprove);
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<string | null>(localStorage.getItem(SESSION_KEY));
+  const threadEndRef = useRef<HTMLDivElement>(null);
+  // Mirrors for the async stream callbacks, which capture stale state otherwise.
+  const autoApproveRef = useRef(autoApprove);
+  const pendingToolRef = useRef<ChatToolEvent | null>(null);
+  const autoChainRef = useRef(0);
+
+  useEffect(() => {
+    autoApproveRef.current = autoApprove;
+  }, [autoApprove]);
+
+  // Keep the newest turn / streamed token in view.
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ block: "end" });
+  }, [turns, streaming]);
 
   // Restore the last conversation on mount so a reload keeps the thread.
   useEffect(() => {
@@ -70,9 +115,23 @@ function AiPanelInner(): React.ReactElement {
     });
   }, []);
 
+  const toggleAutoApprove = (): void => {
+    setAutoApprove((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(AUTO_APPROVE_KEY, next ? "1" : "0");
+      } catch {
+        /* private mode — in-memory only */
+      }
+      return next;
+    });
+  };
+
   const send = async (): Promise<void> => {
     const text = input.trim();
     if (!text || streaming) return;
+    autoChainRef.current = 0; // fresh user turn — reset the auto-approve budget
+    setInput("");
     await runTurn(text);
   };
 
@@ -104,6 +163,7 @@ function AiPanelInner(): React.ReactElement {
     options?: { approvedTool?: ChatToolEvent },
   ): Promise<void> => {
     setError(null);
+    pendingToolRef.current = null;
     const history: ChatMessageInput[] = [
       ...turns.map((t) => ({ role: t.role, content: t.content }) satisfies ChatMessageInput),
       { role: "user", content: text },
@@ -140,6 +200,7 @@ function AiPanelInner(): React.ReactElement {
           },
           onToken: appendDelta,
           onTool: (tool) => {
+            pendingToolRef.current = tool;
             setTurns((prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
@@ -159,9 +220,29 @@ function AiPanelInner(): React.ReactElement {
     } finally {
       setStreaming(false);
       abortRef.current = null;
+      maybeAutoApprove();
     }
   };
 
+  /** After a stream settles: apply the proposed edit if auto-approve is on. */
+  const maybeAutoApprove = (): void => {
+    const pending = pendingToolRef.current;
+    pendingToolRef.current = null;
+    if (
+      !autoApproveRef.current ||
+      pending === null ||
+      !MUTATION_TOOLS.has(pending.tool) ||
+      autoChainRef.current >= AUTO_CHAIN_LIMIT
+    ) {
+      return;
+    }
+    autoChainRef.current += 1;
+    // Defer so the streaming=false state flush lands before the next run.
+    setTimeout(() => {
+      clearPendingTool(pending);
+      void runTurn("Approved — apply it.", { approvedTool: pending });
+    }, 0);
+  };
 
   return (
     <aside
@@ -219,64 +300,82 @@ function AiPanelInner(): React.ReactElement {
           </div>
         ) : null}
 
-        {turns.map((turn, i) => (
-          <div
-            key={i}
-            className={`rounded-md border px-3 py-2.5 ${
-              turn.role === "user"
-                ? "border-border-subtle bg-bg-elev-2"
-                : "border-violet/30 bg-violet/5"
-            }`}
-          >
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.07em] text-fg-5">
-              {turn.role === "user" ? "You" : "Agent"}
-            </div>
-            <p className="whitespace-pre-wrap text-[12.5px] text-fg-2">
-              {turn.content || (turn.role === "assistant" && streaming ? "…" : "")}
-            </p>
-            {turn.tool ? (
-              <div
-                className="mt-2 rounded border border-amber/30 bg-amber/10 px-2 py-1.5 text-[11.5px] text-amber"
-                data-testid="ai-tool-confirm"
-              >
-                <p className="mb-1.5">
-                  Agent wants to run{" "}
-                  <span className="font-mono font-semibold">{turn.tool.tool}</span>
-                  {turn.tool.tool === "case.set_steps" || turn.tool.tool === "case.update_meta"
-                    ? " — review the arguments above before approving."
-                    : "."}
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    data-testid="ai-tool-approve"
-                    disabled={streaming}
-                    onClick={() => {
-                      const t = turn.tool;
-                      if (t) void approveTool(t);
-                    }}
-                    className="rounded-md bg-accent px-2.5 py-1 text-[11.5px] font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
-                  >
-                    Approve &amp; run
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="ai-tool-reject"
-                    disabled={streaming}
-                    onClick={() => {
-                      const t = turn.tool;
-                      if (t) rejectTool(t);
-                    }}
-                    className="rounded-md border border-border bg-bg-elev-1 px-2.5 py-1 text-[11.5px] font-medium text-fg-2 hover:bg-bg-elev-2 disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                </div>
+        {turns.map((turn, i) => {
+          const body = turn.role === "assistant" ? stripToolEnvelopes(turn.content) : turn.content;
+          const isLast = i === turns.length - 1;
+          return (
+            <div
+              key={i}
+              className={`rounded-md border px-3 py-2.5 ${
+                turn.role === "user"
+                  ? "border-border-subtle bg-bg-elev-2"
+                  : "border-violet/30 bg-violet/5"
+              }`}
+            >
+              <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.07em] text-fg-5">
+                {turn.role === "user" ? "You" : "Agent"}
               </div>
-            ) : null}
-          </div>
-        ))}
+              {body ? (
+                <p className="whitespace-pre-wrap text-[12.5px] text-fg-2">{body}</p>
+              ) : turn.role === "assistant" && streaming && isLast ? (
+                <ThinkingDots />
+              ) : null}
+              {turn.tool ? (
+                <div
+                  className="mt-2 rounded border border-amber/30 bg-amber/10 px-2 py-1.5 text-[11.5px] text-amber"
+                  data-testid="ai-tool-confirm"
+                >
+                  <p className="mb-1.5">
+                    Agent wants to run{" "}
+                    <span className="font-mono font-semibold">{turn.tool.tool}</span>
+                    {turn.tool.tool === "case.set_steps" || turn.tool.tool === "case.update_meta"
+                      ? " — review the arguments above before approving."
+                      : "."}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="ai-tool-approve"
+                      disabled={streaming}
+                      onClick={() => {
+                        const t = turn.tool;
+                        if (t) void approveTool(t);
+                      }}
+                      className="rounded-md bg-accent px-2.5 py-1 text-[11.5px] font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
+                    >
+                      Approve &amp; run
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="ai-tool-reject"
+                      disabled={streaming}
+                      onClick={() => {
+                        const t = turn.tool;
+                        if (t) rejectTool(t);
+                      }}
+                      className="rounded-md border border-border bg-bg-elev-1 px-2.5 py-1 text-[11.5px] font-medium text-fg-2 hover:bg-bg-elev-2 disabled:opacity-50"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        <div ref={threadEndRef} />
       </div>
+
+      {streaming ? (
+        <div
+          className="flex items-center gap-2 border-t border-border-subtle px-3 py-1.5 text-[11px] text-fg-4"
+          data-testid="ai-panel-working"
+          aria-live="polite"
+        >
+          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+          Agent is working…
+        </div>
+      ) : null}
 
       {error ? (
         <div className="border-t border-border-subtle px-3 py-2 text-[11.5px] text-red">
@@ -304,6 +403,23 @@ function AiPanelInner(): React.ReactElement {
           <Button
             type="button"
             size="icon-sm"
+            variant={autoApprove ? "default" : "outline"}
+            aria-pressed={autoApprove}
+            aria-label="Auto-approve agent edits"
+            title={
+              autoApprove
+                ? "Auto-approve is ON — proposed edits apply without asking"
+                : "Auto-approve agent edits"
+            }
+            onClick={toggleAutoApprove}
+            className={autoApprove ? "" : "border-border bg-bg-elev-2 text-fg-1"}
+            data-testid="ai-panel-autoapprove"
+          >
+            <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
             variant="outline"
             disabled={streaming || input.trim().length === 0}
             aria-label="Send"
@@ -314,6 +430,15 @@ function AiPanelInner(): React.ReactElement {
             <Send className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
         </div>
+        {autoApprove ? (
+          <p
+            className="mt-1.5 flex items-center gap-1 text-[10.5px] text-amber"
+            data-testid="ai-panel-autoapprove-warning"
+          >
+            <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden="true" />
+            Auto-approving agent edits without confirmation
+          </p>
+        ) : null}
       </div>
     </aside>
   );
