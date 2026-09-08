@@ -436,7 +436,8 @@ Gunakan flag `--port`: `npx @suiflex/suitest onboard --port 5000`
 
 ## Release Notes
 
-Suitest ships sebagai dua package independen:
+Seluruh workspace berbagi satu versi dan rilis lewat satu tag `vX.Y.Z`. Dua
+package yang kamu install langsung:
 
 | Package | Fungsi | Update dengan |
 |---------|--------|---------------|
