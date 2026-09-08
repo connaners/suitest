@@ -328,9 +328,6 @@ test("test_login_and_create_manual_case_then_run_pass", async ({ page }) => {
   // (Radix unmounts inactive tab content), so open it before asserting.
   await page.getByTestId("case-tab-steps").click();
 
-  // The editor sits inside a collapsed "Edit steps" <details>; expand it.
-  await page.getByText("Edit steps").click();
-
   // Verify the step editor is visible
   await expect(page.getByTestId("step-editor")).toBeVisible({ timeout: 8_000 });
 

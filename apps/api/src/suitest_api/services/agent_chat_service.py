@@ -60,6 +60,54 @@ class AgentChatService:
         self._user_id = user_id
 
     @staticmethod
+    def _strip_tool_fences(raw: str) -> str:
+        """Remove <tool_call> wrappers and json code fences from a model turn."""
+        if "<tool_call>" not in raw and "```json" not in raw:
+            return raw
+        return (
+            raw.replace("<tool_call>", "")
+            .replace("</tool_call>", "")
+            .replace("```json", "")
+            .replace("```", "")
+            .strip()
+        )
+
+    @staticmethod
+    def _last_tool_envelope(raw: str) -> dict[str, object]:
+        """Return the LAST ``{"tool": ...}`` object in a model turn.
+
+        A round may carry SEVERAL envelopes (e.g. case.get then
+        case.set_steps); the last one is the newest request.
+        """
+        tool_obj: dict[str, object] = {}
+        scan = raw
+        while True:
+            start = scan.find("{")
+            if start == -1:
+                break
+            candidate = parse_json_object(scan[start:])
+            if "tool" not in candidate:
+                break
+            tool_obj = candidate
+            end_idx = scan.rfind("}")
+            scan = scan[end_idx + 1 :] if end_idx != -1 else ""
+        return tool_obj
+
+    @staticmethod
+    def _user_confirmed(tool_obj: dict[str, object], user_text: str) -> bool:
+        """A mutation runs only on an explicit human decision (AUTONOMY.md).
+
+        The model has no authority to confirm; the user's own message
+        granting permission ("confirmed", "i approve", …) is, and typing
+        one in the panel is explicit.
+        """
+        if bool(tool_obj.get("confirmed")):
+            return True
+        return any(
+            marker in user_text for marker in ("confirmed", "i approve", "apply it", "yes, apply")
+        )
+
+    @staticmethod
     def _as_uuid(user_id: str | None) -> uuid.UUID | None:
         import uuid as _uuid
 
@@ -200,33 +248,8 @@ class AgentChatService:
                 if chunk.done:
                     tokens_out = chunk.tokens_out
 
-            raw = round_accumulated
-            # Providers wrap tool requests in <tool_call>…</tool_call> or
-            # ```json fences — strip them so the parser sees the envelope.
-            if "<tool_call>" in raw or "```json" in raw:
-                raw = (
-                    raw.replace("<tool_call>", "")
-                    .replace("</tool_call>", "")
-                    .replace("```json", "")
-                    .replace("```", "")
-                    .strip()
-                )
-            # A round may carry SEVERAL tool envelopes (e.g. case.get then
-            # case.set_steps). The LAST one is the newest request.
-            tool_obj: dict[str, object] = {}
-            scan = raw
-            while True:
-                start = scan.find("{")
-                if start == -1:
-                    break
-                candidate = parse_json_object(scan[start:])
-                if "tool" in candidate:
-                    tool_obj = candidate
-                    consumed = scan[start:]
-                    end_idx = consumed.rfind("}")
-                    scan = consumed[end_idx + 1 :] if end_idx != -1 else ""
-                else:
-                    break
+            raw = self._strip_tool_fences(round_accumulated)
+            tool_obj = self._last_tool_envelope(raw)
 
             tool = tool_obj.get("tool")
             if not (isinstance(tool, str) and tool.strip()):
@@ -240,17 +263,7 @@ class AgentChatService:
             # authority — AUTONOMY.md requires an explicit human decision, and
             # typing one in the panel is explicit.
             user_text = last_user.content.lower() if last_user else ""
-            user_confirmed = any(
-                marker in user_text
-                for marker in (
-                    "confirmed",
-                    "i approve",
-                    "approve the change",
-                    "apply it",
-                    "yes, apply",
-                )
-            )
-            confirmed = bool(tool_obj.get("confirmed")) or user_confirmed
+            confirmed = self._user_confirmed(tool_obj, user_text)
             tool_data = {
                 "tool": tool,
                 "arguments": arguments,
