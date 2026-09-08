@@ -14,7 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_core.capabilities import TierFlag
+from suitest_db.repositories.agent_sessions import AgentSessionRepo
 from suitest_db.repositories.llm_configs import LLMConfigRepo
+from suitest_shared.domain.enums import MessageRole
 from suitest_shared.schemas.agent_chat import ChatRequest, ChatSseEvent
 
 from suitest_api.auth.db import get_async_session
@@ -69,3 +71,29 @@ async def agent_chat(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/agent/chat/{session_id}/history")
+async def agent_chat_history(
+    session_id: str,
+    ctx: TenantContext = Depends(require_workspace_membership),
+    session: AsyncSession = Depends(get_async_session),
+) -> list[dict[str, str]]:
+    """Replay a stored conversation so the panel survives a page reload.
+
+    USER turns map to ``user``; AGENT turns to ``assistant``. 404 when the
+    session does not exist or belongs to another workspace (no scoping leak).
+    """
+    repo = AgentSessionRepo(session)
+    agent_session = await repo.get_by_id(session_id)
+    if agent_session is None or agent_session.workspace_id != ctx.workspace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="session not found")
+    messages = await repo.list_messages(session_id)
+    return [
+        {
+            "role": "assistant" if m.role == MessageRole.AGENT else "user",
+            "content": m.content,
+        }
+        for m in messages
+        if m.role in (MessageRole.USER, MessageRole.AGENT)
+    ]

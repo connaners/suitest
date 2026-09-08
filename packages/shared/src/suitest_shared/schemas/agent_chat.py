@@ -30,6 +30,18 @@ class ChatRequest(BaseModel):
     messages: Annotated[list[ChatMessageInput], Field(min_length=1, max_length=100)]
     session_id: str | None = None
     seed: int | None = None
+    approved_tool: ConfirmedTool | None = None
+
+
+class ConfirmedTool(BaseModel):
+    """A previously-proposed tool call the user approved in the panel.
+
+    Executed deterministically before the next model round — approval must
+    never depend on the model re-emitting the envelope.
+    """
+
+    tool: Annotated[str, Field(min_length=1, max_length=64)]
+    arguments: dict[str, object] = Field(default_factory=dict)
 
 
 class ChatSseEvent(BaseModel):

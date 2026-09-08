@@ -1,9 +1,14 @@
 import { Send, Sparkles } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Gated } from "@/components/gating/Gated";
 import { Button } from "@/components/ui/button";
-import { type ChatMessageInput, type ChatToolEvent, streamChat } from "@/lib/chat-client";
+import {
+  fetchChatHistory,
+  streamChat,
+  type ChatMessageInput,
+  type ChatToolEvent,
+} from "@/lib/chat-client";
 import { providerLabel } from "@/lib/llm-vendors";
 import { useCapabilities } from "@/stores/use-capabilities";
 
@@ -12,20 +17,28 @@ import { useCapabilities } from "@/stores/use-capabilities";
  * so it renders `null` in ZERO tier and the layout grid collapses (handled
  * upstream in `_app.tsx`). In LOCAL/CLOUD it streams a conversation-mode reply
  * over SSE (`POST /agent/chat`, M3-12 / M3-13).
+ *
+ * The thread is stored server-side keyed by `agent_session_id` and restored on
+ * mount, so a reload keeps the conversation. Pending mutation tool cards offer
+ * Approve / Reject: approving re-sends the tool envelope with the user's
+ * confirmation; rejecting tells the agent to drop it.
  */
-export function AiPanel(): React.ReactElement {
-  return (
-    <Gated feature="ai_conversation" fallback={null}>
-      <AiPanelInner />
-    </Gated>
-  );
-}
+
+const SESSION_KEY = "suitest.agentSessionId";
 
 interface ChatTurn {
   role: "user" | "assistant";
   content: string;
   /** Pending tool-call request surfaced as a confirm card (autonomy hard rail). */
   tool?: ChatToolEvent;
+}
+
+export function AiPanel(): React.ReactElement {
+  return (
+    <Gated feature="ai_conversation" fallback={null}>
+      <AiPanelInner />
+    </Gated>
+  );
 }
 
 function AiPanelInner(): React.ReactElement {
@@ -40,14 +53,57 @@ function AiPanelInner(): React.ReactElement {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+  const sessionRef = useRef<string | null>(localStorage.getItem(SESSION_KEY));
+
+  // Restore the last conversation on mount so a reload keeps the thread.
+  useEffect(() => {
+    const saved = sessionRef.current;
+    if (!saved) {
+      setLoading(false);
+      return;
+    }
+    void fetchChatHistory(saved).then((history) => {
+      setTurns(history.map((m) => ({ role: m.role as ChatTurn["role"], content: m.content })));
+      setLoading(false);
+    });
+  }, []);
 
   const send = async (): Promise<void> => {
     const text = input.trim();
     if (!text || streaming) return;
-    setError(null);
-    setInput("");
+    await runTurn(text);
+  };
 
+  /** Approve a pending mutation: re-send the exact envelope for execution. */
+  const approveTool = (tool: ChatToolEvent): void => {
+    if (streaming) return;
+    clearPendingTool(tool);
+    void runTurn("Approved — apply it.", { approvedTool: tool });
+  };
+
+  /** Reject a pending mutation: tell the agent to drop the request. */
+  const rejectTool = (tool: ChatToolEvent): void => {
+    clearPendingTool(tool);
+    void runTurn(`Rejected the ${tool.tool} request — do not apply it.`);
+  };
+  const clearPendingTool = (tool: ChatToolEvent): void => {
+    setTurns((prev) =>
+      prev.map((t) => {
+        if (t.tool !== tool) return t;
+        const rest: ChatTurn = { ...t };
+        delete rest.tool;
+        return rest;
+      }),
+    );
+  };
+
+  const runTurn = async (
+    text: string,
+    options?: { approvedTool?: ChatToolEvent },
+  ): Promise<void> => {
+    setError(null);
     const history: ChatMessageInput[] = [
       ...turns.map((t) => ({ role: t.role, content: t.content }) satisfies ChatMessageInput),
       { role: "user", content: text },
@@ -78,6 +134,10 @@ function AiPanelInner(): React.ReactElement {
       await streamChat(
         history,
         {
+          onProgress: (sessionId) => {
+            sessionRef.current = sessionId;
+            localStorage.setItem(SESSION_KEY, sessionId);
+          },
           onToken: appendDelta,
           onTool: (tool) => {
             setTurns((prev) => {
@@ -92,6 +152,7 @@ function AiPanelInner(): React.ReactElement {
           onError: (message) => setError(message),
         },
         controller.signal,
+        { approvedTool: options?.approvedTool ?? null, sessionId: sessionRef.current },
       );
     } catch {
       setError("The chat stream was interrupted.");
@@ -100,6 +161,7 @@ function AiPanelInner(): React.ReactElement {
       abortRef.current = null;
     }
   };
+
 
   return (
     <aside
@@ -122,16 +184,37 @@ function AiPanelInner(): React.ReactElement {
             {provider}:{model} · {autonomy}
           </span>
         </div>
+        {turns.length > 0 ? (
+          <button
+            type="button"
+            aria-label="Clear conversation"
+            data-testid="ai-panel-clear"
+            onClick={() => {
+              sessionRef.current = null;
+              localStorage.removeItem(SESSION_KEY);
+              setTurns([]);
+            }}
+            className="ml-auto rounded-md px-2 py-1 text-[11px] text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1"
+          >
+            New chat
+          </button>
+        ) : null}
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4" data-testid="ai-panel-thread">
-        {turns.length === 0 ? (
+        {loading ? (
+          <div className="rounded-md border border-border bg-bg-elev-2 px-3 py-2.5 text-[12px] text-fg-4">
+            Restoring conversation…
+          </div>
+        ) : null}
+        {!loading && turns.length === 0 ? (
           <div className="rounded-md border border-border bg-bg-elev-2 px-3 py-2.5">
             <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.07em] text-fg-5">
               Agent
             </div>
             <p className="text-[12.5px] text-fg-3">
-              Ask about cases, runs, defects, or coverage. I stream answers live.
+              Ask about cases, runs, defects, or coverage — or ask me to edit a test
+              case and I&apos;ll propose the change for your approval.
             </p>
           </div>
         ) : null}
@@ -152,9 +235,43 @@ function AiPanelInner(): React.ReactElement {
               {turn.content || (turn.role === "assistant" && streaming ? "…" : "")}
             </p>
             {turn.tool ? (
-              <div className="mt-2 rounded border border-amber/30 bg-amber/10 px-2 py-1.5 text-[11.5px] text-amber">
-                Agent wants to run <span className="font-mono">{turn.tool.tool}</span> — confirm
-                required before any mutation.
+              <div
+                className="mt-2 rounded border border-amber/30 bg-amber/10 px-2 py-1.5 text-[11.5px] text-amber"
+                data-testid="ai-tool-confirm"
+              >
+                <p className="mb-1.5">
+                  Agent wants to run{" "}
+                  <span className="font-mono font-semibold">{turn.tool.tool}</span>
+                  {turn.tool.tool === "case.set_steps" || turn.tool.tool === "case.update_meta"
+                    ? " — review the arguments above before approving."
+                    : "."}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid="ai-tool-approve"
+                    disabled={streaming}
+                    onClick={() => {
+                      const t = turn.tool;
+                      if (t) void approveTool(t);
+                    }}
+                    className="rounded-md bg-accent px-2.5 py-1 text-[11.5px] font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
+                  >
+                    Approve &amp; run
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="ai-tool-reject"
+                    disabled={streaming}
+                    onClick={() => {
+                      const t = turn.tool;
+                      if (t) rejectTool(t);
+                    }}
+                    className="rounded-md border border-border bg-bg-elev-1 px-2.5 py-1 text-[11.5px] font-medium text-fg-2 hover:bg-bg-elev-2 disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                </div>
               </div>
             ) : null}
           </div>

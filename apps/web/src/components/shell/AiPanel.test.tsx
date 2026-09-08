@@ -96,7 +96,9 @@ describe("<AiPanel>", () => {
   it("renders the empty-thread agent greeting", () => {
     setCaps(CLOUD_ASSIST_CAPS);
     render(<AiPanel />);
-    expect(screen.getByTestId("ai-panel-thread")).toHaveTextContent(/I stream answers live/i);
+    expect(screen.getByTestId("ai-panel-thread")).toHaveTextContent(
+      /or ask me to edit a test/i,
+    );
   });
 
   it("renders an enabled composer (send gated until input typed)", () => {
