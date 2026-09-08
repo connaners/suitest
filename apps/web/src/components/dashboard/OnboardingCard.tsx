@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Check, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api-client";
 import { useActiveProject } from "@/stores/use-active-project";
@@ -15,11 +15,15 @@ import { useActiveWorkspace } from "@/stores/use-active-workspace";
  * list queries — no backend changes required.
  */
 
-const DISMISS_KEY = "suitest.onboardingDismissed";
+// Onboarding progress is per-workspace, so the dismissal must be too — a global
+// key hid the card in every other workspace after one dismiss.
+function dismissKey(workspaceId: string): string {
+  return `suitest.onboardingDismissed:${workspaceId}`;
+}
 
-function isDismissed(): boolean {
-  if (typeof localStorage === "undefined") return false;
-  return localStorage.getItem(DISMISS_KEY) === "1";
+function isDismissed(workspaceId: string | null): boolean {
+  if (workspaceId === null || typeof localStorage === "undefined") return false;
+  return localStorage.getItem(dismissKey(workspaceId)) === "1";
 }
 
 interface OnboardingStep {
@@ -44,7 +48,12 @@ function StepNumber({ n }: { n: number }): React.ReactElement {
 export function OnboardingCard(): React.ReactElement | null {
   const projectId = useActiveProject((s) => s.projectId);
   const workspaceId = useActiveWorkspace((s) => s.workspaceId);
-  const [dismissed, setDismissed] = useState(isDismissed);
+  const [dismissed, setDismissed] = useState(() => isDismissed(workspaceId));
+
+  // Re-read the per-workspace flag when the active workspace changes.
+  useEffect(() => {
+    setDismissed(isDismissed(workspaceId));
+  }, [workspaceId]);
 
   // `limit=1` keeps these cheap: we only need "does one exist".
   const casesQuery = useQuery({
@@ -117,8 +126,8 @@ export function OnboardingCard(): React.ReactElement | null {
   if (dismissed || steps.every((s) => s.done)) return null;
 
   const dismiss = (): void => {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(DISMISS_KEY, "1");
+    if (workspaceId !== null && typeof localStorage !== "undefined") {
+      localStorage.setItem(dismissKey(workspaceId), "1");
     }
     setDismissed(true);
   };
