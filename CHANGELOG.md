@@ -20,6 +20,15 @@ in the git tags (`launcher-v*`, `mcp-v*`, `lifecycle-v*`, `tssdk-v*`,
 stood in those tags' trees. The milestone tags that predate package-level
 versioning:
 
+## [0.11.1](https://github.com/suiflex/suitest/compare/v0.11.0...v0.11.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **agent:** report a missing LLM client instead of crashing ([c731f49](https://github.com/suiflex/suitest/commit/c731f493f4bac1ee4858c950c72f5900c74f3b82))
+* **npx:** install the LLM client into the bundle venv ([83ee80b](https://github.com/suiflex/suitest/commit/83ee80ba5f0df6a99d8df69cc4bdcdcfc531b5ba))
+* **npx:** keep the stack alive after the launcher exits on Windows ([a46e72c](https://github.com/suiflex/suitest/commit/a46e72cad832df5e4f099b5df74e18b7102aaa79))
+
 ## [0.11.0](https://github.com/suiflex/suitest/compare/v0.10.0...v0.11.0) (2026-09-08)
 
 
