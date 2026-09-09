@@ -18,7 +18,9 @@ dependencies = [
 
 [project.optional-dependencies]
 # Cloud AI generation only. Core lifecycle loop (sampling + bridge) never needs
-# these; local bundle installs the base package without this extra.
+# these. The npm bundle cannot select an extra from a bare wheel path, so it
+# installs the same pins by hand — see CLOUD_DEPS in
+# packages/suitest-npx/lib/venv.js and move both together.
 cloud = [
     # M3-1 — LiteLLM router (100+ providers via one client). Imported lazily inside
     # providers/litellm_router.py so ZERO tier + tests never load it at import time.
