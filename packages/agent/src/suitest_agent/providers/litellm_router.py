@@ -161,7 +161,19 @@ class LiteLLMProvider:
         """Set LiteLLM module globals once. Lazy ``import litellm`` lives here."""
         if self._configured:
             return
-        import litellm
+        # Every other method reaches litellm through here first, so this is the
+        # single place the dependency can be missing. It lives in the ``cloud``
+        # extra: without this guard an install that skipped it raises
+        # ModuleNotFoundError out of the request handler as a 500 rather than a
+        # reportable "your LLM is not usable" answer.
+        try:
+            import litellm
+        except ImportError as exc:
+            raise ProviderError(
+                "LLM_DEPS_MISSING",
+                "The LLM client (litellm) is not installed in this Suitest runtime. "
+                "Reinstall the local stack, or `pip install 'suitest-agent[cloud]'`.",
+            ) from exc
 
         litellm.drop_params = True
         self._configured = True
@@ -223,11 +235,17 @@ class LiteLLMProvider:
             else call.model_copy(update={"model": effective_model})
         )
 
+        # _normalize is inside the try on purpose: a custom OpenAI-compatible
+        # gateway can answer 200 with an empty ``choices`` or a body that is not
+        # OpenAI-shaped at all, and an IndexError there used to reach the client
+        # as a 500 instead of a reported provider failure.
         try:
             resp = await litellm.acompletion(**self._kwargs(effective_call))
+            return self._normalize(resp, effective_call)
+        except ProviderError:
+            raise
         except Exception as exc:
             raise ProviderError("PROVIDER_CALL_FAILED", str(exc)) from exc
-        return self._normalize(resp, effective_call)
 
     def _normalize(self, resp: object, call: ModelCall) -> CompletionResult:
         import litellm
