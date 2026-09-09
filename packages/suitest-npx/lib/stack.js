@@ -70,21 +70,37 @@ function isAlive(pid) {
   }
 }
 
-function spawnLogged(cmd, args, { env, logFile }) {
+async function spawnLogged(cmd, args, { env, logFile }) {
   const out = fs.openSync(logFile, "a");
-  const child = spawn(cmd, args, {
-    env,
-    // ponytail: detached only off-Windows — detached:true forces a job-object
-    // assign that fails with AssignProcessToJobObject (87) when the parent is
-    // already in a no-breakaway job (VS Code terminal / CI). unref() alone keeps
-    // the child alive after the parent exits.
-    detached: process.platform !== "win32",
-    stdio: ["ignore", out, out],
-    windowsHide: true,
-  });
-  child.unref();
-  fs.closeSync(out);
-  return child.pid;
+  const base = { env, stdio: ["ignore", out, out], windowsHide: true };
+  // detached:true is what keeps the stack alive once the launcher exits — an
+  // attached child dies with the npx console on Windows, which surfaced as
+  // `suitest up` succeeding and `suitest status` immediately reporting "Not
+  // responding". It can still be refused with AssignProcessToJobObject (87)
+  // when the parent already sits in a no-breakaway job (VS Code terminal, CI),
+  // so fall back to attached rather than not starting at all. The refusal
+  // arrives as a sync throw on some hosts and an async 'error' event on others;
+  // awaiting 'spawn' covers both and keeps the returned pid the real one.
+  const attempt = (detached) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(cmd, args, { ...base, detached });
+      child.once("spawn", () => resolve(child));
+      child.once("error", reject);
+    });
+  try {
+    let child;
+    try {
+      child = await attempt(true);
+    } catch {
+      child = await attempt(false);
+    }
+    child.unref();
+    return child.pid;
+  } finally {
+    // Both attempts can fail (a missing interpreter, say) — without the finally
+    // the log fd leaks out of every failed boot.
+    fs.closeSync(out);
+  }
 }
 
 function tailFile(file, lines = 15) {
@@ -153,7 +169,7 @@ async function up(cwd, { webDist, python, port: preferred }) {
   execFileSync(python, ["-m", "suitest_db.bootstrap"], { env, stdio: "inherit" });
 
   // Verified: create_app(settings=None) is a sync zero-arg-callable factory, so --factory works.
-  const api = spawnLogged(
+  const api = await spawnLogged(
     python,
     [
       "-m", "uvicorn", "suitest_api.main:create_app", "--factory",
@@ -172,7 +188,7 @@ async function up(cwd, { webDist, python, port: preferred }) {
     throw err;
   }
 
-  const supervisor = spawnLogged(
+  const supervisor = await spawnLogged(
     python,
     ["-m", "suitest_runner.local_supervisor"],
     { env, logFile: path.join(dirs.logs, "supervisor.log") },
