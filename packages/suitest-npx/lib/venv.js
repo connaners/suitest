@@ -45,7 +45,7 @@ function venvPython(venvDir) {
 // ponytail: name+size+mtime, not a content hash — enough to catch a local
 // rebuild. Hash the bytes if a build ever starts preserving mtimes.
 function wheelsFingerprint(wheelsDir) {
-  const h = crypto.createHash("sha256").update(pkg.version);
+  const h = crypto.createHash("sha256").update(pkg.version).update(CLOUD_DEPS.join(","));
   const wheels = fs.existsSync(wheelsDir)
     ? fs
         .readdirSync(wheelsDir)
@@ -58,6 +58,13 @@ function wheelsFingerprint(wheelsDir) {
   }
   return h.digest("hex").slice(0, 16);
 }
+
+// suitest-agent keeps litellm/langgraph behind its `cloud` extra, and an extra
+// cannot be selected from a bare wheel path — so the bundle installed them
+// nowhere and every LLM call raised ModuleNotFoundError (a 500 from
+// /llm-config/test). Keep these floors in sync with the `cloud` extra in
+// packages/agent/pyproject.toml.
+const CLOUD_DEPS = ["litellm>=1.95.0", "langgraph>=0.2.40"];
 
 // Per-project venv from the release wheels; marker records the installed bundle.
 function ensureVenv(venvDir, wheelsDir) {
@@ -82,13 +89,14 @@ function ensureVenv(venvDir, wheelsDir) {
     throw new Error(`No wheels (*.whl) found in ${wheelsDir}`);
   }
   console.log(
-    "Setting up the Python runtime (first run or new version — may download Python 3.12, ~1 min)...",
+    "Setting up the Python runtime (first run or new version — may download Python 3.12 " +
+      "and the LLM client, a few minutes)...",
   );
   // --clear: reaching here means the venv is stale, and uv refuses to write over
   // an existing one without it. Without the flag every invalidation is a hard
   // failure the user has to clear by hand.
   execFileSync("uv", ["venv", venvDir, "--clear", "--python", "3.12"], { stdio: "inherit" });
-  execFileSync("uv", ["pip", "install", "--python", python, ...wheels], {
+  execFileSync("uv", ["pip", "install", "--python", python, ...wheels, ...CLOUD_DEPS], {
     stdio: "inherit",
   });
   fs.writeFileSync(marker, fingerprint);
