@@ -55,6 +55,12 @@ describe("formatTimestamp", () => {
     expect(formatTimestamp(undefined)).toBe("—");
     expect(formatTimestamp("", "N/A")).toBe("N/A");
   });
+
+  it("returns fallback for invalid date string or unparseable input", () => {
+    expect(formatTimestamp("invalid-date")).toBe("—");
+    expect(formatTimestamp("invalid-date", "N/A")).toBe("N/A");
+    expect(formatTimestamp("not a date")).toBe("—");
+  });
 });
 
 describe("formatRelativeTime", () => {

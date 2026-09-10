@@ -52,7 +52,7 @@ export function formatTimestamp(
 ): string {
   const d = parseUtcDate(value);
   if (!d) {
-    return typeof value === "string" && value ? value : fallback;
+    return fallback;
   }
   return d.toLocaleString();
 }
