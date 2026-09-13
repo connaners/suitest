@@ -21,9 +21,11 @@ from fastapi import Request
 
 async def get_arq(request: Request) -> ArqRedis | None:
     """Return a shared :class:`ArqRedis` for ``app.state.arq``, building it on first hit."""
+    from fastapi import HTTPException, status
+
     from suitest_api.settings import get_settings
 
-    if os.environ.get("SUITEST_MODE") == "local" or get_settings().mode == "local":
+    if get_settings().mode == "local":
         return None
     existing = getattr(request.app.state, "arq", None)
     if isinstance(existing, ArqRedis):
@@ -33,5 +35,8 @@ async def get_arq(request: Request) -> ArqRedis | None:
         pool = await create_pool(RedisSettings.from_dsn(url))
         request.app.state.arq = pool
         return pool
-    except Exception:
-        return None
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Redis queue unavailable in server mode: {exc}",
+        ) from exc

@@ -60,6 +60,15 @@ export function rollupOf(
     }
   }
 
+  if (
+    runStatus === "CANCELLED" &&
+    totalSteps !== undefined &&
+    totalSteps > 0 &&
+    steps.length < totalSteps
+  ) {
+    return "aborted";
+  }
+
   if (steps.every((s) => s.outcome === "SKIP")) return "skipped";
   if (steps.every((s) => s.outcome === "PASS" || s.outcome === "SKIP")) return "pass";
   return "neutral";
@@ -142,7 +151,7 @@ export function groupStepsByCase(
 
     for (const pc of plannedCases) {
       const existing = groupsByCaseId.get(pc.case_id);
-      const totalSteps = pc.totalSteps ?? (pc as { total_steps?: number }).total_steps ?? 0;
+      const totalSteps = pc.total_steps ?? 0;
       const targetTotal = totalSteps > 0 ? totalSteps : (existing?.steps.length ?? 0);
 
       if (existing) {
@@ -162,8 +171,10 @@ export function groupStepsByCase(
         });
       } else {
         let rollup: CaseRollup = "queued";
-        if (runStatus === "CANCELLED") {
+        if (runStatus === "CANCELLED" || runStatus === "FAIL" || runStatus === "ERROR") {
           rollup = "aborted";
+        } else if (runStatus === "PASS") {
+          rollup = "skipped";
         } else if (runStatus === "RUNNING") {
           if (allPriorFinished) {
             rollup = "running";

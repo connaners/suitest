@@ -65,10 +65,16 @@ describe("case-grouping", () => {
 
   describe("groupStepsByCase with plannedCases", () => {
     const plannedCases: RunCaseSummary[] = [
-      { case_id: "c1", case_public_id: "TC-101", case_title: "Login", totalSteps: 3 },
-      { case_id: "c2", case_public_id: "TC-102", case_title: "Checkout", totalSteps: 2 },
-      { case_id: "c3", case_public_id: "TC-103", case_title: "Logout", totalSteps: 1 },
+      { case_id: "c1", case_public_id: "TC-101", case_title: "Login", total_steps: 3 },
+      { case_id: "c2", case_public_id: "TC-102", case_title: "Checkout", total_steps: 2 },
+      { case_id: "c3", case_public_id: "TC-103", case_title: "Logout", total_steps: 1 },
     ];
+
+    it("marks partially executed case as aborted when run is CANCELLED", () => {
+      const steps = [makeStep({ id: "s1", outcome: "PASS" })];
+      // 1 of 3 steps passed before run was cancelled -> aborted, not pass!
+      expect(rollupOf(steps, 3, "CANCELLED")).toBe("aborted");
+    });
 
     it("marks the first case as running and subsequent cases as queued when run starts with 0 steps", () => {
       const groups = groupStepsByCase([], [], plannedCases, "RUNNING");
@@ -143,6 +149,19 @@ describe("case-grouping", () => {
     it("marks unexecuted cases as aborted when run is CANCELLED", () => {
       const groups = groupStepsByCase([], [], plannedCases, "CANCELLED");
       expect(groups.every((g) => g.rollup === "aborted")).toBe(true);
+    });
+
+    it("marks unexecuted cases as aborted when run is FAIL or ERROR", () => {
+      const groupsFail = groupStepsByCase([], [], plannedCases, "FAIL");
+      expect(groupsFail.every((g) => g.rollup === "aborted")).toBe(true);
+
+      const groupsError = groupStepsByCase([], [], plannedCases, "ERROR");
+      expect(groupsError.every((g) => g.rollup === "aborted")).toBe(true);
+    });
+
+    it("marks unexecuted cases as skipped when run is PASS", () => {
+      const groupsPass = groupStepsByCase([], [], plannedCases, "PASS");
+      expect(groupsPass.every((g) => g.rollup === "skipped")).toBe(true);
     });
 
     it("marks unexecuted cases as queued when run is QUEUED", () => {

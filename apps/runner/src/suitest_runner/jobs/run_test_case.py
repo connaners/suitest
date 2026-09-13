@@ -325,11 +325,15 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             # (such steps stay SKIP, exactly as before).
             translator = await _build_translator(session, tier=tier, workspace_id=workspace_id)
 
+            total_planned_steps = len(selection)
             await run_repo.update_status(
                 run_id,
                 RunStatus.RUNNING,
                 started_at=datetime.now(UTC),
                 tier_at_runtime=tier,
+                total_steps=total_planned_steps,
+                passed_steps=0,
+                failed_steps=0,
             )
             await session.commit()
 
@@ -429,6 +433,15 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                         else False
                     )
 
+            if result.outcome == StepOutcome.PASS:
+                summary["passed"] += 1
+            elif result.outcome == StepOutcome.FAIL:
+                summary["failed"] += 1
+            elif result.outcome == StepOutcome.ERROR:
+                summary["errored"] += 1
+            elif result.outcome == StepOutcome.SKIP:
+                summary["skipped"] += 1
+
             async with factory() as session:
                 run_step_repo = RunStepRepo(session)
                 run_step = await run_step_repo.create_step(
@@ -468,6 +481,12 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                         step_order=step_order,
                         artifacts=result.mcp_result.artifacts,
                     )
+                await RunRepo(session).update_status(
+                    run_id,
+                    RunStatus.RUNNING,
+                    passed_steps=summary["passed"],
+                    failed_steps=summary["failed"] + summary["errored"],
+                )
                 await session.commit()
 
             await _publish(
@@ -504,10 +523,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             ):
                 await asyncio.sleep(settings_obj.evidence_pause_ms / 1000)
 
-            if result.outcome == StepOutcome.PASS:
-                summary["passed"] += 1
-            elif result.outcome == StepOutcome.FAIL:
-                summary["failed"] += 1
+            if result.outcome == StepOutcome.FAIL:
                 # M1d-10: hand the failed step off to the defect auto-filer.
                 # The hook owns its own try/except so a degraded defect
                 # pipeline never blocks run completion. We swallow any
@@ -534,10 +550,6 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                         run_step_id=run_step.id,
                         reason=str(exc),
                     )
-            elif result.outcome == StepOutcome.SKIP:
-                summary["skipped"] += 1
-            else:
-                summary["errored"] += 1
 
         # --- finalize -----------------------------------------------------
         duration_ms = int((time.perf_counter() - t0) * 1000)

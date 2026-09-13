@@ -46,7 +46,8 @@ export function RunDetailPage(): React.ReactElement {
     if (run === undefined) return;
     rerunMutation.mutate(run.id, {
       onSuccess: (data) => {
-        void navigate({ to: "/runs/$runId", params: { runId: data.id } });
+        const targetId = data.publicId || data.public_id || data.id;
+        void navigate({ to: "/runs/$runId", params: { runId: targetId } });
       },
       onError: (err) => {
         if (err instanceof ApiError && err.status === 403) {

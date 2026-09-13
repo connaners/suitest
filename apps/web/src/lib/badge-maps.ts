@@ -3,6 +3,7 @@ import type { components } from "@/lib/api-types";
 
 type RunStatus = components["schemas"]["RunStatus"];
 type StepOutcome = components["schemas"]["StepOutcome"];
+type RunSummary = components["schemas"]["RunSummary"];
 
 /**
  * Map a run status onto the shared status palette. The narrowed return type is
@@ -23,6 +24,30 @@ export function statusToBadge(status: RunStatus): "pass" | "fail" | "warn" | "ru
     default:
       return "neutral";
   }
+}
+
+export interface RunBadgeDescriptor {
+  status: "pass" | "fail" | "warn" | "running" | "neutral";
+  label?: string;
+}
+
+/**
+ * Enhanced badge mapping for a run: maps 100% skipped runs to warn / SKIP.
+ */
+export function runToBadge(
+  status: RunStatus,
+  summary?: RunSummary | null,
+): RunBadgeDescriptor {
+  if (
+    status === "PASS" &&
+    summary !== undefined &&
+    summary !== null &&
+    summary.total_steps > 0 &&
+    summary.passed_steps === 0
+  ) {
+    return { status: "warn", label: "SKIP" };
+  }
+  return { status: statusToBadge(status) };
 }
 
 /** Map a step outcome onto the shared status-badge palette. */

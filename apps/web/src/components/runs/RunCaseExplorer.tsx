@@ -39,6 +39,10 @@ export function RunCaseExplorer({
   status,
   plannedCases,
 }: RunCaseExplorerProps): React.ReactElement {
+  const terminalRetriesRef = useRef<number>(0);
+  const prevRunIdRef = useRef<string>(runId);
+  const prevStatusRef = useRef<RunStatus | undefined>(status);
+
   // Poll until the run is terminal. The WS refetch below is the fast path, but
   // local mode publishes to a NullPublisher — no event ever reaches the browser,
   const { data: stepsData, refetch: refetchSteps } = useQuery({
@@ -51,8 +55,15 @@ export function RunCaseExplorer({
         status !== "CANCELLED" &&
         plannedCases !== undefined &&
         plannedCases.length > 0 &&
-        plannedCases.some((pc) => !items.some((s) => s.case_id === pc.case_id));
-      return hasMissing ? 1500 : false;
+        plannedCases.some((pc) => {
+          const stepsCount = pc.total_steps ?? 0;
+          return stepsCount > 0 && !items.some((s) => s.case_id === pc.case_id);
+        });
+      if (hasMissing && terminalRetriesRef.current < 2) {
+        terminalRetriesRef.current += 1;
+        return 1500;
+      }
+      return false;
     },
   });
   const { data: artifactsData, refetch: refetchArtifacts } = useQuery({
@@ -64,16 +75,20 @@ export function RunCaseExplorer({
   const steps = useMemo(() => stepsData?.items ?? [], [stepsData]);
   const artifacts = useMemo(() => artifactsData?.items ?? [], [artifactsData]);
 
-  const prevStatusRef = useRef<RunStatus | undefined>(status);
   useEffect(() => {
+    const runChanged = prevRunIdRef.current !== runId;
+    prevRunIdRef.current = runId;
     const wasTerminal = isTerminal(prevStatusRef.current);
     const nowTerminal = isTerminal(status);
     prevStatusRef.current = status;
-    if (!wasTerminal && nowTerminal) {
+    if (!nowTerminal) {
+      terminalRetriesRef.current = 0;
+    }
+    if (runChanged || (!wasTerminal && nowTerminal)) {
       void refetchSteps();
       void refetchArtifacts();
     }
-  }, [status, refetchSteps, refetchArtifacts]);
+  }, [runId, status, refetchSteps, refetchArtifacts]);
 
   const groups = useMemo(
     () => groupStepsByCase(steps, artifacts, plannedCases, status),

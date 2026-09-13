@@ -1,6 +1,6 @@
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import type { components } from "@/lib/api-types";
-import { statusToBadge } from "@/lib/badge-maps";
+import { runToBadge } from "@/lib/badge-maps";
 import { formatTimestamp } from "@/lib/date";
 import { formatDuration } from "@/lib/test-case-format";
 
@@ -34,6 +34,7 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
       </section>
     );
   }
+  const badge = runToBadge(run.status, run.summary);
   return (
     <section
       data-testid="run-summary-card"
@@ -41,7 +42,7 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <StatusBadge status={statusToBadge(run.status)} />
+          <StatusBadge status={badge.status} label={badge.label} />
           <span className="font-mono text-[12px] text-fg-3">{run.public_id}</span>
           <span className="font-mono text-[11px] text-fg-5">via {run.trigger}</span>
         </div>

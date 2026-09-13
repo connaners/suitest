@@ -106,10 +106,12 @@ export function CaseDetailPanel({
     group.rollup === "queued"
       ? "Queued — waiting for runner to execute this case."
       : group.rollup === "aborted"
-        ? "Aborted — run was cancelled before this case completed."
-        : group.rollup === "fail" && group.firstFailure
-          ? group.firstFailure
-          : `${group.passed.toString()}/${group.total.toString()} steps passed`;
+        ? "Aborted — execution stopped before this case completed."
+        : group.rollup === "skipped"
+          ? "Skipped — no test steps were executed for this case."
+          : group.rollup === "fail" && group.firstFailure
+            ? group.firstFailure
+            : `${group.passed.toString()}/${group.total.toString()} steps passed`;
 
   return (
     <div className="flex min-w-0 flex-col gap-4" data-testid="case-detail">
@@ -165,7 +167,9 @@ export function CaseDetailPanel({
           >
             {group.rollup === "aborted"
               ? "This test case was aborted before execution started."
-              : "This test case is queued and has not started executing yet."}
+              : group.rollup === "skipped"
+                ? "No test steps were executed for this test case."
+                : "This test case is queued and has not started executing yet."}
           </div>
         ) : (
           <StepTable

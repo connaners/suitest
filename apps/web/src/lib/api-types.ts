@@ -6704,10 +6704,10 @@ export interface components {
             /** Case Title */
             case_title: string;
             /**
-             * Totalsteps
+             * Total Steps
              * @default 0
              */
-            totalSteps: number;
+            total_steps?: number;
         };
         /**
          * RunDetail

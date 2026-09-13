@@ -35,7 +35,7 @@ class RunCaseSummary(BaseModel):
     case_id: str
     case_public_id: str
     case_title: str
-    total_steps: int = Field(default=0, serialization_alias="totalSteps")
+    total_steps: int = 0
 
 
 class RunDetail(RunListItem):

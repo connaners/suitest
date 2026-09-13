@@ -15,7 +15,7 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { useCancelRun, useRerunRun, useRun, useRunsList, useRunsSummary } from "@/hooks/use-runs";
 import { ApiError } from "@/lib/api-client";
-import { statusToBadge } from "@/lib/badge-maps";
+import { runToBadge } from "@/lib/badge-maps";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
 interface SearchSchema {
@@ -95,14 +95,22 @@ function RunsList({
         const summary = r.summary;
         const total = summary?.total_steps ?? 0;
         const passed = summary?.passed_steps ?? 0;
+        const isAllSkipped = r.status === "PASS" && total > 0 && passed === 0;
         const pct =
           total > 0
-            ? (passed / total) * 100
+            ? isAllSkipped
+              ? 100
+              : (passed / total) * 100
             : r.status === "PASS"
               ? 100
               : 0;
         const variant =
-          r.status === "FAIL" ? "fail" : r.status === "CANCELLED" ? "warn" : "default";
+          r.status === "FAIL"
+            ? "fail"
+            : isAllSkipped || r.status === "CANCELLED"
+              ? "warn"
+              : "default";
+        const badgeDesc = runToBadge(r.status, summary);
         return (
           <li key={r.id}>
             <button
@@ -119,7 +127,7 @@ function RunsList({
               )}
             >
               <div className="flex items-center gap-2 text-[12.5px]">
-                <SourceDot status={statusToBadge(r.status)} />
+                <SourceDot status={badgeDesc.status} />
                 <span className="truncate text-fg-1">{r.name}</span>
               </div>
               <div className="flex items-center justify-between gap-2 font-mono text-[10.5px] text-fg-5">
@@ -191,7 +199,10 @@ function RunDetailPanel({
     <div className="flex min-w-0 flex-col gap-4" data-testid="run-detail">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <StatusBadge status={statusToBadge(run.status)} />
+          {(() => {
+            const badge = runToBadge(run.status, run.summary);
+            return <StatusBadge status={badge.status} label={badge.label} />;
+          })()}
           <span className="truncate font-mono text-[12px] text-fg-3">{run.public_id}</span>
           <span className="font-mono text-[11px] text-fg-5">via {run.trigger}</span>
         </div>

@@ -7408,9 +7408,9 @@
             "title": "Case Title",
             "type": "string"
           },
-          "totalSteps": {
+          "total_steps": {
             "default": 0,
-            "title": "Totalsteps",
+            "title": "Total Steps",
             "type": "integer"
           }
         },

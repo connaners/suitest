@@ -315,13 +315,6 @@ Two things that will waste an afternoon otherwise:
 - Squash merge to `main` (one acceptance criterion = one commit on main)
 - Before merging, wait for CI green + 1 review
 
-### 6.1 CI Guard & Pre-Push Verification Protocol
-Every agent or developer MUST run and verify the following before committing/pushing:
-1. **Python Quality**: `make lint` (Ruff) and `make typecheck` (Mypy across all 7 packages)
-2. **Frontend Quality**: `cd apps/web && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . --max-warnings=0`
-3. **OpenAPI Sync**: `uv run python scripts/export-openapi.py` (ensure `packages/shared/openapi.json` is synced)
-4. **Post-PR Autonomous Monitoring**: After opening or updating a PR, run `gh pr checks <PR>` to monitor CI. If any check fails, inspect `gh run view --log-failed`, fix the failure autonomously, and push updates until all checks are GREEN.
-
 ---
 
 ## 7. When the AI agent is unsure
