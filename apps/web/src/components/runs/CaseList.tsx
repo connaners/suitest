@@ -1,3 +1,4 @@
+import { ProgressBar } from "@/components/shared/ProgressBar";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
@@ -65,11 +66,64 @@ export function CaseList({
               </span>
               <div className="flex items-center gap-3 font-mono text-[10.5px] text-fg-4 tabular-nums">
                 <span data-testid="case-row-counts">
-                  {g.total} steps · {g.passed} passed
-                  {g.failed > 0 ? <span className="text-red"> · {g.failed} failed</span> : null}
+                  {g.total === 0 ? (
+                    g.rollup === "aborted" ? (
+                      <span className="text-red">Aborted</span>
+                    ) : (
+                      <span className="text-fg-5">No steps defined · Skipped</span>
+                    )
+                  ) : g.rollup === "queued" ? (
+                    <span className="text-fg-4">{g.total} steps · Queued</span>
+                  ) : (
+                    <>
+                      {g.total} steps · {g.passed} passed
+                      {g.failed > 0 ? <span className="text-red"> · {g.failed} failed</span> : null}
+                      {g.rollup === "aborted" ? (
+                        g.total > g.passed + g.failed ? (
+                          <span className="text-red"> · {g.total - (g.passed + g.failed)} aborted</span>
+                        ) : (
+                          <span className="text-red"> · Aborted</span>
+                        )
+                      ) : null}
+                    </>
+                  )}
                 </span>
                 <span className="ml-auto">{formatDuration(g.durationMs)}</span>
               </div>
+              {g.rollup === "aborted" ? (
+                <ProgressBar
+                  segments={[{ value: 100, variant: "fail", label: "Aborted" }]}
+                  total={100}
+                  className="mt-0.5 h-1"
+                />
+              ) : g.rollup === "queued" ? (
+                <ProgressBar
+                  segments={[{ value: g.total, variant: "neutral", label: "Queued" }]}
+                  total={g.total}
+                  className="mt-0.5 h-1"
+                />
+              ) : g.total > 0 ? (
+                <ProgressBar
+                  segments={[
+                    { value: g.passed, variant: "pass", label: `${g.passed} passed` },
+                    { value: g.failed, variant: "fail", label: `${g.failed} failed` },
+                    ...(g.rollup === "running"
+                      ? [{ value: 1, variant: "running" as const, label: "Running" }]
+                      : []),
+                    ...(g.total > g.passed + g.failed && g.rollup !== "running"
+                      ? [
+                          {
+                            value: Math.max(0, g.total - (g.passed + g.failed)),
+                            variant: "skip" as const,
+                            label: "Skipped",
+                          },
+                        ]
+                      : []),
+                  ]}
+                  total={g.total}
+                  className="mt-0.5 h-1"
+                />
+              ) : null}
             </button>
           </li>
         );

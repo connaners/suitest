@@ -2,9 +2,12 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  useSuspenseInfiniteQuery,
   useSuspenseQuery,
+  type InfiniteData,
   type UseMutationResult,
   type UseQueryResult,
+  type UseSuspenseInfiniteQueryResult,
   type UseSuspenseQueryResult,
 } from "@tanstack/react-query";
 
@@ -76,6 +79,40 @@ export function useRunsList(limit = 50): UseSuspenseQueryResult<RunsPage> {
     refetchInterval: (query) => {
       const items = query.state.data?.items;
       const hasLive = items?.some((r) => r.status === "RUNNING" || r.status === "QUEUED");
+      return hasLive ? 2000 : false;
+    },
+  });
+}
+
+export function useRunsInfiniteList(
+  limit = 30,
+): UseSuspenseInfiniteQueryResult<InfiniteData<RunsPage, string | null>, Error> {
+  const projectId = useActiveProject((s) => s.projectId);
+  return useSuspenseInfiniteQuery({
+    queryKey: ["runs", "infinite", { projectId, limit }] as const,
+    queryFn: async ({ pageParam }) => {
+      const res = await api.get<RunsPage>("/runs", {
+        params: {
+          projectId,
+          limit,
+          ...(pageParam ? { cursor: pageParam } : {}),
+        },
+      });
+      return res.data;
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => {
+      const meta = lastPage.meta as {
+        nextCursor?: string | null;
+        next_cursor?: string | null;
+      };
+      return meta?.nextCursor || meta?.next_cursor || null;
+    },
+    refetchInterval: (query) => {
+      const pages = query.state.data?.pages;
+      const hasLive = pages?.some((page) =>
+        page.items?.some((r) => r.status === "RUNNING" || r.status === "QUEUED"),
+      );
       return hasLive ? 2000 : false;
     },
   });

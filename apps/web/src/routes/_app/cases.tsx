@@ -270,6 +270,7 @@ function CasesHeader({
 
 interface BulkActionBarProps {
   selectedIds: Set<string>;
+  cases?: Case[];
   suites: Suite[];
   onClear: () => void;
   projectId?: string | null;
@@ -277,6 +278,7 @@ interface BulkActionBarProps {
 
 function BulkActionBar({
   selectedIds,
+  cases = [],
   suites,
   onClear,
   projectId = null,
@@ -295,12 +297,19 @@ function BulkActionBar({
   const resolvedProjectId = projectId ?? suites[0]?.project_id ?? null;
   const canRun = resolvedProjectId !== null && !overLimit && !createRun.isPending;
 
+  const singleCase = count === 1 ? cases.find((c) => c.id === ids[0]) : undefined;
+  const singleCaseTitle = singleCase ? singleCase.title || singleCase.name : undefined;
+
   const handleConfirmRun = (): void => {
     if (!resolvedProjectId || overLimit || count === 0) return;
+    const runName = singleCaseTitle
+      ? `Ad-hoc: ${singleCaseTitle}`
+      : `Ad-hoc: ${count} selected case${count === 1 ? "" : "s"}`;
+
     createRun.mutate(
       {
         projectId: resolvedProjectId,
-        name: `Ad-hoc: ${count} selected case${count === 1 ? "" : "s"}`,
+        name: runName,
         selection: ids.map((id) => ({ caseId: id })),
         trigger: "MANUAL",
       },
@@ -461,6 +470,7 @@ function BulkActionBar({
         open={confirmRunOpen}
         onOpenChange={setConfirmRunOpen}
         count={count}
+        caseTitle={singleCaseTitle}
         onConfirm={handleConfirmRun}
         isPending={createRun.isPending}
       />
@@ -1721,6 +1731,7 @@ function CasesBody(): React.ReactElement {
             </div>
             <BulkActionBar
               selectedIds={selectedIds}
+              cases={cases.items}
               suites={suites.items}
               onClear={handleClearSelection}
               projectId={projectId}

@@ -390,7 +390,50 @@ describe("Test Cases screen", () => {
 
     await waitFor(() => {
       expect(capturedBody).toMatchObject({
+        name: "Ad-hoc: 2 selected cases",
         selection: [{ caseId: expect.any(String) }, { caseId: expect.any(String) }],
+        trigger: "MANUAL",
+      });
+    });
+  });
+
+  it("M1-15b: selecting 1 case in bulk bar names run as single case and displays case title in dialog", async () => {
+    const user = userEvent.setup();
+    let capturedBody: unknown = null;
+
+    server.use(
+      http.post("*/api/v1/runs", async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json({
+          id: "run_single_123",
+          public_id: "RUN-124",
+          status: "QUEUED",
+        });
+      }),
+    );
+
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+
+    const checkboxes = screen.getAllByTestId("case-row-checkbox");
+    await user.click(checkboxes[0] as HTMLElement);
+
+    const runBtn = await screen.findByTestId("bulk-run-btn");
+    expect(runBtn).toHaveTextContent("Run (1)");
+    await user.click(runBtn);
+
+    const dialog = await screen.findByTestId("bulk-run-confirm-dialog");
+    expect(dialog).toBeInTheDocument();
+    // Verify single-case run confirmation dialog displays the case title rather than generic count
+    expect(dialog).toHaveTextContent("Checkout flow rejects expired cards");
+
+    const submitBtn = screen.getByTestId("bulk-run-confirm-submit");
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(capturedBody).toMatchObject({
+        name: "Ad-hoc: Checkout flow rejects expired cards",
+        selection: [{ caseId: expect.any(String) }],
         trigger: "MANUAL",
       });
     });

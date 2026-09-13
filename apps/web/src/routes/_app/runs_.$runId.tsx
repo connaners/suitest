@@ -56,6 +56,9 @@ export function RunDetailPage(): React.ReactElement {
       },
     });
   };
+  const [selectedCasePublicId, setSelectedCasePublicId] = useState<string | null>(null);
+  const targetCasePublicId = selectedCasePublicId ?? run?.cases?.[0]?.case_public_id;
+
   return (
     <section className="flex flex-col gap-4" data-testid="run-detail-page">
       <div className="flex justify-end">
@@ -86,11 +89,11 @@ export function RunDetailPage(): React.ReactElement {
           </Button>
           <Link
             to="/cases"
-            search={{}}
+            search={targetCasePublicId ? { case: targetCasePublicId } : {}}
             className="inline-flex h-8 items-center rounded-md border border-border bg-bg-elev-1 px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
             data-testid="run-edit-cases-link"
           >
-            Edit cases
+            {run?.cases && run.cases.length > 1 ? "Edit selected case" : "Edit case"}
           </Link>
           <Link
             to="/runs/$runId/replay"
@@ -116,7 +119,12 @@ export function RunDetailPage(): React.ReactElement {
       <RunSummaryCard run={run} />
 
       {/* TEST CASE master-detail — the primary run view (shared with the panel). */}
-      <RunCaseExplorer runId={runId} status={run?.status} plannedCases={run?.cases} />
+      <RunCaseExplorer
+        runId={runId}
+        status={run?.status}
+        plannedCases={run?.cases}
+        onSelectCasePublicId={setSelectedCasePublicId}
+      />
     </section>
   );
 }

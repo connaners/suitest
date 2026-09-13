@@ -20,6 +20,8 @@ interface RunCaseExplorerProps {
   status?: RunStatus | undefined;
   /** Planned cases configured for this run (M1-15b). */
   plannedCases?: RunCaseSummary[] | undefined;
+  /** Emitted whenever the focused test case changes (returns public_id like "TC-101"). */
+  onSelectCasePublicId?: (publicId: string | null) => void;
 }
 
 /** Once a run reaches one of these, no further steps can appear. */
@@ -38,6 +40,7 @@ export function RunCaseExplorer({
   runId,
   status,
   plannedCases,
+  onSelectCasePublicId,
 }: RunCaseExplorerProps): React.ReactElement {
   const terminalRetriesRef = useRef<number>(0);
   const prevRunIdRef = useRef<string>(runId);
@@ -129,6 +132,11 @@ export function RunCaseExplorer({
     [groups, selectedCaseId],
   );
 
+  const selectedCasePublicId = selectedGroup?.casePublicId ?? null;
+  useEffect(() => {
+    onSelectCasePublicId?.(selectedCasePublicId);
+  }, [selectedCasePublicId, onSelectCasePublicId]);
+
   if (groups.length === 0) {
     // Distinguish "hasn't run yet" from "ran and produced nothing" — the old
     // single message read as data loss whenever a run was merely queued.
@@ -172,7 +180,12 @@ export function RunCaseExplorer({
       </div>
       <div className="col-span-12 min-w-0 @3xl:col-span-8" data-testid="run-case-detail">
         {selectedGroup ? (
-          <CaseDetailPanel runId={runId} group={selectedGroup} artifacts={artifacts} />
+          <CaseDetailPanel
+            runId={runId}
+            group={selectedGroup}
+            artifacts={artifacts}
+            runStatus={status}
+          />
         ) : (
           <EmptyState
             icon={ListChecks}

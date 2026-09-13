@@ -1,15 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Camera, Download, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Camera, Download, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cleanErrorMessage, classifyError } from "@/lib/error-formatter";
 import {
   fetchRunLogs,
   fetchRunSignedUrl,
   fetchTestCaseCode,
   fetchTestCaseDescription,
+  fetchTestCaseSteps,
 } from "@/lib/api-client";
 import { useRunArtifactUrl } from "@/hooks/use-run-artifact-url";
 import type { components } from "@/lib/api-types";
@@ -18,15 +20,17 @@ import { formatDuration } from "@/lib/test-case-format";
 import { ScreenshotDiffViewer } from "./ScreenshotDiffViewer";
 
 import { rollupLabel, rollupToBadge, type CaseGroup } from "./case-grouping";
-import { StepTable } from "./StepTable";
+import { StepTable, type DisplayStep, type StepDisplayOutcome } from "./StepTable";
 
 type ArtifactPublic = components["schemas"]["ArtifactPublic"];
+type RunStatus = components["schemas"]["RunStatus"];
 
 interface CaseDetailPanelProps {
   runId: string;
   group: CaseGroup;
   /** All of the run's artifacts (filtered to this case internally). */
   artifacts: ArtifactPublic[];
+  runStatus?: RunStatus | undefined;
 }
 
 /**
@@ -39,6 +43,7 @@ export function CaseDetailPanel({
   runId,
   group,
   artifacts,
+  runStatus,
 }: CaseDetailPanelProps): React.ReactElement {
   const stepIds = useMemo(() => new Set(group.steps.map((s) => s.id)), [group.steps]);
 
@@ -83,10 +88,82 @@ export function CaseDetailPanel({
     };
   }, [selectedStepId, caseArtifacts, runId]);
 
+  const { data: plannedSteps } = useQuery({
+    queryKey: ["case-planned-steps", group.caseId] as const,
+    queryFn: () => fetchTestCaseSteps(group.caseId),
+    enabled: true,
+  });
+
+  const isZeroSteps =
+    group.total === 0 ||
+    (Array.isArray(plannedSteps) && plannedSteps.length === 0);
+
+  const displaySteps = useMemo<DisplayStep[]>(() => {
+    if (isZeroSteps) {
+      return [];
+    }
+
+    if (!Array.isArray(plannedSteps) || plannedSteps.length === 0) {
+      return group.steps;
+    }
+
+    const sortedPlanned = [...plannedSteps].sort((a, b) => a.order - b.order);
+    const result: DisplayStep[] = [];
+    let activeFound = false;
+
+    sortedPlanned.forEach((ps, idx) => {
+      const exec = idx < group.steps.length ? group.steps[idx] : undefined;
+      if (exec) {
+        result.push({
+          ...exec,
+          title: exec.title || ps.action,
+          type: exec.type || (ps.target_kind ? ps.target_kind.toLowerCase() : "action"),
+        });
+      } else {
+        let outcome: StepDisplayOutcome = "QUEUED";
+        if (group.rollup === "running") {
+          if (!activeFound) {
+            outcome = "RUNNING";
+            activeFound = true;
+          } else {
+            outcome = "QUEUED";
+          }
+        } else if (group.rollup === "aborted" || runStatus === "CANCELLED") {
+          outcome = "ABORTED";
+        } else if (group.rollup === "skipped") {
+          outcome = "SKIP";
+        } else if (group.rollup === "fail") {
+          outcome = "ABORTED";
+        } else if (group.rollup === "pass") {
+          outcome = "SKIP";
+        }
+
+        result.push({
+          id: `planned-${ps.id}`,
+          case_id: group.caseId,
+          step_order: ps.order,
+          title: ps.action,
+          type: ps.target_kind ? ps.target_kind.toLowerCase() : "action",
+          outcome,
+          duration_ms: null,
+          error_message: null,
+          stdout: null,
+          isPlannedOnly: true,
+        });
+      }
+    });
+
+    if (group.steps.length > sortedPlanned.length) {
+      result.push(...group.steps.slice(sortedPlanned.length));
+    }
+
+    return result;
+  }, [group.steps, plannedSteps, group.rollup, group.caseId, runStatus, isZeroSteps]);
+
   const selectedStepLabel = useMemo(() => {
-    const idx = group.steps.findIndex((x) => x.id === selectedStepId);
+    const idx = displaySteps.findIndex((x) => x.id === selectedStepId);
     return idx >= 0 ? `Step ${(idx + 1).toString()}` : null;
-  }, [group.steps, selectedStepId]);
+  }, [displaySteps, selectedStepId]);
 
   const { data: code } = useQuery({
     queryKey: ["case-detail-code", group.caseId] as const,
@@ -102,16 +179,25 @@ export function CaseDetailPanel({
   });
   const logItems = logPage?.items ?? [];
 
+  const errorClassification = useMemo(
+    () => (group.firstFailure ? classifyError(group.firstFailure) : null),
+    [group.firstFailure],
+  );
+
   const resultSummary =
-    group.rollup === "queued"
-      ? "Queued — waiting for runner to execute this case."
-      : group.rollup === "aborted"
-        ? "Aborted — execution stopped before this case completed."
-        : group.rollup === "skipped"
-          ? "Skipped — no test steps were executed for this case."
-          : group.rollup === "fail" && group.firstFailure
-            ? group.firstFailure
-            : `${group.passed.toString()}/${group.total.toString()} steps passed`;
+    isZeroSteps
+      ? "Empty test case — no test steps configured (skipped)."
+      : group.rollup === "queued"
+        ? "Queued — waiting for runner to execute this case."
+        : group.rollup === "aborted"
+          ? "Aborted — execution stopped before this case completed."
+          : group.rollup === "skipped"
+            ? "Skipped — no test steps were executed for this case."
+            : errorClassification?.isEnvironmentError
+              ? `Environment error: ${errorClassification.title} (${group.passed.toString()}/${group.total.toString()} steps completed)`
+              : group.rollup === "fail" && group.firstFailure
+                ? cleanErrorMessage(group.firstFailure)
+                : `${group.passed.toString()}/${group.total.toString()} steps passed`;
 
   return (
     <div className="flex min-w-0 flex-col gap-4" data-testid="case-detail">
@@ -157,10 +243,53 @@ export function CaseDetailPanel({
         </p>
       </div>
 
+      {errorClassification?.isEnvironmentError ? (
+        <div
+          className="flex flex-col gap-2 rounded-md border border-red/30 bg-red/[0.08] p-3.5 text-[12.5px]"
+          data-testid="environment-error-callout"
+        >
+          <div className="flex items-center gap-2 font-medium text-red">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-red" aria-hidden="true" />
+            <span>Runner Environment Issue: {errorClassification.title}</span>
+          </div>
+          <p className="font-mono text-[11.5px] leading-relaxed text-fg-2">
+            {cleanErrorMessage(group.firstFailure)}
+          </p>
+          {errorClassification.hint ? (
+            <p className="text-[11.5px] leading-relaxed text-fg-4">
+              💡 <strong className="text-fg-3">Diagnosis:</strong> {errorClassification.hint}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Steps */}
       <div className="flex flex-col gap-1.5">
         <span className="text-[10.5px] uppercase tracking-wide text-fg-5">Steps</span>
-        {group.steps.length === 0 ? (
+        {isZeroSteps ? (
+          <div
+            className="flex flex-col gap-2 rounded-md border border-amber/30 bg-amber/[0.06] p-4 text-[12.5px]"
+            data-testid="step-table-empty"
+          >
+            <div className="flex items-center gap-2 font-medium text-amber">
+              <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>No test steps configured</span>
+            </div>
+            <p className="leading-relaxed text-fg-3">
+              This test case does not contain any executable steps yet. It was automatically skipped during this run.
+            </p>
+            <div>
+              <Link
+                to="/cases"
+                search={{ case: group.casePublicId }}
+                className="inline-flex items-center gap-1.5 font-medium text-accent underline-offset-2 hover:underline"
+                data-testid="add-steps-link"
+              >
+                Add steps in Test Case Editor →
+              </Link>
+            </div>
+          </div>
+        ) : displaySteps.length === 0 ? (
           <div
             className="rounded-md border border-border bg-bg-elev-1 p-3 text-[12px] text-fg-4"
             data-testid="step-table-empty"
@@ -173,7 +302,7 @@ export function CaseDetailPanel({
           </div>
         ) : (
           <StepTable
-            steps={group.steps}
+            steps={displaySteps}
             selectedStepId={selectedStepId}
             onSelectStep={(stepId) => {
               setSelectedStepId((prev) => (prev === stepId ? null : stepId));
@@ -195,6 +324,7 @@ export function CaseDetailPanel({
         artifacts={caseArtifacts}
         runId={runId}
         caseId={group.caseId}
+        isEmptyCase={isZeroSteps}
       />
     </div>
   );
@@ -210,6 +340,7 @@ interface CaseEvidenceTabsProps {
   artifacts: ArtifactPublic[];
   runId: string;
   caseId: string;
+  isEmptyCase?: boolean;
 }
 
 function CaseEvidenceTabs({
@@ -222,6 +353,7 @@ function CaseEvidenceTabs({
   artifacts,
   runId,
   caseId,
+  isEmptyCase,
 }: CaseEvidenceTabsProps): React.ReactElement {
   const [tab, setTab] = useState("preview");
   const showStep = Boolean(stepScreenshotUrl);
@@ -272,7 +404,7 @@ function CaseEvidenceTabs({
             ) : (
               <span className="flex items-center gap-2" data-testid="case-preview-placeholder">
                 <Camera className="h-4 w-4" aria-hidden="true" />
-                No preview for this case
+                {isEmptyCase ? "No preview — test case has no steps" : "No preview for this case"}
               </span>
             )}
           </div>
@@ -284,14 +416,14 @@ function CaseEvidenceTabs({
           className="h-[280px] overflow-auto rounded-md border border-border bg-bg-code p-3 font-mono text-[11.5px] leading-relaxed text-fg-3"
           data-testid="case-code"
         >
-          {code ?? "No generated source."}
+          {code ?? (isEmptyCase ? "No executable test steps defined for this case." : "No generated source.")}
         </pre>
       </TabsContent>
 
       <TabsContent value="logs">
         {logs.length === 0 ? (
           <div className="text-[12px] text-fg-4" data-testid="case-logs-empty">
-            No logs.
+            {isEmptyCase ? "No logs recorded — test case was skipped." : "No logs."}
           </div>
         ) : (
           <pre
@@ -308,7 +440,7 @@ function CaseEvidenceTabs({
       <TabsContent value="artifacts">
         {artifacts.length === 0 ? (
           <div className="text-[12px] text-fg-4" data-testid="case-artifacts-empty">
-            No artifacts captured for this case.
+            {isEmptyCase ? "No artifacts captured — test case was skipped." : "No artifacts captured for this case."}
           </div>
         ) : (
           <ul className="flex flex-col gap-1.5" data-testid="case-artifacts">

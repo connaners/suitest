@@ -140,6 +140,16 @@ export async function fetchTestCaseDescription(caseId: string): Promise<string |
   return res.data.description ?? null;
 }
 
+/** ``GET /test-cases/:id/steps`` — read the case's planned steps definition. */
+export async function fetchTestCaseSteps(
+  caseId: string,
+): Promise<components["schemas"]["TestStepPublic"][]> {
+  const res = await api.get<components["schemas"]["TestStepPublic"][]>(
+    `/test-cases/${caseId}/steps`,
+  );
+  return res.data;
+}
+
 // ---------------------------------------------------------------------------
 // Screenshot diff threshold (M12-3 — per-case pixel-diff threshold override).
 // ---------------------------------------------------------------------------

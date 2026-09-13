@@ -298,12 +298,18 @@ describe("RunDetailPage", () => {
     renderRunDetail();
     await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
 
-    expect(screen.getByTestId("run-edit-cases-link")).toHaveAttribute("href", "/cases");
-
     // The failing case is auto-selected → its detail carries an Edit case link.
     const detail = await screen.findByTestId("case-detail");
     const editLink = within(detail).getByTestId("case-edit-link");
     expect(editLink).toHaveAttribute("href", "/cases?case=TC-102");
+
+    // The top-level Edit case link also reflects the active case.
+    await waitFor(() => {
+      expect(screen.getByTestId("run-edit-cases-link")).toHaveAttribute(
+        "href",
+        "/cases?case=TC-102",
+      );
+    });
   });
 
   it("renders abort button when run is live and posts cancel on click", async () => {

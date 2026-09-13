@@ -11,7 +11,10 @@ type RunStatus = components["schemas"]["RunStatus"];
 export type CaseRollup = "pass" | "fail" | "running" | "skipped" | "queued" | "aborted" | "neutral";
 
 /** Human-readable label for a step. Never a case id — falls back to type + relative order. */
-export function stepTitle(step: RunStepPublic, relativeIndex?: number): string {
+export function stepTitle(
+  step: { title?: string | null; type?: string | null; step_order: number },
+  relativeIndex?: number,
+): string {
   const title = step.title?.trim();
   if (title) return title;
   const type = step.type?.trim() ?? "step";
@@ -50,7 +53,10 @@ export function rollupOf(
   totalSteps?: number,
   runStatus?: RunStatus,
 ): CaseRollup {
-  if (steps.length === 0) return "neutral";
+  if (steps.length === 0) {
+    if (runStatus === "CANCELLED") return "aborted";
+    return totalSteps === 0 ? "skipped" : "neutral";
+  }
   if (steps.some((s) => s.outcome === "FAIL" || s.outcome === "ERROR")) return "fail";
   if (steps.some((s) => RUNNING_OUTCOMES.has(s.outcome))) return "running";
 
@@ -60,13 +66,10 @@ export function rollupOf(
     }
   }
 
-  if (
-    runStatus === "CANCELLED" &&
-    totalSteps !== undefined &&
-    totalSteps > 0 &&
-    steps.length < totalSteps
-  ) {
-    return "aborted";
+  if (runStatus === "CANCELLED") {
+    if (totalSteps === undefined || steps.length < totalSteps) {
+      return "aborted";
+    }
   }
 
   if (steps.every((s) => s.outcome === "SKIP")) return "skipped";
@@ -122,7 +125,7 @@ export function groupStepsByCase(
       total: ordered.length,
       passed,
       failed,
-      rollup: rollupOf(ordered, undefined, runStatus),
+      rollup: runStatus === "CANCELLED" ? "aborted" : rollupOf(ordered, undefined, runStatus),
       durationMs,
       kind: hasMedia ? "frontend" : "api",
       firstFailure: failing?.error_message?.trim() ?? null,
@@ -151,12 +154,34 @@ export function groupStepsByCase(
 
     for (const pc of plannedCases) {
       const existing = groupsByCaseId.get(pc.case_id);
-      const totalSteps = pc.total_steps ?? 0;
-      const targetTotal = totalSteps > 0 ? totalSteps : (existing?.steps.length ?? 0);
+      const totalSteps =
+        pc.total_steps !== undefined
+          ? pc.total_steps
+          : (pc as { totalSteps?: number }).totalSteps !== undefined
+            ? (pc as { totalSteps?: number }).totalSteps!
+            : (existing?.steps.length ?? 0);
+      const targetTotal = totalSteps;
 
       if (existing) {
-        const finished = isFinished(existing, totalSteps);
-        const rollup = rollupOf(existing.steps, totalSteps, runStatus);
+        if (targetTotal === 0) {
+          result.push({
+            ...existing,
+            casePublicId: pc.case_public_id || existing.casePublicId,
+            caseName: pc.case_title || existing.caseName,
+            steps: [],
+            total: 0,
+            passed: 0,
+            failed: 0,
+            rollup: "skipped",
+          });
+          continue;
+        }
+
+        const finished = isFinished(existing, targetTotal);
+        const rollup =
+          runStatus === "CANCELLED" && (plannedCases.length === 1 || !finished)
+            ? "aborted"
+            : rollupOf(existing.steps, targetTotal, runStatus);
 
         if (!finished) {
           allPriorFinished = false;
@@ -171,7 +196,13 @@ export function groupStepsByCase(
         });
       } else {
         let rollup: CaseRollup = "queued";
-        if (runStatus === "CANCELLED" || runStatus === "FAIL" || runStatus === "ERROR") {
+        const hasExplicitZeroSteps = pc.total_steps === 0;
+
+        if (runStatus === "QUEUED") {
+          rollup = "queued";
+        } else if (hasExplicitZeroSteps) {
+          rollup = "skipped";
+        } else if (runStatus === "CANCELLED" || runStatus === "FAIL" || runStatus === "ERROR") {
           rollup = "aborted";
         } else if (runStatus === "PASS") {
           rollup = "skipped";

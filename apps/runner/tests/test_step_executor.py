@@ -277,3 +277,55 @@ async def test_translator_raises_errors() -> None:
     assert result.outcome == StepOutcome.ERROR
     assert result.error_message is not None
     assert "AGENTIC_TRANSLATE_ERROR" in result.error_message
+
+
+async def test_classify_mcp_error_browser_lock() -> None:
+    """Browser lock error lifts to StepOutcome.ERROR and flags is_fatal_infra."""
+    from suitest_runner.executors.step_executor import classify_mcp_error
+
+    raw = (
+        "### Error\n"
+        "Error: Browser is already in use for /Users/test/Library/Caches/ms-playwright-mcp/chrome, "
+        "use --isolated to run multiple instances of the same browser"
+    )
+    outcome, clean_msg, is_fatal = classify_mcp_error(raw)
+    assert outcome == StepOutcome.ERROR
+    assert is_fatal is True
+    assert "MCP_TOOL_ERROR: Browser is already in use" in clean_msg
+    assert "###" not in clean_msg
+
+
+async def test_classify_mcp_error_assertion_failure() -> None:
+    """Normal element failure stays StepOutcome.FAIL and is_fatal_infra is False."""
+    from suitest_runner.executors.step_executor import classify_mcp_error
+
+    raw = 'Error: "#submit-btn" does not match any elements.'
+    outcome, clean_msg, is_fatal = classify_mcp_error(raw)
+    assert outcome == StepOutcome.FAIL
+    assert is_fatal is False
+    assert clean_msg == 'MCP_TOOL_FAILED: "#submit-btn" does not match any elements.'
+
+
+async def test_browser_lock_step_execution_marks_error_and_fatal_infra() -> None:
+    """execute_step with browser lock error returns StepOutcome.ERROR with is_fatal_infra=True."""
+    inv = MagicMock()
+    lock_err = (
+        "### Error\n"
+        "Error: Browser is already in use for /Users/rohmnsa/Library/Caches/ms-playwright-mcp/mcp-chrome, "
+        "use --isolated to run multiple instances of the same browser"
+    )
+    inv.invoke = AsyncMock(side_effect=McpToolFailed(lock_err))
+    code = json.dumps({"tool": "browser_navigate", "arguments": {"url": "https://example.com"}})
+    result = await execute_step(
+        invoker=inv,
+        test_step=_step(code, provider="playwright-mcp", target=TargetKind.FE_WEB),
+        run_id="r",
+        workspace_id="w",
+        actor_user_id="u",
+        tier=Tier.ZERO,
+        routing_overrides=None,
+    )
+    assert result.outcome == StepOutcome.ERROR
+    assert result.is_fatal_infra is True
+    assert result.error_message is not None
+    assert "MCP_TOOL_ERROR: Browser is already in use" in result.error_message

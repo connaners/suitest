@@ -1,23 +1,37 @@
-import { StatusBadge } from "@/components/shared/StatusBadge";
+import { StatusBadge, type StatusBadgeStatus } from "@/components/shared/StatusBadge";
 import type { components } from "@/lib/api-types";
-import { outcomeToBadge } from "@/lib/badge-maps";
+import { cleanErrorMessage } from "@/lib/error-formatter";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
 
 import { stepTitle, stepTypeLabel } from "./case-grouping";
 
-type RunStepPublic = components["schemas"]["RunStepPublic"];
 type StepOutcome = components["schemas"]["StepOutcome"];
 
+export type StepDisplayOutcome = StepOutcome | "RUNNING" | "QUEUED" | "ABORTED" | "PENDING";
+
+export interface DisplayStep {
+  id: string;
+  case_id: string;
+  step_order: number;
+  title?: string | null;
+  type?: string | null;
+  outcome: StepDisplayOutcome;
+  duration_ms?: number | null;
+  error_message?: string | null;
+  stdout?: string | null;
+  isPlannedOnly?: boolean;
+}
+
 interface StepTableProps {
-  steps: RunStepPublic[];
+  steps: DisplayStep[];
   /** id of the currently-previewed step (its screenshot is shown on the right). */
   selectedStepId?: string | null;
   /** Click a row to preview that step's screenshot ("Preview: Step N"). */
   onSelectStep?: (stepId: string) => void;
 }
 
-function outcomeLabel(outcome: StepOutcome): string {
+function displayOutcomeLabel(outcome: StepDisplayOutcome): string {
   switch (outcome) {
     case "PASS":
       return "PASS";
@@ -27,8 +41,31 @@ function outcomeLabel(outcome: StepOutcome): string {
       return "SKIP";
     case "ERROR":
       return "ERROR";
+    case "RUNNING":
+      return "RUNNING";
+    case "QUEUED":
+      return "QUEUED";
+    case "ABORTED":
+      return "ABORTED";
     default:
       return "PENDING";
+  }
+}
+
+function displayOutcomeBadge(outcome: StepDisplayOutcome): StatusBadgeStatus {
+  switch (outcome) {
+    case "PASS":
+      return "pass";
+    case "FAIL":
+    case "ERROR":
+    case "ABORTED":
+      return "fail";
+    case "SKIP":
+      return "warn";
+    case "RUNNING":
+      return "running";
+    default:
+      return "neutral";
   }
 }
 
@@ -98,12 +135,24 @@ export function StepTable({
                     </span>
                   </div>
                   {s.error_message ? (
-                    <pre
-                      className="overflow-x-auto rounded-md bg-bg-code p-2 font-mono text-[11px] text-red"
+                    <div
+                      className={cn(
+                        "overflow-x-auto rounded-md p-2 font-mono text-[11px]",
+                        s.outcome === "ERROR"
+                          ? "border border-red/40 bg-red/[0.08] text-red"
+                          : "bg-bg-code text-red",
+                      )}
                       data-testid="step-error-message"
                     >
-                      {s.error_message}
-                    </pre>
+                      {s.outcome === "ERROR" ? (
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-red">
+                          Environment Error
+                        </div>
+                      ) : null}
+                      <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
+                        {cleanErrorMessage(s.error_message)}
+                      </pre>
+                    </div>
                   ) : null}
                   {s.stdout ? (
                     <details data-testid="step-output">
@@ -118,10 +167,15 @@ export function StepTable({
                 </div>
               </td>
               <td className="px-3 py-2">
-                <StatusBadge status={outcomeToBadge(s.outcome)} label={outcomeLabel(s.outcome)} />
+                <StatusBadge
+                  status={displayOutcomeBadge(s.outcome)}
+                  label={displayOutcomeLabel(s.outcome)}
+                />
               </td>
               <td className="px-3 py-2 text-right font-mono text-[11px] text-fg-4 tabular-nums">
-                {formatDuration(s.duration_ms)}
+                {s.duration_ms !== null && s.duration_ms !== undefined
+                  ? formatDuration(s.duration_ms)
+                  : "—"}
               </td>
             </tr>
           ))}

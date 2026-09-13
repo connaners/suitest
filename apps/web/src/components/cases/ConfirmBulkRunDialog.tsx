@@ -15,6 +15,7 @@ export interface ConfirmBulkRunDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   count: number;
+  caseTitle?: string | undefined;
   onConfirm: () => void;
   isPending: boolean;
 }
@@ -30,6 +31,7 @@ export function ConfirmBulkRunDialog({
   open,
   onOpenChange,
   count,
+  caseTitle,
   onConfirm,
   isPending,
 }: ConfirmBulkRunDialogProps): React.ReactElement {
@@ -39,11 +41,14 @@ export function ConfirmBulkRunDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Play className="h-4 w-4 fill-current text-accent" aria-hidden="true" />
-            Run {count} Selected Test {count === 1 ? "Case" : "Cases"}?
+            {count === 1 && caseTitle
+              ? `Run "${caseTitle}"?`
+              : `Run ${count} Selected Test ${count === 1 ? "Case" : "Cases"}?`}
           </DialogTitle>
           <DialogDescription>
-            You are about to launch an automated test run for {count} selected test{" "}
-            {count === 1 ? "case" : "cases"}.
+            {count === 1 && caseTitle
+              ? `You are about to launch an automated test run for "${caseTitle}".`
+              : `You are about to launch an automated test run for ${count} selected test ${count === 1 ? "case" : "cases"}.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -64,8 +69,13 @@ export function ConfirmBulkRunDialog({
           </div>
 
           <div className="flex items-center justify-between rounded-md border border-border bg-bg-elev-1 px-3 py-2 text-[12px]">
-            <span className="text-fg-3">Selected cases</span>
-            <span className="font-mono font-medium text-fg-1">{count}</span>
+            <span className="text-fg-3">{count === 1 ? "Selected case" : "Selected cases"}</span>
+            <span
+              className="max-w-[240px] truncate font-mono font-medium text-fg-1"
+              title={caseTitle ?? undefined}
+            >
+              {count === 1 && caseTitle ? caseTitle : count}
+            </span>
           </div>
         </div>
 

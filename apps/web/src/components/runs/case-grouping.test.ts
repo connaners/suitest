@@ -164,9 +164,57 @@ describe("case-grouping", () => {
       expect(groupsPass.every((g) => g.rollup === "skipped")).toBe(true);
     });
 
-    it("marks unexecuted cases as queued when run is QUEUED", () => {
-      const groups = groupStepsByCase([], [], plannedCases, "QUEUED");
-      expect(groups.every((g) => g.rollup === "queued")).toBe(true);
+    it("marks empty cases (total_steps === 0) as skipped even when run is ERROR, FAIL, or CANCELLED", () => {
+      const emptyPlannedCases = [
+        { case_id: "c_empty", case_public_id: "TC-EMPTY", case_title: "Empty Case", total_steps: 0 },
+      ];
+      const groupsError = groupStepsByCase([], [], emptyPlannedCases, "ERROR");
+      expect(groupsError[0]?.rollup).toBe("skipped");
+
+      const groupsFail = groupStepsByCase([], [], emptyPlannedCases, "FAIL");
+      expect(groupsFail[0]?.rollup).toBe("skipped");
+
+      const groupsCancelled = groupStepsByCase([], [], emptyPlannedCases, "CANCELLED");
+      expect(groupsCancelled[0]?.rollup).toBe("skipped");
+    });
+
+    it("marks empty case as skipped during RUNNING without blocking subsequent cases from starting", () => {
+      const mixedPlannedCases = [
+        { case_id: "c_empty", case_public_id: "TC-0", case_title: "Empty Case", total_steps: 0 },
+        { case_id: "c_active", case_public_id: "TC-1", case_title: "Active Case", total_steps: 2 },
+      ];
+      const groups = groupStepsByCase([], [], mixedPlannedCases, "RUNNING");
+
+      // The empty case is skipped immediately
+      expect(groups[0]?.rollup).toBe("skipped");
+
+      // The active case starts running immediately
+      expect(groups[1]?.rollup).toBe("running");
+    });
+
+    it("resets total to 0 and steps to [] when planned case has total_steps = 0 even if historical steps exist in DB", () => {
+      const historicalSteps = [
+        makeStep({ id: "s_old", case_id: "c_empty", outcome: "SKIP", step_order: 0 }),
+      ];
+      const emptyPlannedCases = [
+        { case_id: "c_empty", case_public_id: "TC-1000", case_title: "Empty Case", total_steps: 0 },
+      ];
+      const groups = groupStepsByCase(historicalSteps, [], emptyPlannedCases, "PASS");
+      expect(groups[0]?.total).toBe(0);
+      expect(groups[0]?.steps).toEqual([]);
+      expect(groups[0]?.rollup).toBe("skipped");
+    });
+
+    it("marks single-case adhoc run as aborted when run is CANCELLED even if steps passed", () => {
+      const adhocPlannedCase = [
+        { case_id: "c_1", case_public_id: "TC-1", case_title: "Single Case", total_steps: 2 },
+      ];
+      const steps = [
+        makeStep({ id: "s_1", case_id: "c_1", outcome: "PASS", step_order: 0 }),
+        makeStep({ id: "s_2", case_id: "c_1", outcome: "PASS", step_order: 1 }),
+      ];
+      const groups = groupStepsByCase(steps, [], adhocPlannedCase, "CANCELLED");
+      expect(groups[0]?.rollup).toBe("aborted");
     });
   });
 });

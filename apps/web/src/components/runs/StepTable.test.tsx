@@ -53,4 +53,69 @@ describe("<StepTable>", () => {
     expect(rows[1]).toHaveTextContent("2");
     expect(rows[1]).toHaveTextContent("assertion · step 2");
   });
+
+  it("renders mixed executed and planned unexecuted steps (aborted, queued, running)", () => {
+    render(
+      <StepTable
+        steps={[
+          step({ id: "s1", step_order: 0, title: "Click Login", outcome: "PASS", duration_ms: 500 }),
+          {
+            id: "planned-s2",
+            case_id: "tc_1",
+            step_order: 1,
+            title: "Wait for Dashboard",
+            type: "wait",
+            outcome: "ABORTED",
+            duration_ms: null,
+            isPlannedOnly: true,
+          },
+          {
+            id: "planned-s3",
+            case_id: "tc_1",
+            step_order: 2,
+            title: "Assert Header",
+            type: "assertion",
+            outcome: "QUEUED",
+            duration_ms: null,
+            isPlannedOnly: true,
+          },
+        ]}
+      />,
+    );
+
+    const rows = screen.getAllByTestId("step-row");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("PASS");
+    expect(rows[0]).toHaveTextContent("500ms");
+    expect(rows[1]).toHaveTextContent("Wait for Dashboard");
+    expect(rows[1]).toHaveTextContent("ABORTED");
+    expect(rows[1]).toHaveTextContent("—");
+    expect(rows[2]).toHaveTextContent("Assert Header");
+    expect(rows[2]).toHaveTextContent("QUEUED");
+  });
+
+  it("renders sanitized error message with environment error indicator for ERROR outcome", () => {
+    render(
+      <StepTable
+        steps={[
+          step({
+            id: "s1",
+            outcome: "ERROR",
+            error_message:
+              "MCP_TOOL_ERROR: ### Error\nError: Browser is already in use for /Users/test/Library/Caches/chrome, use --isolated to run multiple instances",
+          }),
+        ]}
+      />,
+    );
+
+    const errorBlock = screen.getByTestId("step-error-message");
+    expect(errorBlock).toBeInTheDocument();
+    expect(errorBlock).toHaveTextContent("Environment Error");
+    expect(errorBlock).toHaveTextContent(
+      "Browser is already in use for [browser cache], use --isolated to run multiple instances",
+    );
+    expect(errorBlock).not.toHaveTextContent("###");
+    expect(errorBlock).not.toHaveTextContent("MCP_TOOL_ERROR");
+  });
 });
+

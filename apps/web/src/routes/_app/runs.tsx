@@ -1,6 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, ListChecks, Maximize2, PlayCircle, Square } from "lucide-react";
-import { Suspense, useEffect } from "react";
+import {
+  AlertTriangle,
+  HelpCircle,
+  ListChecks,
+  Loader2,
+  Maximize2,
+  PlayCircle,
+  Square,
+} from "lucide-react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Gated } from "@/components/gating/Gated";
@@ -13,9 +21,21 @@ import { ProgressBar } from "@/components/shared/ProgressBar";
 import { SourceDot } from "@/components/shared/SourceDot";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { useCancelRun, useRerunRun, useRun, useRunsList, useRunsSummary } from "@/hooks/use-runs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  useCancelRun,
+  useRerunRun,
+  useRun,
+  useRunsInfiniteList,
+  useRunsSummary,
+} from "@/hooks/use-runs";
 import { ApiError } from "@/lib/api-client";
-import { runToBadge } from "@/lib/badge-maps";
+import { buildRunSegments, runToBadge } from "@/lib/badge-maps";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
 interface SearchSchema {
@@ -29,12 +49,37 @@ function SummaryBar(): React.ReactElement {
       className="grid grid-cols-2 gap-x-3 gap-y-4 rounded-md border border-border bg-bg-elev-1 p-[14px] sm:grid-cols-3 xl:grid-cols-6"
       data-testid="runs-summary"
     >
-      <Counter label="Active now" value={data.activeNow.toString()} accent />
-      <Counter label="Today" value={data.today.toString()} />
-      <Counter label="Passed" value={data.passed.toString()} />
-      <Counter label="Failed" value={data.failed.toString()} />
-      <Counter label="Avg duration" value={formatDuration(data.avgDurationMs)} />
-      <Counter label="Queue" value={data.queue.toString()} />
+      <Counter
+        label="Active now"
+        value={data.activeNow.toString()}
+        accent
+        tooltip="Test runs currently executing steps."
+      />
+      <Counter
+        label="Today"
+        value={data.today.toString()}
+        tooltip="Test runs created since 00:00 UTC today."
+      />
+      <Counter
+        label="Passed"
+        value={data.passed.toString()}
+        tooltip="Total passed test runs across this workspace (counts runs, not individual test cases). Older runs are available by scrolling the runs list."
+      />
+      <Counter
+        label="Failed"
+        value={data.failed.toString()}
+        tooltip="Total failed or errored test runs across this workspace."
+      />
+      <Counter
+        label="Avg duration"
+        value={formatDuration(data.avgDurationMs)}
+        tooltip="Average runtime duration across all completed runs."
+      />
+      <Counter
+        label="Queue"
+        value={data.queue.toString()}
+        tooltip="Runs queued and waiting for an available runner worker."
+      />
     </section>
   );
 }
@@ -43,14 +88,24 @@ function Counter({
   label,
   value,
   accent,
+  tooltip,
 }: {
   label: string;
   value: string;
   accent?: boolean;
+  tooltip?: string;
 }): React.ReactElement {
-  return (
-    <div className="flex flex-col gap-1" data-testid="runs-counter">
-      <span className="text-[10.5px] uppercase tracking-wide text-fg-5">{label}</span>
+  const content = (
+    <div className="flex flex-col gap-1 cursor-default" data-testid="runs-counter">
+      <div className="flex items-center gap-1">
+        <span className="text-[10.5px] uppercase tracking-wide text-fg-5">{label}</span>
+        {tooltip ? (
+          <HelpCircle
+            className="h-3 w-3 text-fg-5 transition-colors hover:text-fg-3"
+            aria-hidden="true"
+          />
+        ) : null}
+      </div>
       <span
         className={cn(
           "font-mono text-[18px] font-semibold tabular-nums",
@@ -61,6 +116,19 @@ function Counter({
       </span>
     </div>
   );
+
+  if (!tooltip) return content;
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-[11px] leading-relaxed">
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 function RunsList({
@@ -70,14 +138,43 @@ function RunsList({
   selectedId: string | null;
   onSelect: (publicId: string) => void;
 }): React.ReactElement {
-  const { data } = useRunsList(50);
-  const runs = data.items;
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useRunsInfiniteList(30);
+  const runs = useMemo(() => data.pages.flatMap((page) => page.items), [data]);
 
+  // Auto-select the first run on load when no URL param is present.
   useEffect(() => {
     if (!selectedId && runs.length > 0 && runs[0]) {
       onSelect(runs[0].public_id);
     }
   }, [selectedId, runs, onSelect]);
+
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (
+      !el ||
+      !hasNextPage ||
+      isFetchingNextPage ||
+      typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          void fetchNextPage();
+        }
+      },
+      { rootMargin: "100px" },
+    );
+
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   if (runs.length === 0) {
     return (
@@ -90,59 +187,68 @@ function RunsList({
   }
 
   return (
-    <ul className="flex flex-col gap-1" data-testid="runs-list">
-      {runs.map((r) => {
-        const summary = r.summary;
-        const total = summary?.total_steps ?? 0;
-        const passed = summary?.passed_steps ?? 0;
-        const isAllSkipped = r.status === "PASS" && total > 0 && passed === 0;
-        const pct =
-          total > 0
-            ? isAllSkipped
-              ? 100
-              : (passed / total) * 100
-            : r.status === "PASS"
-              ? 100
-              : 0;
-        const variant =
-          r.status === "FAIL"
-            ? "fail"
-            : isAllSkipped || r.status === "CANCELLED"
-              ? "warn"
-              : "default";
-        const badgeDesc = runToBadge(r.status, summary);
-        return (
-          <li key={r.id}>
-            <button
-              type="button"
-              data-testid="runs-row"
-              data-public-id={r.public_id}
-              data-selected={r.public_id === selectedId ? "true" : "false"}
-              onClick={() => {
-                onSelect(r.public_id);
-              }}
-              className={cn(
-                "flex w-full flex-col gap-1 rounded-md border border-transparent px-2 py-2 text-left hover:bg-bg-elev-2",
-                r.public_id === selectedId && "border-border bg-bg-elev-2",
-              )}
-            >
-              <div className="flex items-center gap-2 text-[12.5px]">
-                <SourceDot status={badgeDesc.status} />
-                <span className="truncate text-fg-1">{r.name}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2 font-mono text-[10.5px] text-fg-5">
-                <span className="truncate">
-                  {r.public_id} · {r.branch ?? "—"}
-                  {r.commit_sha ? `@${r.commit_sha.slice(0, 7)}` : ""}
-                </span>
-                <span className="shrink-0">{formatDuration(r.duration_ms)}</span>
-              </div>
-              <ProgressBar value={pct} variant={variant} />
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+    <div className="flex flex-col gap-1">
+      <ul className="flex flex-col gap-1" data-testid="runs-list">
+        {runs.map((r) => {
+          const summary = r.summary;
+          const total = summary?.total_steps ?? 0;
+          const segments = buildRunSegments(r.status, summary);
+          const badgeDesc = runToBadge(r.status, summary);
+          return (
+            <li key={r.id}>
+              <button
+                type="button"
+                data-testid="runs-row"
+                data-public-id={r.public_id}
+                data-selected={r.public_id === selectedId ? "true" : "false"}
+                onClick={() => {
+                  onSelect(r.public_id);
+                }}
+                className={cn(
+                  "flex w-full flex-col gap-1 rounded-md border border-transparent px-2 py-2 text-left hover:bg-bg-elev-2",
+                  r.public_id === selectedId && "border-border bg-bg-elev-2",
+                )}
+              >
+                <div className="flex items-center gap-2 text-[12.5px]">
+                  <SourceDot status={badgeDesc.status} />
+                  <span className="truncate text-fg-1">{r.name}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2 font-mono text-[10.5px] text-fg-5">
+                  <span className="truncate">
+                    {r.public_id} · {r.branch ?? "—"}
+                    {r.commit_sha ? `@${r.commit_sha.slice(0, 7)}` : ""}
+                  </span>
+                  <span className="shrink-0">{formatDuration(r.duration_ms)}</span>
+                </div>
+                <ProgressBar segments={segments} total={total > 0 ? total : 100} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {hasNextPage ? (
+        <div ref={loadMoreRef} className="pt-2 text-center" data-testid="runs-load-more-container">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={isFetchingNextPage}
+            onClick={() => void fetchNextPage()}
+            className="w-full text-[11px] text-fg-3 hover:text-fg-1"
+            data-testid="runs-load-more-button"
+          >
+            {isFetchingNextPage ? (
+              <>
+                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" aria-hidden="true" />
+                Loading more runs…
+              </>
+            ) : (
+              "Load more runs"
+            )}
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -156,6 +262,7 @@ function RunDetailPanel({
   const { data: run, isLoading, isError } = useRun(runId ?? undefined);
   const cancelMutation = useCancelRun();
   const rerunMutation = useRerunRun();
+  const [selectedCasePublicId, setSelectedCasePublicId] = useState<string | null>(null);
 
   if (!runId) {
     return (
@@ -195,6 +302,8 @@ function RunDetailPanel({
   const cancelForbidden =
     cancelMutation.error instanceof ApiError && cancelMutation.error.status === 403;
 
+  const targetCasePublicId = selectedCasePublicId ?? run.cases?.[0]?.case_public_id;
+
   return (
     <div className="flex min-w-0 flex-col gap-4" data-testid="run-detail">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
@@ -231,6 +340,16 @@ function RunDetailPanel({
           >
             {rerunMutation.isPending ? "Queuing…" : "Re-run"}
           </Button>
+          {targetCasePublicId ? (
+            <Link
+              to="/cases"
+              search={{ case: targetCasePublicId }}
+              className="inline-flex h-8 items-center rounded-md border border-border bg-bg-elev-1 px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
+              data-testid="run-edit-cases-link"
+            >
+              {run.cases && run.cases.length > 1 ? "Edit selected case" : "Edit case"}
+            </Link>
+          ) : null}
           <Link
             to="/runs/$runId"
             params={{ runId: run.public_id }}
@@ -271,7 +390,12 @@ function RunDetailPanel({
 
       {/* Case-first evidence view (test cases → steps + Preview/Code/Logs/
           Artifacts), shared with the full-page run route. */}
-      <RunCaseExplorer runId={run.id} status={run.status} plannedCases={run.cases} />
+      <RunCaseExplorer
+        runId={run.id}
+        status={run.status}
+        plannedCases={run.cases}
+        onSelectCasePublicId={setSelectedCasePublicId}
+      />
 
       <footer className="flex justify-end" data-testid="run-cost-footer">
         <Gated
