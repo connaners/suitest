@@ -1,0 +1,35 @@
+# Suitest Agent Rules (Roo Code, Cline, Antigravity)
+
+You are an AI coding assistant working on the Suitest repository (Python/FastAPI backend + Vite/React frontend + MCP plugins).
+Follow these mandatory operational rules at all times.
+
+## 1. Pre-Commit & Pre-Push Strict Verification Gate
+BEFORE committing or proposing to push any code, you MUST run and verify all of the following commands:
+1. Python Linting & Formatting:
+   `make lint` (Ruff check and Ruff format check must pass)
+2. Python Strict Typing:
+   `make typecheck` (Mypy strict check across all 7 Python packages must pass)
+3. Frontend TypeScript & ESLint:
+   `cd apps/web && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . --max-warnings=0`
+   (Zero TypeScript errors, zero ESLint warnings allowed)
+4. OpenAPI Snapshot Synchronization:
+   `uv run python scripts/export-openapi.py`
+   (Verify `packages/shared/openapi.json` has 0 git diff)
+5. Relevant Automated Tests:
+   `./node_modules/.bin/vitest run <path_to_test>` for web or `uv run pytest <path_to_test>` for Python.
+
+## 2. Autonomous Post-PR CI Watcher & Self-Healing Loop
+Whenever you create or update a Pull Request (`gh pr create` or `git push`):
+1. NEVER stop immediately after pushing or creating the PR.
+2. Check CI status using `gh pr checks <pr_number> --repo suiflex/suitest`.
+3. If ANY check fails:
+   - Immediately inspect the failure using `gh run view <run_id> --job <job_id> --log-failed` or GitHub Actions API.
+   - Autonomously diagnose the root cause (e.g. ESLint hook dependency, container image drift, or type error).
+   - Apply the fix, commit, and push to the PR branch.
+   - Re-check until all CI checks are GREEN (PASS).
+4. Only notify the user once CI checks are passing or if an issue requires human business decisions.
+
+## 3. Monorepo Quality Standards
+- Strict Typing: Never use `as any` in TypeScript or un-narrowed `Any` in Python.
+- Database & Timezone: Use `UtcDateTime` or `TimestampMixin` for all database timestamps to ensure SQLite and PostgreSQL consistency.
+- Pre-push Git Hook: The repository enforces `.git/hooks/pre-push`. Do not bypass it with `--no-verify`.
