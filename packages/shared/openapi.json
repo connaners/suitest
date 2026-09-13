@@ -7393,6 +7393,35 @@
         "title": "RoutingRuleInput",
         "type": "object"
       },
+      "RunCaseSummary": {
+        "description": "Summary of a planned test case in a run (M1-15b).",
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "case_public_id": {
+            "title": "Case Public Id",
+            "type": "string"
+          },
+          "case_title": {
+            "title": "Case Title",
+            "type": "string"
+          },
+          "totalSteps": {
+            "default": 0,
+            "title": "Totalsteps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "case_id",
+          "case_public_id",
+          "case_title"
+        ],
+        "title": "RunCaseSummary",
+        "type": "object"
+      },
       "RunDetail": {
         "description": "Detail for ``GET /runs/:id`` \u2014 adds the computed summary.",
         "properties": {
@@ -7406,6 +7435,13 @@
               }
             ],
             "title": "Branch"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/RunCaseSummary"
+            },
+            "title": "Cases",
+            "type": "array"
           },
           "commit_sha": {
             "anyOf": [
@@ -7739,6 +7775,16 @@
           },
           "status": {
             "$ref": "#/components/schemas/RunStatus"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "tier_at_runtime": {
             "$ref": "#/components/schemas/Tier"

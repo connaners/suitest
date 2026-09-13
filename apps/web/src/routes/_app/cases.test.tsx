@@ -329,4 +329,70 @@ describe("Test Cases screen", () => {
       });
     });
   });
+
+  it("M1-15b: shows Run button in bulk bar and opens ConfirmBulkRunDialog with warning", async () => {
+    const user = userEvent.setup();
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+
+    const checkboxes = screen.getAllByTestId("case-row-checkbox");
+    await user.click(checkboxes[0] as HTMLElement);
+
+    const runBtn = await screen.findByTestId("bulk-run-btn");
+    expect(runBtn).toBeInTheDocument();
+    expect(runBtn).toHaveTextContent("Run (1)");
+
+    await user.click(runBtn);
+
+    const dialog = await screen.findByTestId("bulk-run-confirm-dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByTestId("bulk-run-warning")).toBeInTheDocument();
+    expect(screen.getByText("Local Resource & Execution Notice")).toBeInTheDocument();
+
+    // Cancel closes dialog
+    await user.click(screen.getByTestId("bulk-run-confirm-cancel"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("bulk-run-confirm-dialog")).toBeNull();
+    });
+  });
+
+  it("M1-15b: confirming bulk run dialog dispatches POST /runs with selection", async () => {
+    const user = userEvent.setup();
+    let capturedBody: unknown = null;
+
+    server.use(
+      http.post("*/api/v1/runs", async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json({
+          id: "run_bulk_123",
+          public_id: "RUN-123",
+          status: "QUEUED",
+        });
+      }),
+    );
+
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+
+    const checkboxes = screen.getAllByTestId("case-row-checkbox");
+    await user.click(checkboxes[0] as HTMLElement);
+    await user.click(checkboxes[1] as HTMLElement);
+
+    const runBtn = await screen.findByTestId("bulk-run-btn");
+    expect(runBtn).toHaveTextContent("Run (2)");
+    await user.click(runBtn);
+
+    await screen.findByTestId("bulk-run-confirm-dialog");
+    const submitBtn = screen.getByTestId("bulk-run-confirm-submit");
+    expect(submitBtn).toHaveTextContent("Run 2 Cases");
+
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(capturedBody).toMatchObject({
+        selection: [{ caseId: expect.any(String) }, { caseId: expect.any(String) }],
+        trigger: "MANUAL",
+      });
+    });
+  });
 });

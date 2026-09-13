@@ -297,7 +297,10 @@ class RunRepo(AsyncRepository[Run, RunCreate, RunUpdate]):
         )
         if case_ids:
             stmt = stmt.where(TestCase.id.in_(case_ids))
-        rows = (await self.session.execute(stmt)).all()
+        rows = list((await self.session.execute(stmt)).all())
+        if case_ids:
+            case_order = {cid: idx for idx, cid in enumerate(case_ids)}
+            rows.sort(key=lambda r: (case_order.get(r[0], 999999), r[1].order))
         selection: list[tuple[str, int, TestStep]] = [
             (case_id, idx, step) for idx, (case_id, step) in enumerate(rows)
         ]

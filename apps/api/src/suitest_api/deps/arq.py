@@ -19,20 +19,19 @@ from arq.connections import ArqRedis, RedisSettings, create_pool
 from fastapi import Request
 
 
-async def get_arq(request: Request) -> ArqRedis:
-    """Return a shared :class:`ArqRedis` for ``app.state.arq``, building it on first hit.
+async def get_arq(request: Request) -> ArqRedis | None:
+    """Return a shared :class:`ArqRedis` for ``app.state.arq``, building it on first hit."""
+    from suitest_api.settings import get_settings
 
-    Builds the pool from ``SUITEST_REDIS_URL`` (defaults to
-    ``redis://localhost:6379/0`` when unset, matching docker-compose dev). The
-    pool is cached on ``app.state.arq`` so the same instance is reused for the
-    process lifetime; the lifespan in ``main.py`` does not own this slot, so
-    tests can override the dependency without coordinating with lifespan
-    startup.
-    """
+    if os.environ.get("SUITEST_MODE") == "local" or get_settings().mode == "local":
+        return None
     existing = getattr(request.app.state, "arq", None)
     if isinstance(existing, ArqRedis):
         return existing
     url = os.environ.get("SUITEST_REDIS_URL", "redis://localhost:6379/0")
-    pool = await create_pool(RedisSettings.from_dsn(url))
-    request.app.state.arq = pool
-    return pool
+    try:
+        pool = await create_pool(RedisSettings.from_dsn(url))
+        request.app.state.arq = pool
+        return pool
+    except Exception:
+        return None

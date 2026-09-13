@@ -70,7 +70,7 @@ export function StepTable({
           </tr>
         </thead>
         <tbody>
-          {steps.map((s) => (
+          {steps.map((s, idx) => (
             <tr
               key={s.id}
               className={cn(
@@ -83,12 +83,12 @@ export function StepTable({
               data-selected={selectedStepId === s.id ? "true" : undefined}
               onClick={onSelectStep ? () => onSelectStep(s.id) : undefined}
             >
-              <td className="px-3 py-2 font-mono text-[11px] text-fg-4">{s.step_order}</td>
+              <td className="px-3 py-2 font-mono text-[11px] text-fg-4">{idx + 1}</td>
               <td className="px-3 py-2">
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] text-fg-2" data-testid="step-title">
-                      {stepTitle(s)}
+                      {stepTitle(s, idx + 1)}
                     </span>
                     <span
                       className="shrink-0 rounded bg-bg-elev-2 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-fg-4"

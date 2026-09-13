@@ -344,8 +344,16 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
         # --- per-step dispatch --------------------------------------------
         summary = {"total": 0, "passed": 0, "failed": 0, "errored": 0, "skipped": 0}
         t0 = time.perf_counter()
+        cancelled = False
 
         for case_id, step_order, test_step in selection:
+            async with factory() as session:
+                r_check = await RunRepo(session).get_by_id(run_id)
+                if r_check is not None and r_check.status == RunStatus.CANCELLED:
+                    log.info("runner.job.cancelled_by_user", run_id=run_id)
+                    cancelled = True
+                    break
+
             summary["total"] += 1
             await _publish(
                 redis_client,
@@ -534,7 +542,9 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
         # --- finalize -----------------------------------------------------
         duration_ms = int((time.perf_counter() - t0) * 1000)
         failed_total = summary["failed"] + summary["errored"]
-        if summary["total"] == 0:
+        if cancelled:
+            final_status = RunStatus.CANCELLED
+        elif summary["total"] == 0:
             # A run that executed nothing is not a green run — reporting PASS
             # here hid empty selections behind a passing badge (issue #109).
             log.warning("runner.run.empty_selection", run_id=run_id)
@@ -575,7 +585,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
         # M1d-10 ships per-step defect filing via the ``on_run_step_failed``
         # hook above; the old per-run filer below is retained as a no-op
         # safety net until M2 deletes it.
-        if failed_total > 0:
+        if failed_total > 0 and not cancelled:
             await _try_file_defect(factory, run_id)
 
         return {

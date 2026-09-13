@@ -33,4 +33,24 @@ describe("<StepTable>", () => {
     render(<StepTable steps={[step()]} />);
     expect(screen.queryByTestId("step-output")).not.toBeInTheDocument();
   });
+
+  it("encapsulates step numbers to 1-indexed relative position per case", () => {
+    // Step has global step_order 42 (from earlier cases in the run), but within
+    // this case it should render relative index 1.
+    render(
+      <StepTable
+        steps={[
+          step({ id: "s1", step_order: 42, type: "action" }),
+          step({ id: "s2", step_order: 43, type: "assertion" }),
+        ]}
+      />,
+    );
+
+    const rows = screen.getAllByTestId("step-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("1");
+    expect(rows[0]).toHaveTextContent("action · step 1");
+    expect(rows[1]).toHaveTextContent("2");
+    expect(rows[1]).toHaveTextContent("assertion · step 2");
+  });
 });

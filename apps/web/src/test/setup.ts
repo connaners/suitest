@@ -19,8 +19,10 @@ if (globalThis.window !== undefined) {
 // Some jsdom builds ship without a working localStorage (undefined at
 // runtime), which crashes every `zustand/persist` setState and any bare
 // `localStorage` access. Install a Map-backed shim ONLY when the real
-// storage is missing so real-browser behavior is untouched.
-if (typeof globalThis.localStorage === "undefined") {
+if (
+  typeof globalThis.localStorage === "undefined" ||
+  typeof globalThis.localStorage?.getItem !== "function"
+) {
   const backing = new Map<string, string>();
   const shim: Storage = {
     get length(): number {

@@ -20,9 +20,13 @@ export type Locale = "en" | "id";
 const STORAGE_KEY = "suitest.locale";
 
 function initialLocale(): Locale {
-  if (typeof localStorage !== "undefined") {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "en" || stored === "id") return stored;
+  try {
+    if (typeof localStorage !== "undefined" && typeof localStorage.getItem === "function") {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored === "en" || stored === "id") return stored;
+    }
+  } catch {
+    // localStorage not accessible or permitted
   }
   return "en";
 }

@@ -84,8 +84,8 @@ export function CaseDetailPanel({
   }, [selectedStepId, caseArtifacts, runId]);
 
   const selectedStepLabel = useMemo(() => {
-    const s = group.steps.find((x) => x.id === selectedStepId);
-    return s ? `Step ${s.step_order.toString()}` : null;
+    const idx = group.steps.findIndex((x) => x.id === selectedStepId);
+    return idx >= 0 ? `Step ${(idx + 1).toString()}` : null;
   }, [group.steps, selectedStepId]);
 
   const { data: code } = useQuery({
@@ -103,9 +103,13 @@ export function CaseDetailPanel({
   const logItems = logPage?.items ?? [];
 
   const resultSummary =
-    group.rollup === "fail" && group.firstFailure
-      ? group.firstFailure
-      : `${group.passed.toString()}/${group.total.toString()} steps passed`;
+    group.rollup === "queued"
+      ? "Queued — waiting for runner to execute this case."
+      : group.rollup === "aborted"
+        ? "Aborted — run was cancelled before this case completed."
+        : group.rollup === "fail" && group.firstFailure
+          ? group.firstFailure
+          : `${group.passed.toString()}/${group.total.toString()} steps passed`;
 
   return (
     <div className="flex min-w-0 flex-col gap-4" data-testid="case-detail">
@@ -154,13 +158,24 @@ export function CaseDetailPanel({
       {/* Steps */}
       <div className="flex flex-col gap-1.5">
         <span className="text-[10.5px] uppercase tracking-wide text-fg-5">Steps</span>
-        <StepTable
-          steps={group.steps}
-          selectedStepId={selectedStepId}
-          onSelectStep={(stepId) => {
-            setSelectedStepId((prev) => (prev === stepId ? null : stepId));
-          }}
-        />
+        {group.steps.length === 0 ? (
+          <div
+            className="rounded-md border border-border bg-bg-elev-1 p-3 text-[12px] text-fg-4"
+            data-testid="step-table-empty"
+          >
+            {group.rollup === "aborted"
+              ? "This test case was aborted before execution started."
+              : "This test case is queued and has not started executing yet."}
+          </div>
+        ) : (
+          <StepTable
+            steps={group.steps}
+            selectedStepId={selectedStepId}
+            onSelectStep={(stepId) => {
+              setSelectedStepId((prev) => (prev === stepId ? null : stepId));
+            }}
+          />
+        )}
       </div>
 
       {/* Evidence tabs */}

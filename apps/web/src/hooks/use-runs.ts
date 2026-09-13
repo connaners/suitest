@@ -25,6 +25,7 @@ type Artifacts = { items: components["schemas"]["ArtifactPublic"][] };
 export interface RunPublicResponse {
   id: string;
   public_id: string;
+  publicId?: string;
   status: components["schemas"]["RunStatus"];
 }
 
@@ -72,6 +73,11 @@ export function useRunsList(limit = 50): UseSuspenseQueryResult<RunsPage> {
       const res = await api.get<RunsPage>("/runs", { params: { projectId, limit } });
       return res.data;
     },
+    refetchInterval: (query) => {
+      const items = query.state.data?.items;
+      const hasLive = items?.some((r) => r.status === "RUNNING" || r.status === "QUEUED");
+      return hasLive ? 2000 : false;
+    },
   });
 }
 
@@ -105,6 +111,11 @@ export function useRunsSummary(): UseSuspenseQueryResult<RunsSummary> {
         queue: d.queued,
       } satisfies RunsSummary;
     },
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (!d) return 2000;
+      return d.activeNow > 0 || d.queue > 0 ? 2000 : 5000;
+    },
   });
 }
 
@@ -115,6 +126,12 @@ export function useRun(runId: string | undefined): UseQueryResult<RunDetail> {
     queryFn: async () => {
       const res = await api.get<RunDetail>(`/runs/${runId ?? ""}`);
       return res.data;
+    },
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      const terminal =
+        status === "PASS" || status === "FAIL" || status === "ERROR" || status === "CANCELLED";
+      return terminal ? false : 2000;
     },
   });
 }
@@ -191,8 +208,7 @@ export function useCreateRun(): UseMutationResult<RunPublicResponse, Error, Crea
       return res.data;
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["runs", "summary"] });
-      void qc.invalidateQueries({ queryKey: ["runs", { limit: 50 }] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
     },
   });
 }
@@ -212,10 +228,23 @@ export function useCancelRun(): UseMutationResult<RunPublicResponse, Error, stri
       return res.data;
     },
     onSuccess: (data) => {
-      void qc.invalidateQueries({ queryKey: ["runs", data.id] });
-      void qc.invalidateQueries({ queryKey: ["runs", data.public_id] });
-      void qc.invalidateQueries({ queryKey: ["runs", "summary"] });
-      void qc.invalidateQueries({ queryKey: ["runs", { limit: 50 }] });
+      const publicId = data.publicId || data.public_id;
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: ["run"] });
+      qc.setQueryData(["run", data.id], (old: RunDetail | undefined) =>
+        old ? { ...old, status: "CANCELLED" } : old,
+      );
+      qc.setQueryData(["runs", data.id], (old: RunDetail | undefined) =>
+        old ? { ...old, status: "CANCELLED" } : old,
+      );
+      if (publicId) {
+        qc.setQueryData(["run", publicId], (old: RunDetail | undefined) =>
+          old ? { ...old, status: "CANCELLED" } : old,
+        );
+        qc.setQueryData(["runs", publicId], (old: RunDetail | undefined) =>
+          old ? { ...old, status: "CANCELLED" } : old,
+        );
+      }
     },
   });
 }
@@ -234,8 +263,7 @@ export function useRerunRun(): UseMutationResult<RunPublicResponse, Error, strin
       return res.data;
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["runs", "summary"] });
-      void qc.invalidateQueries({ queryKey: ["runs", { limit: 50 }] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
     },
   });
 }

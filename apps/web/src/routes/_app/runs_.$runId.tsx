@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Square } from "lucide-react";
 import { useState } from "react";
 
 import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
 import { RunSummaryCard } from "@/components/runs/RunSummaryCard";
 import { Button } from "@/components/ui/button";
-import { useRerunRun } from "@/hooks/use-runs";
+import { useCancelRun, useRerunRun } from "@/hooks/use-runs";
 import { ApiError, fetchRun } from "@/lib/api-client";
 
 export const Route = createFileRoute("/_app/runs_/$runId")({
@@ -17,6 +18,7 @@ export function RunDetailPage(): React.ReactElement {
   const { runId } = Route.useParams();
   const navigate = useNavigate();
   const rerunMutation = useRerunRun();
+  const cancelMutation = useCancelRun();
   const [rerunForbidden, setRerunForbidden] = useState(false);
 
   const { data: run } = useQuery({
@@ -32,12 +34,19 @@ export function RunDetailPage(): React.ReactElement {
 
   // Same guard as the /runs side panel: a live run cannot be re-queued.
   const isLive = run?.status === "RUNNING" || run?.status === "QUEUED";
+  const cancelDisabled = !isLive || cancelMutation.isPending;
   const rerunDisabled = run === undefined || isLive || rerunMutation.isPending;
+
+  const handleCancel = (): void => {
+    if (run === undefined) return;
+    cancelMutation.mutate(run.id);
+  };
+
   const handleRerun = (): void => {
     if (run === undefined) return;
     rerunMutation.mutate(run.id, {
       onSuccess: (data) => {
-        void navigate({ to: "/runs/$runId", params: { runId: data.public_id } });
+        void navigate({ to: "/runs/$runId", params: { runId: data.id } });
       },
       onError: (err) => {
         if (err instanceof ApiError && err.status === 403) {
@@ -50,6 +59,20 @@ export function RunDetailPage(): React.ReactElement {
     <section className="flex flex-col gap-4" data-testid="run-detail-page">
       <div className="flex justify-end">
         <div className="flex flex-wrap items-center gap-1.5">
+          {isLive ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={cancelDisabled}
+              onClick={handleCancel}
+              className="border-red/40 text-red hover:bg-red/10"
+              data-testid="run-cancel-button"
+            >
+              <Square className="h-3 w-3 fill-current" aria-hidden="true" />
+              {cancelMutation.isPending ? "Aborting…" : "Abort run"}
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -92,7 +115,7 @@ export function RunDetailPage(): React.ReactElement {
       <RunSummaryCard run={run} />
 
       {/* TEST CASE master-detail — the primary run view (shared with the panel). */}
-      <RunCaseExplorer runId={runId} status={run?.status} />
+      <RunCaseExplorer runId={runId} status={run?.status} plannedCases={run?.cases} />
     </section>
   );
 }

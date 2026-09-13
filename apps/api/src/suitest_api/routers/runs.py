@@ -14,8 +14,10 @@ from pathlib import Path
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_db.audit import write_audit
+from suitest_db.models.case import TestCase, TestStep
 from suitest_db.repositories.projects import ProjectRepo
 from suitest_db.repositories.run_step_logs import RunStepLogRepo
 from suitest_db.repositories.runs import RunRepo
@@ -30,6 +32,7 @@ from suitest_api.routers._pagination import decode_cursor_or_400, encode_next
 from suitest_api.schemas.run import (
     ArtifactPublic,
     ArtifactSignedUrl,
+    RunCaseSummary,
     RunDetail,
     RunListItem,
     RunLogItem,
@@ -103,8 +106,18 @@ async def list_runs(
     rows, next_keyset = await RunRepo(session).list_by_project(
         project_id, status=status_, branch=branch, env=env, cursor=decoded, limit=limit
     )
+    items: list[RunListItem] = []
+    for r in rows:
+        item = RunListItem.model_validate(r)
+        item.summary = RunSummary(
+            total_steps=r.total_steps,
+            passed_steps=r.passed_steps,
+            failed_steps=r.failed_steps,
+            duration_ms=r.duration_ms,
+        )
+        items.append(item)
     return Page[RunListItem](
-        items=[RunListItem.model_validate(r) for r in rows],
+        items=items,
         meta=PageMeta(next_cursor=encode_next(next_keyset), limit=limit),
     )
 
@@ -151,7 +164,43 @@ async def get_run(
     run, summary = pair
     if not await _project_in_scope(session, run.project_id, ctx.workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
-    coverage = (run.metadata_json or {}).get("coverageSummary")
+    metadata = run.metadata_json or {}
+    coverage = metadata.get("coverageSummary") if isinstance(metadata, dict) else None
+    raw_selection = metadata.get("selection") if isinstance(metadata, dict) else None
+    planned_cases: list[RunCaseSummary] = []
+    if isinstance(raw_selection, list) and raw_selection:
+        case_ids = [
+            item["case_id"]
+            for item in raw_selection
+            if isinstance(item, dict) and isinstance(item.get("case_id"), str)
+        ]
+        if case_ids:
+            tc_rows = (
+                await session.execute(
+                    select(
+                        TestCase.id,
+                        TestCase.public_id,
+                        TestCase.title,
+                        func.count(TestStep.id),
+                    )
+                    .outerjoin(TestStep, TestStep.case_id == TestCase.id)
+                    .where(TestCase.id.in_(case_ids))
+                    .group_by(TestCase.id, TestCase.public_id, TestCase.title)
+                )
+            ).all()
+            tc_map = {row[0]: (row[1], row[2], int(row[3] or 0)) for row in tc_rows}
+            for cid in case_ids:
+                if cid in tc_map:
+                    pid, title, step_count = tc_map[cid]
+                    planned_cases.append(
+                        RunCaseSummary(
+                            case_id=cid,
+                            case_public_id=pid,
+                            case_title=title,
+                            total_steps=step_count,
+                        )
+                    )
+
     return RunDetail(
         id=run.id,
         public_id=run.public_id,
@@ -175,6 +224,7 @@ async def get_run(
             duration_ms=summary.duration_ms,
         ),
         coverage_summary=coverage if isinstance(coverage, dict) else None,
+        cases=planned_cases,
     )
 
 
@@ -444,7 +494,7 @@ async def create_run(
     body: CreateRunBody,
     ctx: TenantContext = Depends(require_workspace_membership),
     session: AsyncSession = Depends(get_async_session),
-    arq: ArqRedis = Depends(get_arq),
+    arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:
     """Validate selection + MCP routing, persist the run, enqueue the ARQ job.
 
@@ -487,7 +537,7 @@ async def create_suite_run(
     body: CreateSuiteRunBody,
     ctx: TenantContext = Depends(require_workspace_membership),
     session: AsyncSession = Depends(get_async_session),
-    arq: ArqRedis = Depends(get_arq),
+    arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:
     """Run every active case in a suite as ONE bundle run, then enqueue the ARQ job.
 
@@ -531,7 +581,7 @@ async def cancel_run(
     run_id: str,
     ctx: TenantContext = Depends(require_workspace_membership),
     session: AsyncSession = Depends(get_async_session),
-    arq: ArqRedis = Depends(get_arq),
+    arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:
     """Transition a QUEUED / RUNNING run to CANCELLED and best-effort abort the ARQ job.
 
@@ -548,7 +598,7 @@ async def cancel_run(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="run not cancellable")
     metadata = run.metadata_json or {}
     job_id_raw = metadata.get("arq_job_id") if isinstance(metadata, dict) else None
-    if isinstance(job_id_raw, str):
+    if isinstance(job_id_raw, str) and arq is not None:
         try:
             from arq.jobs import Job as ArqJob
 
@@ -568,7 +618,7 @@ async def rerun_run(
     run_id: str,
     ctx: TenantContext = Depends(require_workspace_membership),
     session: AsyncSession = Depends(get_async_session),
-    arq: ArqRedis = Depends(get_arq),
+    arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:
     """Clone the source run's selection into a fresh QUEUED row + enqueue the ARQ job.
 

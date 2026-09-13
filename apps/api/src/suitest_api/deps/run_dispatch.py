@@ -23,7 +23,7 @@ class _Enqueuer(Protocol):
 async def dispatch_run(
     *,
     mode: str,
-    arq: _Enqueuer,
+    arq: _Enqueuer | None,
     run_id: str,
     queue_name: str,
 ) -> str | None:
@@ -32,7 +32,7 @@ async def dispatch_run(
     Returns the ARQ job-id when enqueued, ``None`` otherwise (local mode or
     when ARQ returns ``None`` for a duplicate job).
     """
-    if mode == "local":
+    if mode == "local" or arq is None:
         return None  # ponytail: supervisor drains QUEUED runs; nothing to enqueue
     job = await arq.enqueue_job("run_test_case", run_id, _queue_name=queue_name)
     if job is None:

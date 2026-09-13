@@ -31,7 +31,9 @@ _POLL_INTERVAL_SECONDS = 1.0
 
 async def _next_queued_run_ids(session_factory: async_sessionmaker[AsyncSession]) -> list[str]:
     async with session_factory() as session:
-        rows = await session.execute(select(Run.id).where(Run.status == RunStatus.QUEUED))
+        rows = await session.execute(
+            select(Run.id).where(Run.status == RunStatus.QUEUED).order_by(Run.created_at.asc())
+        )
         return [str(r) for r in rows.scalars().all()]
 
 

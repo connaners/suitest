@@ -4,6 +4,10 @@ import tailwindcss from "@tailwindcss/vite";
 import { TanStackRouterVite } from "@tanstack/router-vite-plugin";
 import path from "node:path";
 
+const backendPort = process.env.VITE_BACKEND_PORT || "4000";
+const backendTarget = `http://localhost:${backendPort}`;
+const wsTarget = `ws://localhost:${backendPort}`;
+
 export default defineConfig({
   plugins: [TanStackRouterVite(), react(), tailwindcss()],
   resolve: {
@@ -17,13 +21,13 @@ export default defineConfig({
       // Backend mounts these paths at the application root (NOT under /api/v1).
       // Add all root-mounted paths here so dev requests are forwarded to the
       // FastAPI server instead of falling through to Vite's SPA index.html.
-      "/api": "http://localhost:4000",
-      "/auth": "http://localhost:4000",
-      "/capabilities": "http://localhost:4000",
-      "/health": "http://localhost:4000",
-      "/metrics": "http://localhost:4000",
-      "/openapi.json": "http://localhost:4000",
-      "/ws": { target: "ws://localhost:4000", ws: true },
+      "/api": backendTarget,
+      "/auth": backendTarget,
+      "/capabilities": backendTarget,
+      "/health": backendTarget,
+      "/metrics": backendTarget,
+      "/openapi.json": backendTarget,
+      "/ws": { target: wsTarget, ws: true },
     },
   },
   preview: { port: 3000 },

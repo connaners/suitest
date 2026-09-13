@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, ListChecks, Maximize2, PlayCircle, Square } from "lucide-react";
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Gated } from "@/components/gating/Gated";
@@ -15,13 +15,9 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { useCancelRun, useRerunRun, useRun, useRunsList, useRunsSummary } from "@/hooks/use-runs";
 import { ApiError } from "@/lib/api-client";
-import type { components } from "@/lib/api-types";
 import { statusToBadge } from "@/lib/badge-maps";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
-
-type RunListItem = components["schemas"]["RunListItem"];
-
 interface SearchSchema {
   run?: string;
 }
@@ -77,6 +73,12 @@ function RunsList({
   const { data } = useRunsList(50);
   const runs = data.items;
 
+  useEffect(() => {
+    if (!selectedId && runs.length > 0 && runs[0]) {
+      onSelect(runs[0].public_id);
+    }
+  }, [selectedId, runs, onSelect]);
+
   if (runs.length === 0) {
     return (
       <EmptyState
@@ -90,10 +92,17 @@ function RunsList({
   return (
     <ul className="flex flex-col gap-1" data-testid="runs-list">
       {runs.map((r) => {
-        const passed = (
-          r as RunListItem & { summary?: { passed_steps: number; total_steps: number } }
-        ).summary;
-        const pct = passed?.total_steps ? (passed.passed_steps / passed.total_steps) * 100 : 0;
+        const summary = r.summary;
+        const total = summary?.total_steps ?? 0;
+        const passed = summary?.passed_steps ?? 0;
+        const pct =
+          total > 0
+            ? (passed / total) * 100
+            : r.status === "PASS"
+              ? 100
+              : 0;
+        const variant =
+          r.status === "FAIL" ? "fail" : r.status === "CANCELLED" ? "warn" : "default";
         return (
           <li key={r.id}>
             <button
@@ -120,7 +129,7 @@ function RunsList({
                 </span>
                 <span className="shrink-0">{formatDuration(r.duration_ms)}</span>
               </div>
-              <ProgressBar value={pct} variant={r.status === "FAIL" ? "fail" : "default"} />
+              <ProgressBar value={pct} variant={variant} />
             </button>
           </li>
         );
@@ -165,7 +174,10 @@ function RunDetailPanel({
   const handleRerun = (): void => {
     rerunMutation.mutate(run.id, {
       onSuccess: (data) => {
-        onNavigateToRun(data.public_id);
+        const targetPublicId = data.publicId || data.public_id;
+        if (targetPublicId) {
+          onNavigateToRun(targetPublicId);
+        }
       },
     });
   };
@@ -184,17 +196,20 @@ function RunDetailPanel({
           <span className="font-mono text-[11px] text-fg-5">via {run.trigger}</span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={cancelDisabled}
-            onClick={handleCancel}
-            data-testid="run-cancel-button"
-          >
-            <Square className="h-3.5 w-3.5" aria-hidden="true" />
-            {cancelMutation.isPending ? "Cancelling…" : "Cancel"}
-          </Button>
+          {isLive ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={cancelDisabled}
+              onClick={handleCancel}
+              className="border-red/40 text-red hover:bg-red/10"
+              data-testid="run-cancel-button"
+            >
+              <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+              {cancelMutation.isPending ? "Cancelling…" : "Cancel run"}
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -245,7 +260,7 @@ function RunDetailPanel({
 
       {/* Case-first evidence view (test cases → steps + Preview/Code/Logs/
           Artifacts), shared with the full-page run route. */}
-      <RunCaseExplorer runId={run.id} status={run.status} />
+      <RunCaseExplorer runId={run.id} status={run.status} plannedCases={run.cases} />
 
       <footer className="flex justify-end" data-testid="run-cost-footer">
         <Gated
