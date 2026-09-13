@@ -73,7 +73,7 @@ export function RunCaseExplorer({
       void refetchSteps();
       void refetchArtifacts();
     }
-  }, [status]);
+  }, [status, refetchSteps, refetchArtifacts]);
 
   const groups = useMemo(
     () => groupStepsByCase(steps, artifacts, plannedCases, status),
