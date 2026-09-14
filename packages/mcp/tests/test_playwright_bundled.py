@@ -44,7 +44,7 @@ def test_playwright_command_is_npx_invocation() -> None:
     )
     assert PLAYWRIGHT_COMMAND[PLAYWRIGHT_COMMAND.index("--browser") + 1] == "chromium"
     assert "--isolated" in PLAYWRIGHT_COMMAND
-    assert "--allow-unrestricted-file-access" in PLAYWRIGHT_COMMAND
+    assert "--allow-unrestricted-file-access" not in PLAYWRIGHT_COMMAND
 
 
 def test_playwright_spec_basic_fields() -> None:

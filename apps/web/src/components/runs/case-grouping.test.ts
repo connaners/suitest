@@ -105,7 +105,7 @@ describe("case-grouping", () => {
       expect(groups[2]?.rollup).toBe("queued");
     });
 
-    it("immediately marks active case as fail if a step errors, without marking next cases running yet", () => {
+    it("immediately marks active case as fail if a step errors and transitions next case to running", () => {
       const steps = [
         makeStep({
           id: "s1",
@@ -121,8 +121,8 @@ describe("case-grouping", () => {
       expect(groups[0]?.failed).toBe(1);
       expect(groups[0]?.firstFailure).toBe("Network Timeout");
 
-      // Case 1 is not finished executing (1 < 3 steps), so Case 2 remains queued
-      expect(groups[1]?.rollup).toBe("queued");
+      // Case 1 failed fast (halted early), so Case 2 is now the active running case
+      expect(groups[1]?.rollup).toBe("running");
       expect(groups[2]?.rollup).toBe("queued");
     });
 
@@ -230,6 +230,23 @@ describe("case-grouping", () => {
       const groups = groupStepsByCase(steps, [], planned, "CANCELLED");
       expect(groups[0]?.rollup).toBe("aborted");
       expect(groups[1]?.rollup).toBe("aborted");
+    });
+
+    it("allows subsequent cases to run when a prior case fails fast with fewer steps than planned", () => {
+      const planned = [
+        { case_id: "c_1", case_public_id: "TC-1", case_title: "Failing Case", total_steps: 3 },
+        { case_id: "c_2", case_public_id: "TC-2", case_title: "Next Case", total_steps: 2 },
+        { case_id: "c_3", case_public_id: "TC-3", case_title: "Queued Case", total_steps: 1 },
+      ];
+      // c_1 fails at step 1 out of 3, fail-fast terminates c_1 early
+      const steps = [
+        makeStep({ id: "s_1", case_id: "c_1", outcome: "FAIL", error_message: "assertion error", step_order: 0 }),
+      ];
+      const groups = groupStepsByCase(steps, [], planned, "RUNNING");
+
+      expect(groups[0]?.rollup).toBe("fail");
+      expect(groups[1]?.rollup).toBe("running");
+      expect(groups[2]?.rollup).toBe("queued");
     });
   });
 });

@@ -373,3 +373,50 @@ async def test_rerun_selective_multiple_case_ids_name(api_db: ApiDb) -> None:
         cloned = await session.get(Run, body["id"])
         assert cloned is not None
         assert cloned.name == "Ad-hoc: 2 selected cases"
+
+
+@pytest.mark.asyncio
+async def test_rerun_selective_rejects_foreign_case_id(api_db: ApiDb) -> None:
+    """When a caseId belongs to a different project, selective rerun returns 400."""
+    user = await api_db.seed_user(email="run-rerun-foreign@example.com")
+    ws = await api_db.member_workspace(user, slug="run-rerun-foreign-ws")
+
+    project1 = Project(workspace_id=ws.id, slug="p-1", name="P1")
+    project2 = Project(workspace_id=ws.id, slug="p-2", name="P2")
+    await api_db.add_all([project1, project2])
+
+    suite1 = Suite(project_id=project1.id, name="S1", order=0)
+    suite2 = Suite(project_id=project2.id, name="S2", order=0)
+    await api_db.add_all([suite1, suite2])
+
+    case1 = TestCase(suite_id=suite1.id, public_id="TC-F1", name="Case 1", source=CaseSource.MANUAL)
+    case_foreign = TestCase(
+        suite_id=suite2.id, public_id="TC-F2", name="Foreign Case", source=CaseSource.MANUAL
+    )
+    await api_db.add_all([case1, case_foreign])
+
+    run = _run_row(
+        project1.id,
+        "Run in P1",
+        RunStatus.PASS,
+        metadata_json={
+            "selection": [{"case_id": case1.id, "selected_step_ids": None}],
+            "mcp_routing_override": None,
+        },
+    )
+    await api_db.add_all([run])
+
+    arq = _RecordingArq()
+    app = api_db.app_for(user)
+    _override_arq(app, arq)
+
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                f"/api/v1/runs/{run.id}/rerun",
+                json={"caseIds": [case_foreign.id]},
+                headers={"X-Workspace-Id": ws.id},
+            )
+    assert resp.status_code == 400, resp.text
+    assert f"case {case_foreign.id} not in project" in resp.json()["detail"]

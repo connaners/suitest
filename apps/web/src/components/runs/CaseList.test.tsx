@@ -88,4 +88,35 @@ describe("<CaseList>", () => {
       "8 steps · 1 passed · 1 failed · 6 aborted",
     );
   });
+
+  it("automatically resets filter to 'all' when switching to groups with 0 failures", async () => {
+    const user = userEvent.setup();
+    const failingGroups: CaseGroup[] = [
+      makeGroup({ caseId: "tc_1", casePublicId: "TC-101", caseName: "Passing", rollup: "pass" }),
+      makeGroup({ caseId: "tc_2", casePublicId: "TC-102", caseName: "Failing", rollup: "fail", failed: 1 }),
+    ];
+
+    const { rerender } = render(
+      <CaseList groups={failingGroups} selectedCaseId="tc_1" onSelectCase={vi.fn()} />,
+    );
+
+    // Filter to failed only
+    await user.click(screen.getByTestId("case-filter-failed"));
+    expect(screen.getAllByTestId("case-row")).toHaveLength(1);
+
+    // Switch to all-pass run
+    const passingGroups: CaseGroup[] = [
+      makeGroup({ caseId: "tc_3", casePublicId: "TC-103", caseName: "Run B Case 1", rollup: "pass" }),
+      makeGroup({ caseId: "tc_4", casePublicId: "TC-104", caseName: "Run B Case 2", rollup: "pass" }),
+    ];
+    rerender(
+      <CaseList groups={passingGroups} selectedCaseId="tc_3" onSelectCase={vi.fn()} />,
+    );
+
+    // Filters are hidden and both cases are visible (filter was reset to 'all')
+    expect(screen.queryByTestId("case-list-filters")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("case-row")).toHaveLength(2);
+    expect(screen.getByText("Run B Case 1")).toBeInTheDocument();
+    expect(screen.getByText("Run B Case 2")).toBeInTheDocument();
+  });
 });

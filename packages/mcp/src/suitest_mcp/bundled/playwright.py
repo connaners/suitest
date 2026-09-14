@@ -61,7 +61,6 @@ PLAYWRIGHT_COMMAND: list[str] = [
     "--browser",
     "chromium",
     "--isolated",
-    "--allow-unrestricted-file-access",
 ]
 
 

@@ -46,7 +46,6 @@ BUILTIN_SPECS: list[McpProviderConfig] = [
             "--browser",
             "chromium",
             "--isolated",
-            "--allow-unrestricted-file-access",
         ],
         config_json={"version_pin": "@playwright/mcp@latest"},
         is_default_for_target={"FE_WEB": True},

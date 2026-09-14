@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cleanErrorMessage, classifyError } from "@/lib/error-formatter";
 import {
+  ApiError,
   fetchRunLogs,
   fetchRunSignedUrl,
   fetchTestCaseCode,
@@ -100,12 +101,17 @@ export function CaseDetailPanel({
     queryKey: ["case-detail-code", group.caseId] as const,
     queryFn: () => fetchTestCaseCode(group.caseId),
   });
-  const { data: description, isError: isDescError } = useQuery({
+  const { data: description, error: descError } = useQuery({
     queryKey: ["case-detail-desc", group.caseId] as const,
     queryFn: () => fetchTestCaseDescription(group.caseId),
     retry: false,
   });
-  const isCaseDeleted = Boolean(group.isDeleted || isDescError);
+  const isCaseDeleted = Boolean(
+    group.isDeleted ||
+      (descError instanceof ApiError
+        ? descError.status === 404
+        : (descError as { status?: number } | null)?.status === 404),
+  );
 
   const isLive = runStatus === "RUNNING" || runStatus === "QUEUED";
   const isCaseHalted =
@@ -162,16 +168,20 @@ export function CaseDetailPanel({
           let errorMessage: string | null = null;
 
           if (isLive) {
-            if (!isCaseHalted) {
+            if (group.rollup === "running") {
               if (!activeFound) {
                 outcome = "RUNNING";
                 activeFound = true;
               } else {
                 outcome = "QUEUED";
               }
-            } else {
+            } else if (group.rollup === "queued") {
+              outcome = "QUEUED";
+            } else if (isCaseHalted) {
               outcome = "ABORTED";
               errorMessage = "Step was aborted because a prior step in this run failed.";
+            } else {
+              outcome = "QUEUED";
             }
           } else {
             outcome = "ABORTED";

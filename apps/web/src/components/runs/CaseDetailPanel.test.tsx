@@ -235,4 +235,69 @@ describe("<CaseDetailPanel>", () => {
       await screen.findByText(/Step was not executed because the test run was cancelled by user/i),
     ).toBeInTheDocument();
   });
+
+  it("queued case in live run renders unexecuted planned steps as QUEUED, not RUNNING", async () => {
+    server.use(
+      http.get("*/api/v1/test-cases/:id/steps", () =>
+        HttpResponse.json([
+          { id: "step_1", order: 1, action: "Navigate to page" },
+          { id: "step_2", order: 2, action: "Click button" },
+        ]),
+      ),
+    );
+
+    const group: CaseGroup = {
+      caseId: "tc_1",
+      casePublicId: "TC-101",
+      caseName: "Queued Case",
+      steps: [],
+      total: 2,
+      passed: 0,
+      failed: 0,
+      rollup: "queued",
+      durationMs: 0,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    renderPanel(group, "RUNNING");
+
+    expect(await screen.findByText("Navigate to page")).toBeInTheDocument();
+    expect(await screen.findByText("Click button")).toBeInTheDocument();
+    expect(screen.queryByText("RUNNING")).not.toBeInTheDocument();
+
+    const stepRows = screen.getAllByTestId("step-row");
+    expect(stepRows).toHaveLength(2);
+    expect(stepRows[0]).toHaveTextContent("QUEUED");
+    expect(stepRows[1]).toHaveTextContent("QUEUED");
+  });
+
+  it("HTTP 500 error on case description fetch does NOT mark case as deleted", async () => {
+    server.use(
+      http.get("*/api/v1/test-cases/:id", () =>
+        new HttpResponse(null, { status: 500 }),
+      ),
+    );
+
+    const group: CaseGroup = {
+      caseId: "tc_1",
+      casePublicId: "TC-101",
+      caseName: "Active Case with 500",
+      steps: [makeStep(1, "Step 1", "PASS")],
+      total: 1,
+      passed: 1,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 200,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    renderPanel(group, "PASS", vi.fn());
+
+    expect(await screen.findByTestId("case-detail-title")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-deleted-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("case-deleted-banner")).not.toBeInTheDocument();
+    expect(screen.getByTestId("case-rerun-button")).toBeInTheDocument();
+  });
 });

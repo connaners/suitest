@@ -374,13 +374,23 @@ class RunService:
 
         new_selection: list[dict[str, Any]]
         if target_case_ids is not None:
-            # Filter out soft-deleted cases so rerun doesn't fail on deleted cases
-            active_tc_stmt = select(TestCase.id).where(
-                TestCase.id.in_(target_case_ids),
-                TestCase.deleted_at.is_(None),
+            # Scope to project to prevent cross-project/cross-workspace injection
+            case_project_stmt = (
+                select(TestCase.id, TestCase.deleted_at)
+                .join(Suite, Suite.id == TestCase.suite_id)
+                .where(
+                    TestCase.id.in_(target_case_ids),
+                    Suite.project_id == src.project_id,
+                )
             )
-            active_tc_ids = set((await self._session.scalars(active_tc_stmt)).all())
-            valid_target_ids = [cid for cid in target_case_ids if cid in active_tc_ids]
+            case_rows = (await self._session.execute(case_project_stmt)).all()
+            case_project_map = {row[0]: row[1] for row in case_rows}
+            for cid in target_case_ids:
+                if cid not in case_project_map:
+                    raise ValueError(f"case {cid} not in project")
+
+            # Filter out soft-deleted cases so rerun doesn't fail on deleted cases
+            valid_target_ids = [cid for cid in target_case_ids if case_project_map[cid] is None]
             if not valid_target_ids:
                 raise ValueError("No active test cases to re-run (cases may have been deleted).")
 

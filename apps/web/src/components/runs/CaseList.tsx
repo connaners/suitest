@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ProgressBar, type ProgressBarVariant } from "@/components/shared/ProgressBar";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -29,6 +29,12 @@ export function CaseList({
     () => groups.filter((g) => g.rollup === "fail" || g.rollup === "aborted").length,
     [groups],
   );
+
+  useEffect(() => {
+    if (failedCount === 0 && filter === "failed") {
+      setFilter("all");
+    }
+  }, [failedCount, filter]);
 
   const displayedGroups = useMemo(() => {
     if (filter === "failed") {

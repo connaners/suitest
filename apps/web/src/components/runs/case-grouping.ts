@@ -139,12 +139,15 @@ export function groupStepsByCase(
     const groupsByCaseId = new Map(groups.map((g) => [g.caseId, g]));
     const result: CaseGroup[] = [];
 
-    // Helper: has a case finished all of its planned steps?
+    // Helper: has a case finished all of its planned steps or halted early?
     const isFinished = (
       existingGroup: CaseGroup | undefined,
       totalSteps: number,
     ): boolean => {
       if (!existingGroup || existingGroup.steps.length === 0) return false;
+      if (existingGroup.steps.some((s) => s.outcome === "FAIL" || s.outcome === "ERROR")) {
+        return true;
+      }
       if (totalSteps > 0) {
         return existingGroup.steps.length >= totalSteps;
       }
