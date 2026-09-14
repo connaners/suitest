@@ -3,10 +3,14 @@ packages:
   - "packages/mcp-npx"
   - "docs-site"
 allowBuilds:
+  '@suiflex/kurir': true
   esbuild: true
   msw: true
   sharp: true
+minimumReleaseAgeExclude:
+  - '@suiflex/kurir@0.1.0'
 onlyBuiltDependencies:
+  - '@suiflex/kurir'
   - esbuild
   - sharp
   - msw
