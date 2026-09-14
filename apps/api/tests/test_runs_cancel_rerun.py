@@ -452,11 +452,15 @@ async def test_run_historical_immutability_snapshot(api_db: ApiDb) -> None:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             create_resp = await c.post(
-                f"/api/v1/projects/{project.id}/runs",
-                json={"selection": [{"case_id": case.id}]},
+                "/api/v1/runs",
+                json={
+                    "projectId": project.id,
+                    "name": "snapshot test run",
+                    "selection": [{"caseId": case.id}],
+                },
                 headers={"X-Workspace-Id": ws.id},
             )
-            assert create_resp.status_code == 201, create_resp.text
+            assert create_resp.status_code == 202, create_resp.text
             run_id = create_resp.json()["id"]
 
             # Add step 3 to the test case (simulating future user edit)
