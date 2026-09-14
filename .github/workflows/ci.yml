@@ -432,6 +432,11 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: Install MCP package dependencies
+        working-directory: packages/mcp-npx
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          node node_modules/@suiflex/kurir/scripts/install.js
 
       - name: npm smoke test (sync bundle + MCP boot via bin)
         working-directory: packages/mcp-npx
