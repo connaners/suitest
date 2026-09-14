@@ -394,6 +394,11 @@ jobs:
         run: |
           node scripts/sync-python.js
           python -m compileall -q python
+      - name: Install MCP package dependencies
+        working-directory: packages/mcp-npx
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          node node_modules/@suiflex/kurir/scripts/install.js
 
       - name: MCP package tests on Node 18
         working-directory: packages/mcp-npx
