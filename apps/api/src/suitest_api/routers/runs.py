@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_db.audit import write_audit
 from suitest_db.models.case import TestCase, TestStep
+from suitest_db.models.run import RunStep
 from suitest_db.repositories.projects import ProjectRepo
 from suitest_db.repositories.run_step_logs import RunStepLogRepo
 from suitest_db.repositories.runs import RunRepo
@@ -168,7 +169,20 @@ async def get_run(
     coverage = metadata.get("coverageSummary") if isinstance(metadata, dict) else None
     raw_selection = metadata.get("selection") if isinstance(metadata, dict) else None
     planned_cases: list[RunCaseSummary] = []
-    if isinstance(raw_selection, list) and raw_selection:
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+    snapshot_cases = metadata_dict.get("planned_cases")
+    if isinstance(snapshot_cases, list) and snapshot_cases:
+        for item in snapshot_cases:
+            if isinstance(item, dict):
+                planned_cases.append(
+                    RunCaseSummary(
+                        case_id=str(item.get("case_id", "")),
+                        case_public_id=str(item.get("case_public_id", "")),
+                        case_title=str(item.get("case_title", "")),
+                        total_steps=int(item.get("total_steps") or 0),
+                    )
+                )
+    elif isinstance(raw_selection, list) and raw_selection:
         case_ids = [
             item["case_id"]
             for item in raw_selection
@@ -189,9 +203,23 @@ async def get_run(
                 )
             ).all()
             tc_map = {row[0]: (row[1], row[2], int(row[3] or 0)) for row in tc_rows}
+
+            # For legacy completed runs without snapshot, query executed steps count
+            # so historical PASS runs never report unexecuted steps when cases are edited later.
+            run_step_counts = (
+                await session.execute(
+                    select(RunStep.case_id, func.count(RunStep.id))
+                    .where(RunStep.run_id == run.id)
+                    .group_by(RunStep.case_id)
+                )
+            ).all()
+            executed_map = {row[0]: int(row[1] or 0) for row in run_step_counts}
+
             for cid in case_ids:
                 if cid in tc_map:
                     pid, title, step_count = tc_map[cid]
+                    if run.status == RunStatus.PASS and executed_map.get(cid, 0) > 0:
+                        step_count = executed_map[cid]
                     planned_cases.append(
                         RunCaseSummary(
                             case_id=cid,

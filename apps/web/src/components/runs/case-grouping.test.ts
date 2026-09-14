@@ -248,5 +248,21 @@ describe("case-grouping", () => {
       expect(groups[1]?.rollup).toBe("running");
       expect(groups[2]?.rollup).toBe("queued");
     });
+
+    it("historical PASS run remains pass and locks total to executed steps if test case gained steps later", () => {
+      const planned = [
+        // Case was edited later and now has 3 steps, but the historical run executed 2 steps and passed
+        { case_id: "c_1", case_public_id: "TC-1", case_title: "Edited Case", total_steps: 3 },
+      ];
+      const steps = [
+        makeStep({ id: "s_1", case_id: "c_1", outcome: "PASS", step_order: 0 }),
+        makeStep({ id: "s_2", case_id: "c_1", outcome: "PASS", step_order: 1 }),
+      ];
+      const groups = groupStepsByCase(steps, [], planned, "PASS");
+
+      expect(groups[0]?.rollup).toBe("pass");
+      expect(groups[0]?.total).toBe(2);
+      expect(groups[0]?.passed).toBe(2);
+    });
   });
 });

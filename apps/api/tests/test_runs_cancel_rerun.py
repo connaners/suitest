@@ -420,3 +420,55 @@ async def test_rerun_selective_rejects_foreign_case_id(api_db: ApiDb) -> None:
             )
     assert resp.status_code == 400, resp.text
     assert f"case {case_foreign.id} not in project" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_run_historical_immutability_snapshot(api_db: ApiDb) -> None:
+    """Run details use snapshot planned_cases so future step modifications do not alter history."""
+    user = await api_db.seed_user(email="run-snapshot@example.com")
+    ws = await api_db.member_workspace(user, slug="run-snapshot-ws")
+    project = Project(workspace_id=ws.id, slug="p-snap", name="Snapshot Project")
+    await api_db.add_all([project])
+
+    suite = Suite(project_id=project.id, name="Suite Snap", order=0)
+    await api_db.add_all([suite])
+
+    case = TestCase(
+        suite_id=suite.id, public_id="TC-SNAP", name="Snapshot Case", source=CaseSource.MANUAL
+    )
+    await api_db.add_all([case])
+
+    # Case originally has 2 steps
+    step1 = TestStep(case_id=case.id, step_order=0, action="Step 1")
+    step2 = TestStep(case_id=case.id, step_order=1, action="Step 2")
+    await api_db.add_all([step1, step2])
+
+    # Create run via API
+    arq = _RecordingArq()
+    app = api_db.app_for(user)
+    _override_arq(app, arq)
+
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            create_resp = await c.post(
+                f"/api/v1/projects/{project.id}/runs",
+                json={"selection": [{"case_id": case.id}]},
+                headers={"X-Workspace-Id": ws.id},
+            )
+            assert create_resp.status_code == 201, create_resp.text
+            run_id = create_resp.json()["id"]
+
+            # Add step 3 to the test case (simulating future user edit)
+            step3 = TestStep(case_id=case.id, step_order=2, action="Step 3 added in future")
+            await api_db.add_all([step3])
+
+            # Fetch run details - must still report total_steps = 2 from snapshot!
+            get_resp = await c.get(
+                f"/api/v1/runs/{run_id}",
+                headers={"X-Workspace-Id": ws.id},
+            )
+            assert get_resp.status_code == 200, get_resp.text
+            cases = get_resp.json()["cases"]
+            assert len(cases) == 1
+            assert cases[0]["total_steps"] == 2

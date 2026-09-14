@@ -122,7 +122,7 @@ export function CaseDetailPanel({
     runStatus === "ERROR";
 
   const shouldFetchPlanned =
-    isLive || group.rollup === "aborted" || group.steps.length < group.total;
+    isLive || group.rollup === "aborted" || (group.steps.length < group.total && runStatus !== "PASS");
 
   const { data: plannedSteps } = useQuery({
     queryKey: ["case-planned-steps", group.caseId] as const,
@@ -140,8 +140,8 @@ export function CaseDetailPanel({
     }
 
     // Terminal Run Freeze Guard: For completed normal runs where all steps executed and passed,
-    // use recorded executed steps directly.
-    if (!isLive && group.rollup !== "aborted" && group.steps.length >= group.total && group.total > 0) {
+    // or run passed, use recorded executed steps directly.
+    if (!isLive && (runStatus === "PASS" || (group.rollup !== "aborted" && group.steps.length >= group.total && group.total > 0))) {
       return group.steps;
     }
 

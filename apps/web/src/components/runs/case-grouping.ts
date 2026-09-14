@@ -193,7 +193,7 @@ export function groupStepsByCase(
           rollup = "fail";
         } else if (
           (runStatus === "CANCELLED" && (plannedCases.length === 1 || !finished)) ||
-          (!finished && runStatus !== "RUNNING")
+          (!finished && runStatus !== "RUNNING" && runStatus !== "PASS")
         ) {
           rollup = "aborted";
         } else {
@@ -204,11 +204,16 @@ export function groupStepsByCase(
           allPriorFinished = false;
         }
 
+        const effectiveTotal =
+          runStatus === "PASS" && existing.steps.length > 0 && targetTotal > existing.steps.length
+            ? existing.steps.length
+            : targetTotal;
+
         result.push({
           ...existing,
           casePublicId: pc.case_public_id || existing.casePublicId,
           caseName: pc.case_title || existing.caseName,
-          total: targetTotal,
+          total: effectiveTotal,
           rollup,
         });
       } else {

@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from suitest_core.capabilities import TierFlag
 from suitest_db.audit import write_audit
 from suitest_db.models.case import TestCase, TestStep
@@ -214,6 +214,37 @@ class RunService:
         capability = await WorkspaceCapabilityRepo(self._session).get(project.workspace_id)
         tier = Tier(capability.tier) if capability is not None else Tier.ZERO
 
+        # Snapshot planned cases at run creation so historical runs are immutable
+        tc_info_rows = (
+            await self._session.execute(
+                select(
+                    TestCase.id,
+                    TestCase.public_id,
+                    TestCase.title,
+                    func.count(TestStep.id),
+                )
+                .outerjoin(TestStep, TestStep.case_id == TestCase.id)
+                .where(TestCase.id.in_(case_ids))
+                .group_by(TestCase.id, TestCase.public_id, TestCase.title)
+            )
+        ).all()
+        tc_info_map = {row[0]: (row[1], row[2], int(row[3] or 0)) for row in tc_info_rows}
+        planned_cases_snapshot: list[dict[str, Any]] = []
+        for item in selection:
+            cid = item.get("case_id")
+            if isinstance(cid, str) and cid in tc_info_map:
+                pid, title, count = tc_info_map[cid]
+                sel_steps = item.get("selected_step_ids")
+                total_s = len(sel_steps) if isinstance(sel_steps, list) else count
+                planned_cases_snapshot.append(
+                    {
+                        "case_id": cid,
+                        "case_public_id": pid,
+                        "case_title": title,
+                        "total_steps": total_s,
+                    }
+                )
+
         # ``metadata_json`` payload is JSON-serialisable: every selection dict
         # came from Pydantic ``model_dump`` upstream, and routing override is
         # ``dict[str, str] | None``. Typed against ``dict[str, Any]`` so the
@@ -221,6 +252,7 @@ class RunService:
         # alias for ad-hoc metadata.
         metadata: dict[str, Any] = {
             "selection": selection,
+            "planned_cases": planned_cases_snapshot,
             "mcp_routing_override": mcp_routing_override,
         }
         run = RunRow(
@@ -417,8 +449,45 @@ class RunService:
             new_selection = [{**item, "selected_step_ids": None} for item in original_selection]
             run_name = src.name[:250]
 
+        # Snapshot planned cases at rerun creation
+        rerun_case_ids = [
+            item["case_id"]
+            for item in new_selection
+            if isinstance(item, dict) and isinstance(item.get("case_id"), str)
+        ]
+        rerun_tc_rows = (
+            await self._session.execute(
+                select(
+                    TestCase.id,
+                    TestCase.public_id,
+                    TestCase.title,
+                    func.count(TestStep.id),
+                )
+                .outerjoin(TestStep, TestStep.case_id == TestCase.id)
+                .where(TestCase.id.in_(rerun_case_ids))
+                .group_by(TestCase.id, TestCase.public_id, TestCase.title)
+            )
+        ).all()
+        rerun_tc_map = {row[0]: (row[1], row[2], int(row[3] or 0)) for row in rerun_tc_rows}
+        rerun_planned_snapshot: list[dict[str, Any]] = []
+        for item in new_selection:
+            case_id_val = item.get("case_id")
+            if isinstance(case_id_val, str) and case_id_val in rerun_tc_map:
+                pid, title, count = rerun_tc_map[case_id_val]
+                sel_steps = item.get("selected_step_ids")
+                total_s = len(sel_steps) if isinstance(sel_steps, list) else count
+                rerun_planned_snapshot.append(
+                    {
+                        "case_id": case_id_val,
+                        "case_public_id": pid,
+                        "case_title": title,
+                        "total_steps": total_s,
+                    }
+                )
+
         metadata: dict[str, Any] = {
             "selection": new_selection,
+            "planned_cases": rerun_planned_snapshot,
             "mcp_routing_override": src_metadata.get("mcp_routing_override"),
             "rerun_of": src.id,
             "rerun_mode": rerun_mode,
