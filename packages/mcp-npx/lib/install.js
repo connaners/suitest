@@ -2,224 +2,124 @@
 
 /**
  * `suitest-mcp install` — register the Suitest MCP server into a supported
- * IDE agent's config. Node/stdlib port of jira-commands' crates/jira/src/cli/mcp.rs.
- *
- * File-target clients get their JSON/JSONC config merged in place (with a .bak
- * backup); CLIs that own an `mcp add` command are delegated to. Every entry
- * carries the SUITEST_API_URL/KEY env the server needs to boot.
+ * IDE agent's config using Kurir (github.com/suiflex/kurir).
  */
-
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawnSync } = require("node:child_process");
 
 const creds = require("./creds.js");
 const picker = require("./picker.js");
 const theme = require("./theme.js");
 const { findPython } = require("./python.js");
+const kurir = require("./kurir.js");
 
 const PKG = "@suiflex/suitest-mcp";
 const NPX_ARGS = ["-y", PKG];
 
-function homeConfig(envKey, ...segments) {
-  if (envKey && process.env[envKey]) return process.env[envKey];
-  return path.join(os.homedir(), ...segments);
-}
-
-function claudeDesktopPath() {
-  const home = os.homedir();
-  if (process.platform === "darwin") {
-    return path.join(
-      home,
-      "Library/Application Support/Claude/claude_desktop_config.json",
-    );
-  }
-  if (process.platform === "win32") {
-    const appdata = process.env.APPDATA || path.join(home, "AppData/Roaming");
-    return path.join(appdata, "Claude/claude_desktop_config.json");
-  }
-  const xdg = process.env.XDG_CONFIG_HOME || path.join(home, ".config");
-  return path.join(xdg, "Claude/claude_desktop_config.json");
-}
-
-function opencodePath() {
-  if (process.env.OPENCODE_CONFIG) return process.env.OPENCODE_CONFIG;
-  const home = os.homedir();
-  if (process.platform === "win32") {
-    const appdata = process.env.APPDATA || path.join(home, "AppData/Roaming");
-    return path.join(appdata, "opencode/opencode.jsonc");
-  }
-  const xdg = process.env.XDG_CONFIG_HOME || path.join(home, ".config");
-  return path.join(xdg, "opencode/opencode.jsonc");
-}
-
-// Client registry — same 11 targets as the jira reference.
+// Client registry — supported targets with their Kurir harness IDs
 const CLIENTS = {
   "claude-code": {
-    kind: "file",
+    kind: "kurir",
+    harness: "claude-code",
     label: "claude-code",
-    hint: "writes ~/.claude.json mcpServers",
-    key: "mcpServers",
-    targetPath: (scope) =>
-      scope === "project"
-        ? path.resolve(process.cwd(), ".mcp.json")
-        : homeConfig("CLAUDE_CODE_CONFIG", ".claude.json"),
+    hint: "writes ~/.claude.json or .mcp.json mcpServers",
+    envOverride: "CLAUDE_CODE_CONFIG",
   },
   "claude-desktop": {
-    kind: "file",
+    kind: "kurir",
+    harness: "claude-desktop",
     label: "claude-desktop",
     hint: "writes claude_desktop_config.json in Claude support dir",
-    key: "mcpServers",
-    targetPath: () => process.env.CLAUDE_DESKTOP_CONFIG || claudeDesktopPath(),
+    envOverride: "CLAUDE_DESKTOP_CONFIG",
   },
   cursor: {
-    kind: "file",
+    kind: "kurir",
+    harness: "cursor",
     label: "cursor",
     hint: "writes ~/.cursor/mcp.json",
-    key: "mcpServers",
-    targetPath: () => homeConfig("CURSOR_CONFIG", ".cursor/mcp.json"),
+    envOverride: "CURSOR_CONFIG",
   },
   windsurf: {
-    kind: "file",
+    kind: "kurir",
+    harness: "windsurf",
     label: "windsurf",
     hint: "writes ~/.codeium/windsurf/mcp_config.json",
-    key: "mcpServers",
-    targetPath: () =>
-      homeConfig("WINDSURF_CONFIG", ".codeium/windsurf/mcp_config.json"),
+    envOverride: "WINDSURF_CONFIG",
   },
   codex: {
-    kind: "delegated",
+    kind: "kurir",
+    harness: "codex",
     label: "codex",
     hint: "delegates to `codex mcp add`",
-    program: "codex",
-    steps: (name, env, force) => {
-      const steps = [];
-      if (force) steps.push(["mcp", "remove", name]);
-      const envFlags = Object.entries(env).flatMap(([k, v]) => [
-        "--env",
-        `${k}=${v}`,
-      ]);
-      steps.push(["mcp", "add", name, ...envFlags, "--", "npx", ...NPX_ARGS]);
-      return steps;
-    },
   },
   "gemini-cli": {
-    kind: "delegated",
+    kind: "kurir",
+    harness: "gemini-cli",
     label: "gemini-cli",
     hint: "delegates to `gemini mcp add`",
-    program: "gemini",
-    steps: (name, env, force) => {
-      const steps = [];
-      if (force) steps.push(["mcp", "remove", name]);
-      const envFlags = Object.entries(env).flatMap(([k, v]) => [
-        "-e",
-        `${k}=${v}`,
-      ]);
-      steps.push([
-        "mcp",
-        "add",
-        "-s",
-        "user",
-        ...envFlags,
-        name,
-        "npx",
-        ...NPX_ARGS,
-      ]);
-      return steps;
-    },
   },
   vscode: {
-    kind: "delegated",
+    kind: "kurir",
+    harness: "vscode",
     label: "vscode",
     hint: "delegates to `code --add-mcp` (GitHub Copilot in VS Code)",
-    program: "code",
-    steps: (name, env) => [
-      [
-        "--add-mcp",
-        JSON.stringify({
-          name,
-          type: "stdio",
-          command: "npx",
-          args: NPX_ARGS,
-          env,
-        }),
-      ],
-    ],
   },
   "copilot-cli": {
-    kind: "file",
+    kind: "kurir",
+    harness: "copilot-cli",
     label: "copilot-cli",
     hint: "writes ~/.copilot/mcp-config.json (GitHub Copilot CLI)",
-    key: "mcpServers",
-    targetPath: () =>
-      homeConfig("COPILOT_CLI_CONFIG", ".copilot/mcp-config.json"),
+    envOverride: "COPILOT_CLI_CONFIG",
   },
   opencode: {
-    kind: "file",
+    kind: "kurir",
+    harness: "opencode",
     label: "opencode",
-    hint: "writes opencode.jsonc",
-    key: "mcp",
-    targetPath: () => opencodePath(),
+    hint: "writes opencode.json",
+    envOverride: "OPENCODE_CONFIG",
   },
   antigravity: {
-    kind: "file",
+    kind: "kurir",
+    harness: "antigravity-cli",
     label: "antigravity",
     hint: "writes ~/.gemini/antigravity/mcp_config.json",
-    key: "mcpServers",
-    targetPath: () =>
-      homeConfig("ANTIGRAVITY_CONFIG", ".gemini/antigravity/mcp_config.json"),
+    envOverride: "ANTIGRAVITY_CONFIG",
   },
   "antigravity-cli": {
-    kind: "file",
+    kind: "kurir",
+    harness: "antigravity-cli",
     label: "antigravity-cli",
     hint: "writes ~/.gemini/config/mcp_config.json",
-    key: "mcpServers",
-    targetPath: () =>
-      homeConfig("ANTIGRAVITY_CLI_CONFIG", ".gemini/config/mcp_config.json"),
+    envOverride: "ANTIGRAVITY_CLI_CONFIG",
+  },
+  "antigravity-desktop": {
+    kind: "kurir",
+    harness: "antigravity-desktop",
+    label: "antigravity-desktop",
+    hint: "writes Antigravity Desktop mcp_config.json",
   },
   hermes: {
-    kind: "delegated",
+    kind: "kurir",
+    harness: "hermes",
     label: "hermes",
     hint: "delegates to `hermes mcp add` (~/.hermes/config.yaml)",
-    program: "hermes",
-    steps: (name, env, force) => {
-      const steps = [];
-      if (force) steps.push(["mcp", "remove", name]);
-      steps.push(["mcp", "add", name, "--command", "npx"]);
-      for (const arg of NPX_ARGS) steps.push(["mcp", "add", name, "--arg", arg]);
-      // One --env flag with space-separated pairs: repeating the flag
-      // overwrites earlier pairs in some Hermes builds.
-      const pairs = Object.entries(env)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(" ");
-      if (pairs) steps.push(["mcp", "add", name, "--env", pairs]);
-      return steps;
-    },
   },
   openclaw: {
-    kind: "file",
+    kind: "kurir",
+    harness: "openclaw",
     label: "openclaw",
     hint: "writes openclaw.json under mcp.servers",
-    key: "mcp.servers",
-    targetPath: () =>
-      homeConfig("OPENCLAW_CONFIG", ".openclaw/openclaw.json"),
+    envOverride: "OPENCLAW_CONFIG",
   },
-  cline: {
-    kind: "file",
-    label: "cline",
-    hint: "writes VS Code Cline globalStorage mcp settings",
-    key: "mcpServers",
-    targetPath: () =>
-      vscodeMcpSettings("saoudrizwan.claude-dev"),
+  zed: {
+    kind: "kurir",
+    harness: "zed",
+    label: "zed",
+    hint: "writes Zed context_servers",
   },
-  roo: {
-    kind: "file",
-    label: "roo",
-    hint: "writes VS Code Roo Code globalStorage mcp settings",
-    key: "mcpServers",
-    targetPath: () =>
-      vscodeMcpSettings("rooveterinaryinc.roo-cline"),
+  omp: {
+    kind: "kurir",
+    harness: "omp",
+    label: "omp",
+    hint: "print portable snippet only",
   },
   "generic-json": {
     kind: "snippet",
@@ -230,7 +130,7 @@ const CLIENTS = {
 
 const CLIENT_ORDER = Object.keys(CLIENTS);
 
-// --- JSON entry shape per client (file targets) --------------------------
+// --- JSON entry shape preview helper -------------------------------------
 
 function serverSpec(client, env) {
   if (client === "opencode") {
@@ -243,218 +143,59 @@ function serverSpec(client, env) {
     return { entry, snippet: { mcp: { suitest: entry } } };
   }
   if (client === "openclaw") {
-    // OpenClaw nests its registry under mcp.servers and names the transport.
     const entry = { command: "npx", args: NPX_ARGS, env, transport: "stdio" };
     return {
       entry,
       snippet: { mcp: { servers: { suitest: entry } } },
     };
   }
-  if (client === "cline" || client === "roo" || client === "copilot-cli") {
-    // VS Code extension settings require the transport to be explicit.
-    const entry = { type: "stdio", command: "npx", args: NPX_ARGS, env };
-    return { entry, snippet: { mcpServers: { suitest: entry } } };
-  }
   const entry = { command: "npx", args: NPX_ARGS, env };
   return { entry, snippet: { mcpServers: { suitest: entry } } };
 }
 
-// --- JSON/JSONC helpers (port of mcp.rs) ---------------------------------
+// --- install one client via Kurir ----------------------------------------
 
-function stripJsonComments(input) {
-  let out = "";
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i];
-    if (inString) {
-      out += ch;
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      out += ch;
-    } else if (ch === "/" && input[i + 1] === "/") {
-      i++;
-      while (i + 1 < input.length && input[i + 1] !== "\n") i++;
-    } else if (ch === "/" && input[i + 1] === "*") {
-      i += 2;
-      while (i + 1 < input.length && !(input[i] === "*" && input[i + 1] === "/")) {
-        if (input[i] === "\n") out += "\n";
-        i++;
-      }
-      i++;
-    } else {
-      out += ch;
-    }
-  }
-  return out;
-}
-
-// Cline and Roo Code keep their MCP settings inside the VS Code per-extension
-// globalStorage tree. The directory is not created when the extension has
-// never run here — an invented profile tree would leave settings no editor
-// reads. Returns null so installClient can skip with a notice instead.
-function vscodeMcpSettings(extension) {
-  const home = os.homedir();
-  let base;
-  if (process.platform === "win32") {
-    base = path.join(home, "AppData", "Roaming", "Code", "User");
-  } else if (process.platform === "darwin") {
-    base = path.join(home, "Library", "Application Support", "Code", "User");
-  } else {
-    base = path.join(home, ".config", "Code", "User");
-  }
-  const dir = path.join(base, "globalStorage", extension);
-  return fs.existsSync(dir)
-    ? path.join(dir, "settings", "cline_mcp_settings.json")
-    : null;
-}
-
-function deepEqual(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function loadJsonObject(p) {
-  if (!fs.existsSync(p)) return {};
-  const raw = fs.readFileSync(p, "utf8");
-  if (!raw.trim()) return {};
-  const value = JSON.parse(stripJsonComments(raw));
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Config file ${p} must contain a top-level JSON object`);
-  }
-  return value;
-}
-
-function ensureObjectPath(root, dottedKey) {
-  let current = root;
-  for (const key of dottedKey.split(".")) {
-    if (current[key] === undefined) current[key] = {};
-    if (
-      typeof current[key] !== "object" ||
-      current[key] === null ||
-      Array.isArray(current[key])
-    ) {
-      throw new Error(`Field '${key}' must be a JSON object`);
-    }
-    current = current[key];
-  }
-  return current;
-}
-
-function backupIfExists(p) {
-  if (!fs.existsSync(p)) return;
-  fs.copyFileSync(p, `${p}.bak`);
-}
-
-function writeJsonObject(p, root) {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, `${JSON.stringify(root, null, 2)}\n`);
-}
-
-function shellJoin(args) {
-  return args
-    .map((a) => (/^[\w\-/.:=@]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`))
-    .join(" ");
-}
-
-// --- install one client ---------------------------------------------------
-
-function installClient(clientId, { name, scope, env, print, dryRun, force }) {
+function installClient(clientId, { name = "suitest", scope, env = {}, print, dryRun, force, config, cwd } = {}) {
   const client = CLIENTS[clientId];
   if (!client) throw new Error(`unknown client: ${clientId}`);
-  const { entry, snippet } = serverSpec(clientId, env);
 
   if (client.kind === "snippet") {
+    const { snippet } = serverSpec(clientId, env);
     process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
     return;
   }
 
-  if (client.kind === "delegated") {
-    const steps = client.steps(name, env, force);
-    const preview = steps
-      .map((s) => `${client.program} ${shellJoin(s)}`)
-      .join(" && ");
-    if (print || dryRun) process.stdout.write(`${preview}\n`);
-    if (dryRun) {
-      process.stdout.write("Dry run, no client command executed.\n");
-      return;
-    }
-    for (const s of steps) {
-      const res = spawnSync(client.program, s, {
-        stdio: "inherit",
-        windowsHide: true,
-      });
-      if (res.error && res.error.code === "ENOENT") {
-        throw new Error(
-          `${client.program} CLI not found on PATH — install it, then retry.`,
-        );
-      }
-      // `force` remove may fail if the entry is absent; ignore that one.
-      if (res.status !== 0 && !(force && s[1] === "remove")) {
-        throw new Error(
-          `${client.program} exited with status ${res.status}. ` +
-            "On Windows this can be an npm/child-tool job-object error " +
-            "(AssignProcessToJobObject 87) — try updating npm, or install a " +
-            "file-based client instead (claude-code / cursor / windsurf), which " +
-            "writes config directly without spawning a child CLI.",
-        );
-      }
-    }
-    process.stdout.write(`Installed MCP entry '${name}' via ${client.label}\n`);
-    return;
+  const targetConfig = config || (client.envOverride && process.env[client.envOverride]) || undefined;
+
+  const res = kurir.registerServer({
+    client: client.harness || clientId,
+    name,
+    command: "npx",
+    args: NPX_ARGS,
+    env,
+    scope: scope === "project" ? "project" : "user",
+    config: targetConfig,
+    cwd,
+    force,
+    print,
+    dryRun,
+  });
+
+  if (res.error) {
+    throw new Error(`Failed to execute kurir: ${res.error.message}`);
   }
 
-  // file target
-  const target = client.targetPath(scope);
-  if (!target) {
-    process.stdout.write(
-      `[skip] ${client.label}: VS Code extension profile not found — ` +
-        "open the extension once so it creates its settings, then re-run.\n",
-    );
-    return;
-  }
-  const root = loadJsonObject(target);
-  const bag = ensureObjectPath(root, client.key);
-
-  if (bag[name] !== undefined) {
-    if (deepEqual(bag[name], entry)) {
-      process.stdout.write(
-        `MCP entry '${name}' already configured at ${target}\n`,
-      );
-      return;
-    }
-    if (!force) {
-      throw new Error(
-        `MCP entry '${name}' already exists at ${target}. Re-run with --force to overwrite.`,
-      );
-    }
+  if (res.status !== 0) {
+    const errText = res.stderr ? res.stderr.trim() : `exit status ${res.status}`;
+    throw new Error(errText);
   }
 
-  bag[name] = entry;
-  if (print || dryRun) {
-    process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
+  if (res.stdout) {
+    process.stdout.write(res.stdout);
   }
-  if (dryRun) {
-    process.stdout.write(`Dry run, no file written. Target: ${target}\n`);
-    return;
-  }
-  backupIfExists(target);
-  writeJsonObject(target, root);
-  process.stdout.write(
-    `Installed MCP entry '${name}' for ${client.label} at ${target}\n`,
-  );
 }
 
 // --- doctor ---------------------------------------------------------------
-
-function commandExists(program) {
-  const probe = spawnSync(program, ["--version"], { stdio: "ignore" });
-  return !(probe.error && probe.error.code === "ENOENT");
-}
 
 function doctor(only) {
   process.stdout.write("MCP doctor\n──────────\n");
@@ -473,32 +214,7 @@ function doctor(only) {
       : "[warn] No saved credentials — run `suitest-mcp login`\n",
   );
 
-  const ids = only ? [only] : CLIENT_ORDER;
-  for (const id of ids) {
-    const client = CLIENTS[id];
-    if (client.kind === "delegated") {
-      process.stdout.write(
-        commandExists(client.program)
-          ? `[ok] ${client.label} CLI found: ${client.program}\n`
-          : `[warn] ${client.label} CLI missing: ${client.program}\n`,
-      );
-    } else if (client.kind === "file") {
-      const p = client.targetPath("global");
-      if (!p) {
-        process.stdout.write(
-          `[info] ${client.label}: VS Code extension profile not found (skipped)\n`,
-        );
-        continue;
-      }
-      process.stdout.write(
-        fs.existsSync(p)
-          ? `[ok] ${client.label} config exists: ${p}\n`
-          : `[info] ${client.label} config will be created: ${p}\n`,
-      );
-    } else {
-      process.stdout.write(`[ok] ${client.label} available (print-only)\n`);
-    }
-  }
+  kurir.runDoctor(only);
 }
 
 // --- interactive orchestration -------------------------------------------
@@ -529,7 +245,6 @@ async function runInteractive(opts) {
     );
   }
 
-  // Login first, client last: (a) log in or not → (b) existing or new → (c) client.
   const resolved = await interactiveLogin(opts);
   const env = {
     SUITEST_API_URL: resolved.apiUrl,
@@ -553,11 +268,7 @@ async function runInteractive(opts) {
   }
 }
 
-// Interactive credential step for `install`. Order: honor flags/env first (no
-// prompt), else ask "log in now?"; on yes, offer saved-vs-new; on skip, placeholder.
-// Returns the same shape as creds.resolveCreds ({apiUrl, apiKey, warn}).
 async function interactiveLogin(opts, streams = {}) {
-  // Non-interactive override: explicit flags or env win, no questions asked.
   if (opts.apiUrl && opts.apiKey) {
     return { apiUrl: opts.apiUrl, apiKey: opts.apiKey, warn: false };
   }
@@ -571,19 +282,17 @@ async function interactiveLogin(opts, streams = {}) {
 
   const saved = creds.loadCreds();
 
-  // Esc on the second question ("use saved creds?") re-asks the first
-  // ("log in now?") instead of aborting — Ctrl-C still aborts the whole flow.
   let wantLogin;
   for (;;) {
     try {
       wantLogin = await picker.confirm("Set up Suitest login now?", { default: "yes" }, streams);
     } catch (err) {
-      if (err.code !== "BACK") throw err; // nowhere earlier to go back to
+      if (err.code !== "BACK") throw err;
       continue;
     }
     if (!wantLogin) return { ...creds.PLACEHOLDER, warn: true };
 
-    if (!saved) break; // nothing to choose between — fall through to entering creds
+    if (!saved) break;
 
     let useExisting;
     try {
@@ -593,7 +302,7 @@ async function interactiveLogin(opts, streams = {}) {
         streams,
       );
     } catch (err) {
-      if (err.code === "BACK") continue; // -> back to "log in now?"
+      if (err.code === "BACK") continue;
       throw err;
     }
     if (useExisting) return { ...saved, warn: false };
@@ -621,6 +330,7 @@ function parseArgs(argv) {
     force: false,
     apiUrl: undefined,
     apiKey: undefined,
+    config: undefined,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -633,6 +343,9 @@ function parseArgs(argv) {
         break;
       case "--scope":
         out.scope = argv[++i];
+        break;
+      case "--config":
+        out.config = argv[++i];
         break;
       case "--api-url":
         out.apiUrl = argv[++i];
@@ -703,9 +416,6 @@ module.exports = {
   CLIENTS,
   CLIENT_ORDER,
   serverSpec,
-  stripJsonComments,
-  loadJsonObject,
-  ensureObjectPath,
   installClient,
   interactiveLogin,
   parseArgs,
