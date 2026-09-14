@@ -36,7 +36,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Boot the stack (ZERO tier)
-        run: docker compose -f infra/docker/docker-compose.yml --profile zero up -d --build
+        run: |
+          for attempt in 1 2 3; do
+            if docker compose -f infra/docker/docker-compose.yml --profile zero up -d --build; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "stack boot failed (attempt $attempt/3); retrying in 10s"
+              sleep 10
+            fi
+          done
+          exit 1
       - name: Dump migrate + api logs on boot failure
         if: failure()
         run: |
