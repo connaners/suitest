@@ -439,8 +439,8 @@ async def test_run_historical_immutability_snapshot(api_db: ApiDb) -> None:
     await api_db.add_all([case])
 
     # Case originally has 2 steps
-    step1 = TestStep(case_id=case.id, step_order=0, action="Step 1")
-    step2 = TestStep(case_id=case.id, step_order=1, action="Step 2")
+    step1 = TestStep(case_id=case.id, order=0, action="Step 1", expected="Passed")
+    step2 = TestStep(case_id=case.id, order=1, action="Step 2", expected="Passed")
     await api_db.add_all([step1, step2])
 
     # Create run via API
@@ -460,7 +460,9 @@ async def test_run_historical_immutability_snapshot(api_db: ApiDb) -> None:
             run_id = create_resp.json()["id"]
 
             # Add step 3 to the test case (simulating future user edit)
-            step3 = TestStep(case_id=case.id, step_order=2, action="Step 3 added in future")
+            step3 = TestStep(
+                case_id=case.id, order=2, action="Step 3 added in future", expected="Passed"
+            )
             await api_db.add_all([step3])
 
             # Fetch run details - must still report total_steps = 2 from snapshot!
