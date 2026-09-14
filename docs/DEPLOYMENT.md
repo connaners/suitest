@@ -109,7 +109,7 @@ services:
     volumes: ["redisdata:/data"]
 
   minio:
-    image: minio/minio:latest
+    image: public.ecr.aws/chainguard/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${SUITEST_S3_ACCESS_KEY:-minioadmin}
