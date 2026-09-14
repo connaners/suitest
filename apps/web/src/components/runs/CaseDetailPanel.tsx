@@ -15,6 +15,7 @@ import { useRunArtifactUrl } from "@/hooks/use-run-artifact-url";
 import type { components } from "@/lib/api-types";
 import { formatDuration } from "@/lib/test-case-format";
 
+import { ImageLightbox } from "./ImageLightbox";
 import { ScreenshotDiffViewer } from "./ScreenshotDiffViewer";
 
 import { rollupLabel, rollupToBadge, type CaseGroup } from "./case-grouping";
@@ -237,12 +238,17 @@ function CaseEvidenceTabs({
           </div>
           <div className="flex h-[280px] items-center justify-center overflow-hidden rounded-md bg-bg-code text-[12px] text-fg-5">
             {showStep && stepScreenshotUrl ? (
-              <img
+              <ImageLightbox
                 src={stepScreenshotUrl}
-                alt={stepLabel ? `${stepLabel} screenshot` : "Step screenshot"}
-                data-testid="case-preview-step-image"
-                className="max-h-full max-w-full object-contain"
-              />
+                title={stepLabel ? `${stepLabel} — Screenshot` : "Step screenshot"}
+              >
+                <img
+                  src={stepScreenshotUrl}
+                  alt={stepLabel ? `${stepLabel} screenshot` : "Step screenshot"}
+                  data-testid="case-preview-step-image"
+                  className="max-h-full max-w-full object-contain"
+                />
+              </ImageLightbox>
             ) : videoUrl ? (
               <video
                 src={videoUrl}
@@ -362,11 +368,13 @@ function CaseArtifactRow({
           {artifact.kind === "VIDEO" ? (
             <video src={url} controls className="max-h-[280px] w-full" />
           ) : (
-            <img
-              src={url}
-              alt={`${artifact.kind} artifact`}
-              className="max-h-[280px] w-full object-contain"
-            />
+            <ImageLightbox src={url} title={`${artifact.kind} artifact`}>
+              <img
+                src={url}
+                alt={`${artifact.kind} artifact`}
+                className="max-h-[280px] w-full object-contain"
+              />
+            </ImageLightbox>
           )}
         </div>
       ) : null}

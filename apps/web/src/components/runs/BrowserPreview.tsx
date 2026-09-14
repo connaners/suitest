@@ -1,6 +1,8 @@
 import { Camera, X } from "lucide-react";
 import { useState } from "react";
 
+import { ImageLightbox } from "./ImageLightbox";
+
 interface BrowserPreviewProps {
   url: string | null;
   /** Presigned URL of the run's VIDEO artifact, if any (Phase 2). */
@@ -87,12 +89,17 @@ export function BrowserPreview({
       {tab === "preview" ? (
         <div className="mt-3 flex h-[280px] items-center justify-center overflow-hidden rounded-md bg-bg-code text-[12px] text-fg-5">
           {showStep && stepScreenshotUrl ? (
-            <img
+            <ImageLightbox
               src={stepScreenshotUrl}
-              alt={stepLabel ? `${stepLabel} screenshot` : "Step screenshot"}
-              data-testid="browser-preview-step-image"
-              className="max-h-full max-w-full object-contain"
-            />
+              title={stepLabel ? `${stepLabel} — Screenshot` : "Step screenshot"}
+            >
+              <img
+                src={stepScreenshotUrl}
+                alt={stepLabel ? `${stepLabel} screenshot` : "Step screenshot"}
+                data-testid="browser-preview-step-image"
+                className="max-h-full max-w-full object-contain"
+              />
+            </ImageLightbox>
           ) : videoUrl ? (
             <video
               src={videoUrl}
@@ -101,12 +108,14 @@ export function BrowserPreview({
               className="max-h-full max-w-full"
             />
           ) : url ? (
-            <img
-              src={url}
-              alt="Latest run screenshot"
-              data-testid="browser-preview-image"
-              className="max-h-full max-w-full object-contain"
-            />
+            <ImageLightbox src={url} title="Latest run screenshot">
+              <img
+                src={url}
+                alt="Latest run screenshot"
+                data-testid="browser-preview-image"
+                className="max-h-full max-w-full object-contain"
+              />
+            </ImageLightbox>
           ) : (
             <span className="flex items-center gap-2" data-testid="browser-preview-placeholder">
               <Camera className="h-4 w-4" aria-hidden="true" />
