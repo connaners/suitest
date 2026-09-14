@@ -72,7 +72,7 @@ services:
       retries: 10
 
   minio:
-    image: quay.io/minio/minio:latest
+    image: public.ecr.aws/chainguard/minio:latest
     profiles: ["zero", "cloud", "local", "demo"]
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
@@ -91,7 +91,7 @@ services:
       retries: 10
 
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: public.ecr.aws/chainguard/minio-client:latest-dev
     profiles: ["zero", "cloud", "local", "demo"]
     depends_on:
       minio:
