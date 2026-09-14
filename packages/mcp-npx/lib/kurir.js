@@ -21,7 +21,9 @@ function resolveKurir() {
 
   // 1. Check if @suiflex/kurir package is available in node_modules
   try {
-    const kurirPkgJson = require.resolve("@suiflex/kurir/package.json");
+    const kurirPkgJson = require.resolve("@suiflex/kurir/package.json", {
+      paths: [__dirname, path.join(__dirname, ".."), process.cwd()],
+    });
     const kurirDir = path.dirname(kurirPkgJson);
     const kurirBinJs = path.join(kurirDir, "bin", "kurir.js");
     if (fs.existsSync(kurirBinJs)) {
@@ -31,10 +33,17 @@ function resolveKurir() {
     // Not resolvable via require.resolve
   }
 
-  // 2. Check local vendor/node_modules directory fallback
-  const localVendor = path.join(__dirname, "..", "node_modules", "@suiflex", "kurir", "bin", "kurir.js");
-  if (fs.existsSync(localVendor)) {
-    return { type: "node", command: process.execPath, args: [localVendor] };
+  // 2. Check local or workspace root node_modules directory fallback
+  const possiblePaths = [
+    path.join(__dirname, "..", "node_modules", "@suiflex", "kurir", "bin", "kurir.js"),
+    path.join(__dirname, "..", "..", "..", "node_modules", "@suiflex", "kurir", "bin", "kurir.js"),
+    path.join(process.cwd(), "node_modules", "@suiflex", "kurir", "bin", "kurir.js"),
+  ];
+  for (let i = 0; i < possiblePaths.length; i++) {
+    const p = possiblePaths[i];
+    if (fs.existsSync(p)) {
+      return { type: "node", command: process.execPath, args: [p] };
+    }
   }
 
   // 3. Check kurir on PATH
@@ -54,18 +63,39 @@ function resolveKurir() {
   return { type: "npx", command: "npx", args: ["-y", "@suiflex/kurir"] };
 }
 
+const BUSY_PATTERN = /ETXTBSY/;
+
+function isEtxtbusy(res) {
+  if (!res) return false;
+  if (res.error) {
+    if (res.error.code === "ETXTBSY") return true;
+    if (BUSY_PATTERN.test(res.error.message || "")) return true;
+  }
+  if (res.stderr && BUSY_PATTERN.test(res.stderr)) return true;
+  return false;
+}
+
 function execKurir(args, options = {}) {
   const runner = resolveKurir();
   const fullArgs = [...runner.args, ...args];
-  const res = spawnSync(runner.command, fullArgs, {
-    cwd: options.cwd || process.cwd(),
-    env: options.env ? { ...process.env, ...options.env } : process.env,
-    encoding: "utf8",
-    stdio: options.stdio || ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  const maxRetries = 5;
 
-  return res;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = spawnSync(runner.command, fullArgs, {
+      cwd: options.cwd || process.cwd(),
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+      encoding: "utf8",
+      stdio: options.stdio || ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    if (isEtxtbusy(res) && attempt < maxRetries) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150 * (attempt + 1));
+      continue;
+    }
+
+    return res;
+  }
 }
 
 function registerServer({
