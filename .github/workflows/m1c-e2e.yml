@@ -67,8 +67,17 @@ jobs:
       - name: Bring up docker-compose stack (zero + e2e profiles)
         working-directory: infra/docker
         run: |
-          docker compose --profile zero --profile e2e up -d
-          docker compose ps
+          for attempt in 1 2 3; do
+            if docker compose --profile zero --profile e2e up -d; then
+              docker compose ps
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "stack boot failed (attempt $attempt/3); retrying in 10s"
+              sleep 10
+            fi
+          done
+          exit 1
 
       - name: Wait for api health
         run: |
