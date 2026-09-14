@@ -117,5 +117,32 @@ describe("<StepTable>", () => {
     expect(errorBlock).not.toHaveTextContent("###");
     expect(errorBlock).not.toHaveTextContent("MCP_TOOL_ERROR");
   });
+
+  it("renders explanation callout with Execution Aborted indicator for ABORTED outcome", () => {
+    render(
+      <StepTable
+        steps={[
+          {
+            id: "planned-s2",
+            case_id: "tc_1",
+            step_order: 1,
+            title: "Wait for Dashboard",
+            type: "wait",
+            outcome: "ABORTED",
+            duration_ms: null,
+            error_message: "Step aborted because a prior step in this test case failed.",
+            isPlannedOnly: true,
+          },
+        ]}
+      />,
+    );
+
+    const callout = screen.getByTestId("step-error-message");
+    expect(callout).toBeInTheDocument();
+    expect(callout).toHaveTextContent("Execution Aborted");
+    expect(callout).toHaveTextContent(
+      "Step aborted because a prior step in this test case failed.",
+    );
+  });
 });
 

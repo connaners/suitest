@@ -349,6 +349,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
         summary = {"total": 0, "passed": 0, "failed": 0, "errored": 0, "skipped": 0}
         t0 = time.perf_counter()
         cancelled = False
+        failed_case_ids: set[str] = set()
 
         for case_id, step_order, test_step in selection:
             async with factory() as session:
@@ -357,6 +358,15 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                     log.info("runner.job.cancelled_by_user", run_id=run_id)
                     cancelled = True
                     break
+
+            if case_id in failed_case_ids:
+                log.info(
+                    "runner.step.skip_after_case_failure",
+                    run_id=run_id,
+                    case_id=case_id,
+                    step_order=step_order,
+                )
+                continue
 
             summary["total"] += 1
             await _publish(
@@ -437,8 +447,10 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                 summary["passed"] += 1
             elif result.outcome == StepOutcome.FAIL:
                 summary["failed"] += 1
+                failed_case_ids.add(case_id)
             elif result.outcome == StepOutcome.ERROR:
                 summary["errored"] += 1
+                failed_case_ids.add(case_id)
             elif result.outcome == StepOutcome.SKIP:
                 summary["skipped"] += 1
 

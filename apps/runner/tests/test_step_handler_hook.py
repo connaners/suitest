@@ -107,9 +107,9 @@ async def test_run_test_case_invokes_auto_filer_on_failed_step(
     ctx["defect_auto_filer"] = filer
     await run_test_case(ctx, "run-1")
     # One FAIL → one auto-filer call. The RunStep.id comes from the stub
-    # repo's monotonic counter ("rs-0", "rs-1", "rs-2"); the second step
-    # (index 1) failed.
-    assert filer.calls == ["rs-1"]
+    # repo's monotonic counter ("rs-0", "rs-1", "rs-2"); the third step
+    # (index 2) failed.
+    assert filer.calls == ["rs-2"]
 
 
 async def test_run_test_case_no_filer_in_ctx_runs_to_completion(

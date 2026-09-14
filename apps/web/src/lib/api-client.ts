@@ -10,15 +10,25 @@ export class ApiError extends Error {
     public readonly code: string,
     message: string,
     public readonly retryable: boolean,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
+interface ApiErrorEnvelope {
+  code?: string;
+  message?: string;
+  details?: Record<string, unknown>;
+}
+
 interface ApiErrorBody {
   code?: string;
   message?: string;
+  detail?: string | { error?: ApiErrorEnvelope; [key: string]: unknown };
+  error?: ApiErrorEnvelope;
+  details?: Record<string, unknown>;
 }
 
 // Test seam: in Vitest (jsdom) we need an absolute origin so the axios http
@@ -53,8 +63,18 @@ function createClient(): AxiosInstance {
     (response) => response,
     (err: AxiosError<ApiErrorBody>) => {
       const status = err.response?.status ?? 0;
-      const code = err.response?.data?.code ?? "UNKNOWN";
-      const message = err.response?.data?.message ?? err.message;
+      const data = err.response?.data;
+      const errorObj =
+        (typeof data?.detail === "object" && data.detail !== null ? data.detail.error : undefined) ??
+        data?.error;
+      const code = errorObj?.code ?? data?.code ?? "UNKNOWN";
+      const message =
+        errorObj?.message ??
+        (typeof data?.detail === "string" ? data.detail : undefined) ??
+        data?.message ??
+        err.message;
+      const details = errorObj?.details ?? data?.details;
+
       // Only navigate to /login on 401 when the user is NOT already on the
       // login page. Without this guard the `_app.beforeLoad` 401 from
       // `/auth/me` would cause a full reload + double-redirect loop during
@@ -70,7 +90,7 @@ function createClient(): AxiosInstance {
         window.location.assign(`/login?next=${next}`);
       }
       const retryable = status === 0 || status >= 500;
-      throw new ApiError(status, code, message, retryable);
+      throw new ApiError(status, code, message, retryable, details);
     },
   );
 

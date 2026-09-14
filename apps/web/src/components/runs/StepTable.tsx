@@ -58,8 +58,8 @@ function displayOutcomeBadge(outcome: StepDisplayOutcome): StatusBadgeStatus {
       return "pass";
     case "FAIL":
     case "ERROR":
-    case "ABORTED":
       return "fail";
+    case "ABORTED":
     case "SKIP":
       return "warn";
     case "RUNNING":
@@ -140,13 +140,19 @@ export function StepTable({
                         "overflow-x-auto rounded-md p-2 font-mono text-[11px]",
                         s.outcome === "ERROR"
                           ? "border border-red/40 bg-red/[0.08] text-red"
-                          : "bg-bg-code text-red",
+                          : s.outcome === "ABORTED"
+                            ? "border border-amber-500/30 bg-amber-500/[0.08] text-amber-500"
+                            : "bg-bg-code text-red",
                       )}
                       data-testid="step-error-message"
                     >
                       {s.outcome === "ERROR" ? (
                         <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-red">
                           Environment Error
+                        </div>
+                      ) : s.outcome === "ABORTED" ? (
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-amber-500">
+                          Execution Aborted
                         </div>
                       ) : null}
                       <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed">

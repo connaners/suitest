@@ -121,19 +121,28 @@ export function CaseDetailPanel({
         });
       } else {
         let outcome: StepDisplayOutcome = "QUEUED";
-        if (group.rollup === "running") {
+        let errorMessage: string | null = null;
+        const isRunActive = runStatus === "RUNNING" || runStatus === "QUEUED";
+        const isCaseHalted =
+          group.rollup === "fail" ||
+          group.rollup === "aborted" ||
+          group.steps.some((s) => s.outcome === "FAIL" || s.outcome === "ERROR");
+
+        if (isRunActive && !isCaseHalted) {
           if (!activeFound) {
             outcome = "RUNNING";
             activeFound = true;
           } else {
             outcome = "QUEUED";
           }
-        } else if (group.rollup === "aborted" || runStatus === "CANCELLED") {
+        } else if (runStatus === "CANCELLED") {
           outcome = "ABORTED";
+          errorMessage = "Step aborted: run was cancelled by user.";
+        } else if (isCaseHalted) {
+          outcome = "ABORTED";
+          errorMessage = "Step aborted because a prior step in this test case failed.";
         } else if (group.rollup === "skipped") {
           outcome = "SKIP";
-        } else if (group.rollup === "fail") {
-          outcome = "ABORTED";
         } else if (group.rollup === "pass") {
           outcome = "SKIP";
         }
@@ -146,7 +155,7 @@ export function CaseDetailPanel({
           type: ps.target_kind ? ps.target_kind.toLowerCase() : "action",
           outcome,
           duration_ms: null,
-          error_message: null,
+          error_message: errorMessage,
           stdout: null,
           isPlannedOnly: true,
         });
