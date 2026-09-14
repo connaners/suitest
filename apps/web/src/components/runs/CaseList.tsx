@@ -1,4 +1,6 @@
-import { ProgressBar } from "@/components/shared/ProgressBar";
+import { useMemo, useState } from "react";
+
+import { ProgressBar, type ProgressBarVariant } from "@/components/shared/ProgressBar";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
@@ -21,6 +23,20 @@ export function CaseList({
   selectedCaseId,
   onSelectCase,
 }: CaseListProps): React.ReactElement {
+  const [filter, setFilter] = useState<"all" | "failed">("all");
+
+  const failedCount = useMemo(
+    () => groups.filter((g) => g.rollup === "fail" || g.rollup === "aborted").length,
+    [groups],
+  );
+
+  const displayedGroups = useMemo(() => {
+    if (filter === "failed") {
+      return groups.filter((g) => g.rollup === "fail" || g.rollup === "aborted");
+    }
+    return groups;
+  }, [groups, filter]);
+
   if (groups.length === 0) {
     return (
       <div
@@ -33,9 +49,49 @@ export function CaseList({
   }
 
   return (
-    <ul className="flex flex-col gap-1.5" data-testid="case-list">
-      {groups.map((g) => {
-        const selected = g.caseId === selectedCaseId;
+    <div className="flex flex-col gap-2">
+      {failedCount > 0 ? (
+        <div className="flex items-center gap-1.5" data-testid="case-list-filters">
+          <button
+            type="button"
+            onClick={() => setFilter("all")}
+            data-testid="case-filter-all"
+            className={cn(
+              "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+              filter === "all"
+                ? "bg-bg-elev-3 text-fg-1"
+                : "text-fg-4 hover:bg-bg-elev-2 hover:text-fg-2",
+            )}
+          >
+            All ({groups.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter("failed")}
+            data-testid="case-filter-failed"
+            className={cn(
+              "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+              filter === "failed"
+                ? "bg-red/15 text-red ring-1 ring-red/30"
+                : "text-red/80 hover:bg-red/10 hover:text-red",
+            )}
+          >
+            Failed ({failedCount})
+          </button>
+        </div>
+      ) : null}
+
+      {displayedGroups.length === 0 ? (
+        <div
+          className="rounded-md border border-border bg-bg-elev-1 p-4 text-[12px] text-fg-4"
+          data-testid="case-list-no-failures"
+        >
+          No failed test cases in this run.
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-1.5" data-testid="case-list">
+          {displayedGroups.map((g) => {
+            const selected = g.caseId === selectedCaseId;
         return (
           <li key={g.caseId}>
             <button
@@ -78,12 +134,20 @@ export function CaseList({
                     <>
                       {g.total} steps · {g.passed} passed
                       {g.failed > 0 ? <span className="text-red"> · {g.failed} failed</span> : null}
-                      {g.rollup === "aborted" ? (
-                        g.total > g.passed + g.failed ? (
-                          <span className="text-red"> · {g.total - (g.passed + g.failed)} aborted</span>
-                        ) : (
-                          <span className="text-red"> · Aborted</span>
-                        )
+                      {g.total > g.passed + g.failed ? (
+                        <span
+                          className={
+                            g.rollup === "fail" || g.rollup === "aborted"
+                              ? "text-amber"
+                              : "text-fg-5"
+                          }
+                        >
+                          {" "}
+                          · {g.total - (g.passed + g.failed)}{" "}
+                          {g.rollup === "fail" || g.rollup === "aborted"
+                            ? "aborted"
+                            : "skipped"}
+                        </span>
                       ) : null}
                     </>
                   )}
@@ -114,8 +178,8 @@ export function CaseList({
                       ? [
                           {
                             value: Math.max(0, g.total - (g.passed + g.failed)),
-                            variant: "skip" as const,
-                            label: "Skipped",
+                            variant: (g.rollup === "fail" ? "warn" : "skip") as ProgressBarVariant,
+                            label: g.rollup === "fail" ? "Aborted" : "Skipped",
                           },
                         ]
                       : []),
@@ -129,5 +193,7 @@ export function CaseList({
         );
       })}
     </ul>
+  )}
+</div>
   );
 }

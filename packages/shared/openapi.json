@@ -7258,6 +7258,32 @@
         "title": "RequirementUpdate",
         "type": "object"
       },
+      "RerunRunBody": {
+        "description": "``POST /runs/{id}/rerun`` optional body for selective or failed-only reruns.",
+        "properties": {
+          "caseIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caseids"
+          },
+          "failedOnly": {
+            "default": false,
+            "title": "Failedonly",
+            "type": "boolean"
+          }
+        },
+        "title": "RerunRunBody",
+        "type": "object"
+      },
       "ResetPasswordResponse": {
         "properties": {
           "temporaryPassword": {
@@ -19012,7 +19038,7 @@
     },
     "/api/v1/runs/{run_id}/rerun": {
       "post": {
-        "description": "Clone the source run's selection into a fresh QUEUED row + enqueue the ARQ job.\n\nA rerun reuses the original selection + routing override (so the runner\nfans out identically) but re-resolves the workspace tier so a tier change\nbetween the two runs is honored. Returns 202 like the create endpoint.",
+        "description": "Clone the source run's selection into a fresh QUEUED row + enqueue the ARQ job.\n\nSupports full rerun, selective rerun by ``case_ids`` (via JSON body), or\nfailed-only rerun (via ``failedOnly=true`` query param or body). Returns 202.",
         "operationId": "rerun_run_api_v1_runs__run_id__rerun_post",
         "parameters": [
           {
@@ -19022,6 +19048,16 @@
             "schema": {
               "title": "Run Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "failedOnly",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Failedonly",
+              "type": "boolean"
             }
           },
           {
@@ -19041,6 +19077,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RerunRunBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "content": {

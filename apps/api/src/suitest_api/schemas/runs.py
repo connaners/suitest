@@ -64,6 +64,15 @@ class CreateSuiteRunBody(BaseModel):
     mcp_routing_override: dict[str, str] | None = Field(default=None, alias="mcpRoutingOverride")
 
 
+class RerunRunBody(BaseModel):
+    """``POST /runs/{id}/rerun`` optional body for selective or failed-only reruns."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    case_ids: list[str] | None = Field(default=None, alias="caseIds")
+    failed_only: bool = Field(default=False, alias="failedOnly")
+
+
 class RunPublic(BaseModel):
     """``POST /runs`` + ``cancel`` + ``rerun`` response shape.
 

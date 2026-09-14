@@ -66,6 +66,10 @@ function runDetail(publicId: string, status: string) {
         : { total_steps: 4, passed_steps: 3, failed_steps: 1, duration_ms: 74000 },
     created_at: "2026-05-27T10:00:00Z",
     updated_at: "2026-05-27T10:01:14Z",
+    cases: [
+      { case_id: "tc_1", case_public_id: "TC-101", case_title: "Valid card checkout", total_steps: 2 },
+      { case_id: "tc_2", case_public_id: "TC-102", case_title: "Expired card checkout", total_steps: 2 },
+    ],
   };
 }
 
@@ -182,10 +186,88 @@ describe("M1d-33: run cancel/re-run rewire", () => {
     });
     expect(rerunButton).not.toBeDisabled();
     await user.click(rerunButton);
+
+    // Clicking Re-run opens the RerunSelectionDialog
+    const submitBtn = await screen.findByTestId("rerun-dialog-submit", undefined, {
+      timeout: 3000,
+    });
+    expect(submitBtn).toBeInTheDocument();
+    await user.click(submitBtn);
+
     await waitFor(() => expect(rerunCalls).toBe(1));
     // On success the panel navigates to the freshly-queued run.
     await waitFor(() =>
       expect((router.state.location.search as { run?: string }).run).toBe("RUN-502"),
+    );
+  });
+
+  it("rerun_dialog_presets_and_selective_case_ids", async () => {
+    let receivedBody: { case_ids?: string[] } | null = null;
+    server.use(
+      summaryHandler,
+      http.get("*/api/v1/runs/:runId", ({ params }) =>
+        HttpResponse.json(runDetail(String(params["runId"]), "FAIL")),
+      ),
+      http.post("*/api/v1/runs/:runId/rerun", async ({ request }) => {
+        receivedBody = (await request.json().catch(() => null)) as { case_ids?: string[] } | null;
+        return HttpResponse.json(runDetail("RUN-503", "QUEUED"), { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRuns("/runs?run=RUN-1001");
+    const rerunButton = await screen.findByTestId("run-rerun-button", undefined, {
+      timeout: 3000,
+    });
+    await user.click(rerunButton);
+
+    const dialog = await screen.findByTestId("rerun-selection-dialog", undefined, {
+      timeout: 3000,
+    });
+    expect(dialog).toBeInTheDocument();
+
+    // Presets are available
+    const selectAllBtn = screen.getByTestId("preset-select-all");
+    await user.click(selectAllBtn);
+
+    const submitBtn = screen.getByTestId("rerun-dialog-submit");
+    expect(submitBtn).toHaveTextContent(/Run all \(2\) cases/i);
+
+    // Uncheck one case
+    const checkbox1 = screen.getByTestId("checkbox-case-tc_1");
+    await user.click(checkbox1);
+
+    expect(submitBtn).toHaveTextContent(/Run 1 selected test case/i);
+    await user.click(submitBtn);
+
+    await waitFor(() => expect(receivedBody).not.toBeNull());
+    expect((receivedBody as { case_ids?: string[] } | null)?.case_ids).toEqual(["tc_2"]);
+  });
+
+  it("rerun_case_button_in_case_detail_panel_reruns_single_case", async () => {
+    let receivedBody: { case_ids?: string[] } | null = null;
+    server.use(
+      summaryHandler,
+      http.get("*/api/v1/runs/:runId", ({ params }) =>
+        HttpResponse.json(runDetail(String(params["runId"]), "FAIL")),
+      ),
+      http.post("*/api/v1/runs/:runId/rerun", async ({ request }) => {
+        receivedBody = (await request.json().catch(() => null)) as { case_ids?: string[] } | null;
+        return HttpResponse.json(runDetail("RUN-504", "QUEUED"), { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    const router = renderRuns("/runs?run=RUN-1001");
+
+    const caseRerunBtn = await screen.findByTestId("case-rerun-button", undefined, {
+      timeout: 3000,
+    });
+    expect(caseRerunBtn).toBeInTheDocument();
+    await user.click(caseRerunBtn);
+
+    await waitFor(() => expect(receivedBody).not.toBeNull());
+    expect((receivedBody as { case_ids?: string[] } | null)?.case_ids).toEqual(["tc_1"]);
+    await waitFor(() =>
+      expect((router.state.location.search as { run?: string }).run).toBe("RUN-504"),
     );
   });
 

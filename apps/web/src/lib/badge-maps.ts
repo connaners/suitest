@@ -166,7 +166,12 @@ export function buildRunSegments(
     });
   }
   if (remaining > 0) {
-    segments.push({ value: remaining, variant: "skip", label: `${remaining} skipped` });
+    const isAborted = status === "FAIL" || status === "ERROR";
+    segments.push({
+      value: remaining,
+      variant: isAborted ? "warn" : "skip",
+      label: `${remaining} ${isAborted ? "aborted" : "skipped"}`,
+    });
   }
 
   return segments;

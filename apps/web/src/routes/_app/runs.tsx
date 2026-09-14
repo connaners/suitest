@@ -6,13 +6,16 @@ import {
   Loader2,
   Maximize2,
   PlayCircle,
+  RotateCw,
   Square,
 } from "lucide-react";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Gated } from "@/components/gating/Gated";
+import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
 import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
+import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunsSkeleton } from "@/components/runs/skeleton";
 import { CostChip } from "@/components/shared/CostChip";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -263,6 +266,24 @@ function RunDetailPanel({
   const cancelMutation = useCancelRun();
   const rerunMutation = useRerunRun();
   const [selectedCasePublicId, setSelectedCasePublicId] = useState<string | null>(null);
+  const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
+  const [explorerGroups, setExplorerGroups] = useState<CaseGroup[]>([]);
+
+  const fallbackGroups: CaseGroup[] = useMemo(() => {
+    return (run?.cases ?? []).map((c) => ({
+      caseId: c.case_id,
+      casePublicId: c.case_public_id,
+      caseName: c.case_title || c.case_public_id,
+      steps: [],
+      total: c.total_steps ?? 0,
+      passed: 0,
+      failed: 0,
+      rollup: "neutral" as const,
+      durationMs: 0,
+      kind: "frontend" as const,
+      firstFailure: null,
+    }));
+  }, [run?.cases]);
 
   if (!runId) {
     return (
@@ -283,18 +304,45 @@ function RunDetailPanel({
   // Re-run is only meaningful for terminal runs — guard against double-queueing.
   const rerunDisabled = isLive || rerunMutation.isPending;
 
+  const dialogGroups = explorerGroups.length > 0 ? explorerGroups : fallbackGroups;
+  const failedSteps = run.summary?.failed_steps ?? 0;
+  const failedCasesCount = dialogGroups.filter(
+    (g) => g.rollup === "fail" || g.rollup === "aborted",
+  ).length;
+  const hasFailures = failedSteps > 0 || failedCasesCount > 0;
+  const failedCount = failedCasesCount > 0 ? failedCasesCount : failedSteps;
+
   const handleCancel = (): void => {
     cancelMutation.mutate(run.id);
   };
-  const handleRerun = (): void => {
-    rerunMutation.mutate(run.id, {
-      onSuccess: (data) => {
-        const targetPublicId = data.publicId || data.public_id;
-        if (targetPublicId) {
-          onNavigateToRun(targetPublicId);
-        }
+
+  const handleConfirmRerun = (selectedCaseIds: string[]): void => {
+    rerunMutation.mutate(
+      { runId: run.id, caseIds: selectedCaseIds },
+      {
+        onSuccess: (data) => {
+          setRerunDialogOpen(false);
+          const targetPublicId = data.publicId || data.public_id;
+          if (targetPublicId) {
+            onNavigateToRun(targetPublicId);
+          }
+        },
       },
-    });
+    );
+  };
+
+  const handleRerunCase = (caseId: string): void => {
+    rerunMutation.mutate(
+      { runId: run.id, caseIds: [caseId] },
+      {
+        onSuccess: (data) => {
+          const targetPublicId = data.publicId || data.public_id;
+          if (targetPublicId) {
+            onNavigateToRun(targetPublicId);
+          }
+        },
+      },
+    );
   };
 
   // VIEWER role can't cancel — the backend returns 403; surface a non-blocking
@@ -335,10 +383,19 @@ function RunDetailPanel({
             size="sm"
             variant="outline"
             disabled={rerunDisabled}
-            onClick={handleRerun}
+            onClick={() => setRerunDialogOpen(true)}
+            className={cn(hasFailures && "border-red/40 text-red hover:bg-red/10")}
             data-testid="run-rerun-button"
           >
-            {rerunMutation.isPending ? "Queuing…" : "Re-run"}
+            <RotateCw
+              className={cn("mr-1.5 h-3.5 w-3.5", rerunMutation.isPending && "animate-spin")}
+              aria-hidden="true"
+            />
+            {rerunMutation.isPending
+              ? "Queuing…"
+              : hasFailures
+                ? `Re-run (${failedCount} failed)`
+                : "Re-run"}
           </Button>
           {targetCasePublicId ? (
             <Link
@@ -395,6 +452,18 @@ function RunDetailPanel({
         status={run.status}
         plannedCases={run.cases}
         onSelectCasePublicId={setSelectedCasePublicId}
+        onGroupsChange={setExplorerGroups}
+        onRerunCase={handleRerunCase}
+        isRerunning={rerunMutation.isPending}
+      />
+
+      <RerunSelectionDialog
+        open={rerunDialogOpen}
+        onOpenChange={setRerunDialogOpen}
+        runPublicId={run.public_id}
+        groups={dialogGroups}
+        onConfirm={handleConfirmRerun}
+        isPending={rerunMutation.isPending}
       />
 
       <footer className="flex justify-end" data-testid="run-cost-footer">

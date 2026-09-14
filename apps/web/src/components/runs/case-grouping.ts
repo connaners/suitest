@@ -43,6 +43,8 @@ export interface CaseGroup {
   kind: "frontend" | "api";
   /** First failure message across the case's steps, if any. */
   firstFailure: string | null;
+  /** True if the test case was soft-deleted or not found. */
+  isDeleted?: boolean;
 }
 
 /** Statuses considered still in-flight for the running rollup. */
@@ -143,11 +145,13 @@ export function groupStepsByCase(
       totalSteps: number,
     ): boolean => {
       if (!existingGroup || existingGroup.steps.length === 0) return false;
-      if (runStatus !== "RUNNING") return true;
       if (totalSteps > 0) {
         return existingGroup.steps.length >= totalSteps;
       }
-      return !existingGroup.steps.some((s) => RUNNING_OUTCOMES.has(s.outcome));
+      if (runStatus === "RUNNING") {
+        return !existingGroup.steps.some((s) => RUNNING_OUTCOMES.has(s.outcome));
+      }
+      return true;
     };
 
     let allPriorFinished = true;
@@ -178,10 +182,20 @@ export function groupStepsByCase(
         }
 
         const finished = isFinished(existing, targetTotal);
-        const rollup =
-          runStatus === "CANCELLED" && (plannedCases.length === 1 || !finished)
-            ? "aborted"
-            : rollupOf(existing.steps, targetTotal, runStatus);
+        const hasFailedStep = existing.steps.some(
+          (s) => s.outcome === "FAIL" || s.outcome === "ERROR",
+        );
+        let rollup: CaseRollup;
+        if (hasFailedStep) {
+          rollup = "fail";
+        } else if (
+          (runStatus === "CANCELLED" && (plannedCases.length === 1 || !finished)) ||
+          (!finished && runStatus !== "RUNNING")
+        ) {
+          rollup = "aborted";
+        } else {
+          rollup = rollupOf(existing.steps, targetTotal, runStatus);
+        }
 
         if (!finished) {
           allPriorFinished = false;

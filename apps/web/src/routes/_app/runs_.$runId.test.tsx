@@ -291,25 +291,27 @@ describe("RunDetailPage", () => {
     });
     await waitFor(() => expect(rerunButton).not.toBeDisabled());
     await user.click(rerunButton);
+    const submitBtn = await screen.findByTestId("rerun-dialog-submit", undefined, {
+      timeout: 3000,
+    });
+    await user.click(submitBtn);
     await waitFor(() => expect(rerunCalls).toBe(1));
   });
 
-  it("shows_edit_cases_link_and_per_case_edit_link", async () => {
+  it("shows_edit_cases_link_reflecting_active_case", async () => {
     renderRunDetail();
     await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
 
-    // The failing case is auto-selected → its detail carries an Edit case link.
-    const detail = await screen.findByTestId("case-detail");
-    const editLink = within(detail).getByTestId("case-edit-link");
-    expect(editLink).toHaveAttribute("href", "/cases?case=TC-102");
-
-    // The top-level Edit case link also reflects the active case.
+    // The failing case is auto-selected → the top-level Edit case link reflects the active case.
     await waitFor(() => {
       expect(screen.getByTestId("run-edit-cases-link")).toHaveAttribute(
         "href",
         "/cases?case=TC-102",
       );
     });
+
+    const detail = await screen.findByTestId("case-detail");
+    expect(within(detail).queryByTestId("case-edit-link")).not.toBeInTheDocument();
   });
 
   it("renders abort button when run is live and posts cancel on click", async () => {

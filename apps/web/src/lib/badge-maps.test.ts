@@ -50,12 +50,20 @@ describe("badge-maps", () => {
       expect(segs).toEqual([{ value: 100, variant: "fail", label: "Aborted" }]);
     });
 
-    it("handles multi-outcome completed runs (pass, fail, skip)", () => {
+    it("handles multi-outcome completed runs with fail and aborted steps", () => {
       const segs = buildRunSegments("FAIL", { total_steps: 10, passed_steps: 7, failed_steps: 2 });
       expect(segs).toEqual([
         { value: 7, variant: "pass", label: "7 passed" },
         { value: 2, variant: "fail", label: "2 failed" },
-        { value: 1, variant: "skip", label: "1 skipped" },
+        { value: 1, variant: "warn", label: "1 aborted" },
+      ]);
+    });
+
+    it("handles PASS runs with unexecuted steps as skipped", () => {
+      const segs = buildRunSegments("PASS", { total_steps: 10, passed_steps: 8, failed_steps: 0 });
+      expect(segs).toEqual([
+        { value: 8, variant: "pass", label: "8 passed" },
+        { value: 2, variant: "skip", label: "2 skipped" },
       ]);
     });
 

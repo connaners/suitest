@@ -18,13 +18,14 @@ from suitest_db.audit import write_audit
 from suitest_db.models.case import TestCase, TestStep
 from suitest_db.models.project import Suite
 from suitest_db.models.run import Run as RunRow
+from suitest_db.models.run import RunStep
 from suitest_db.public_id import set_workspace_id
 from suitest_db.repositories.mcp_providers import McpProviderRepo
 from suitest_db.repositories.projects import ProjectRepo
 from suitest_db.repositories.runs import RunRepo
 from suitest_db.repositories.suites import SuiteRepo
 from suitest_db.repositories.workspace_capabilities import WorkspaceCapabilityRepo
-from suitest_shared.domain.enums import RunStatus, RunTrigger, Tier
+from suitest_shared.domain.enums import RunStatus, RunTrigger, StepOutcome, Tier
 from suitest_shared.schemas.responses import ArtifactOut, RunOut, SignedUrlOut
 
 from suitest_api.deps.scope import TenantContext
@@ -311,15 +312,21 @@ class RunService:
         await self._session.flush()
 
     @require_tier(TierFlag.ANY)
-    async def clone_for_rerun(self, src: RunRow, *, user_id: str) -> RunRow:
+    async def clone_for_rerun(
+        self,
+        src: RunRow,
+        *,
+        user_id: str,
+        failed_only: bool = False,
+        case_ids: Sequence[str] | None = None,
+    ) -> RunRow:
         """Insert a fresh QUEUED run row cloning ``src``'s selection.
 
-        Selection + routing override are copied verbatim from the source run's
-        metadata — same fan-out, same MCP routing — so a rerun is bit-for-bit
-        equivalent to the original at the orchestrator boundary. Tier is
-        re-resolved from the workspace capability rather than reused, because
-        a workspace's tier may have changed between the two runs and we want
-        the rerun to reflect the *current* tier.
+        When ``case_ids`` is provided, the new run only executes those specific
+        cases (in order). When ``failed_only`` is True, it filters to cases that
+        had FAIL or ERROR step outcomes in ``src``. ``selected_step_ids`` is
+        reset to ``None`` so any edits made in the test case editor run fresh.
+        Tier is re-resolved from the workspace capability.
         """
         project = await self._project_repo.get_by_id(src.project_id)
         if project is None or project.workspace_id != self._ctx.workspace_id:
@@ -330,15 +337,86 @@ class RunService:
         src_metadata: dict[str, Any] = dict(src.metadata_json) if src.metadata_json else {}
         # Strip per-run bookkeeping that does not belong on the new run.
         src_metadata.pop("arq_job_id", None)
+        original_selection: list[dict[str, Any]] = (
+            [dict(item) for item in src_metadata.get("selection", []) if isinstance(item, dict)]
+            if isinstance(src_metadata.get("selection"), list)
+            else []
+        )
+
+        target_case_ids: list[str] | None = None
+        rerun_mode = "full"
+
+        if case_ids is not None:
+            target_case_ids = [cid for cid in case_ids if isinstance(cid, str)]
+            rerun_mode = "selective"
+        elif failed_only:
+            stmt = (
+                select(RunStep.case_id)
+                .where(
+                    RunStep.run_id == src.id,
+                    RunStep.outcome.in_([StepOutcome.FAIL, StepOutcome.ERROR]),
+                )
+                .distinct()
+            )
+            failed_set = set((await self._session.scalars(stmt)).all())
+            if not failed_set:
+                raise ValueError("No failed test cases to re-run.")
+
+            if original_selection:
+                target_case_ids = [
+                    item["case_id"]
+                    for item in original_selection
+                    if item.get("case_id") in failed_set
+                ]
+            else:
+                target_case_ids = list(failed_set)
+            rerun_mode = "failed_only"
+
+        new_selection: list[dict[str, Any]]
+        if target_case_ids is not None:
+            # Filter out soft-deleted cases so rerun doesn't fail on deleted cases
+            active_tc_stmt = select(TestCase.id).where(
+                TestCase.id.in_(target_case_ids),
+                TestCase.deleted_at.is_(None),
+            )
+            active_tc_ids = set((await self._session.scalars(active_tc_stmt)).all())
+            valid_target_ids = [cid for cid in target_case_ids if cid in active_tc_ids]
+            if not valid_target_ids:
+                raise ValueError("No active test cases to re-run (cases may have been deleted).")
+
+            # Reset selected_step_ids to None so edited/fixed steps execute fresh
+            new_selection = [
+                {"case_id": cid, "selected_step_ids": None} for cid in valid_target_ids
+            ]
+
+            if len(valid_target_ids) == 1:
+                tc = await self._session.scalar(
+                    select(TestCase).where(TestCase.id == valid_target_ids[0])
+                )
+                raw_title = (
+                    (tc.title or tc.name or tc.public_id or "1 selected case")
+                    if tc is not None
+                    else "1 selected case"
+                )
+                clean_title = raw_title.removeprefix("Ad-hoc: ").strip()
+                run_name = f"Ad-hoc: {clean_title}"[:250]
+            else:
+                run_name = f"Ad-hoc: {len(valid_target_ids)} selected cases"[:250]
+        else:
+            # Full rerun: reset selected_step_ids to None so edited steps execute fresh
+            new_selection = [{**item, "selected_step_ids": None} for item in original_selection]
+            run_name = src.name[:250]
+
         metadata: dict[str, Any] = {
-            "selection": src_metadata.get("selection", []),
+            "selection": new_selection,
             "mcp_routing_override": src_metadata.get("mcp_routing_override"),
             "rerun_of": src.id,
+            "rerun_mode": rerun_mode,
         }
 
         run = RunRow(
             project_id=src.project_id,
-            name=src.name,
+            name=run_name,
             branch=src.branch,
             commit_sha=src.commit_sha,
             env=src.env,
@@ -359,7 +437,7 @@ class RunService:
             action="run.rerun",
             resource_type="run",
             resource_id=run.id,
-            metadata={"rerun_of": src.id},
+            metadata={"rerun_of": src.id, "rerun_mode": rerun_mode},
         )
         return run
 

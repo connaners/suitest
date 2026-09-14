@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { AlertCircle, AlertTriangle, Camera, Download, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Camera, Download, RotateCw, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cleanErrorMessage, classifyError } from "@/lib/error-formatter";
 import {
@@ -16,6 +17,7 @@ import {
 import { useRunArtifactUrl } from "@/hooks/use-run-artifact-url";
 import type { components } from "@/lib/api-types";
 import { formatDuration } from "@/lib/test-case-format";
+import { cn } from "@/lib/utils";
 
 import { ScreenshotDiffViewer } from "./ScreenshotDiffViewer";
 
@@ -31,6 +33,9 @@ interface CaseDetailPanelProps {
   /** All of the run's artifacts (filtered to this case internally). */
   artifacts: ArtifactPublic[];
   runStatus?: RunStatus | undefined;
+  onRerunCase?: ((caseId: string) => void) | undefined;
+  isRerunning?: boolean | undefined;
+  hasMultipleCases?: boolean | undefined;
 }
 
 /**
@@ -44,6 +49,9 @@ export function CaseDetailPanel({
   group,
   artifacts,
   runStatus,
+  onRerunCase,
+  isRerunning,
+  hasMultipleCases = true,
 }: CaseDetailPanelProps): React.ReactElement {
   const stepIds = useMemo(() => new Set(group.steps.map((s) => s.id)), [group.steps]);
 
@@ -88,100 +96,147 @@ export function CaseDetailPanel({
     };
   }, [selectedStepId, caseArtifacts, runId]);
 
+  const { data: code } = useQuery({
+    queryKey: ["case-detail-code", group.caseId] as const,
+    queryFn: () => fetchTestCaseCode(group.caseId),
+  });
+  const { data: description, isError: isDescError } = useQuery({
+    queryKey: ["case-detail-desc", group.caseId] as const,
+    queryFn: () => fetchTestCaseDescription(group.caseId),
+    retry: false,
+  });
+  const isCaseDeleted = Boolean(group.isDeleted || isDescError);
+
+  const isLive = runStatus === "RUNNING" || runStatus === "QUEUED";
+  const isCaseHalted =
+    group.rollup === "fail" ||
+    group.rollup === "aborted" ||
+    runStatus === "CANCELLED" ||
+    runStatus === "FAIL" ||
+    runStatus === "ERROR";
+
+  const shouldFetchPlanned =
+    isLive || group.rollup === "aborted" || group.steps.length < group.total;
+
   const { data: plannedSteps } = useQuery({
     queryKey: ["case-planned-steps", group.caseId] as const,
     queryFn: () => fetchTestCaseSteps(group.caseId),
-    enabled: true,
+    enabled: shouldFetchPlanned && !isCaseDeleted,
   });
 
   const isZeroSteps =
     group.total === 0 ||
-    (Array.isArray(plannedSteps) && plannedSteps.length === 0);
+    (isLive && Array.isArray(plannedSteps) && plannedSteps.length === 0);
 
   const displaySteps = useMemo<DisplayStep[]>(() => {
     if (isZeroSteps) {
       return [];
     }
 
-    if (!Array.isArray(plannedSteps) || plannedSteps.length === 0) {
+    // Terminal Run Freeze Guard: For completed normal runs where all steps executed and passed,
+    // use recorded executed steps directly.
+    if (!isLive && group.rollup !== "aborted" && group.steps.length >= group.total && group.total > 0) {
       return group.steps;
     }
 
-    const sortedPlanned = [...plannedSteps].sort((a, b) => a.order - b.order);
-    const result: DisplayStep[] = [];
-    let activeFound = false;
+    const sortedExec = [...group.steps].sort((a, b) => a.step_order - b.step_order);
 
-    sortedPlanned.forEach((ps, idx) => {
-      const exec = idx < group.steps.length ? group.steps[idx] : undefined;
-      if (exec) {
-        result.push({
-          ...exec,
-          title: exec.title || ps.action,
-          type: exec.type || (ps.target_kind ? ps.target_kind.toLowerCase() : "action"),
-        });
-      } else {
-        let outcome: StepDisplayOutcome = "QUEUED";
-        let errorMessage: string | null = null;
-        const isRunActive = runStatus === "RUNNING" || runStatus === "QUEUED";
-        const isCaseHalted =
-          group.rollup === "fail" ||
-          group.rollup === "aborted" ||
-          group.steps.some((s) => s.outcome === "FAIL" || s.outcome === "ERROR");
+    if (Array.isArray(plannedSteps) && plannedSteps.length > 0) {
+      const sortedPlanned = [...plannedSteps]
+        .sort((a, b) => a.order - b.order)
+        .slice(0, group.total > 0 ? group.total : undefined);
 
-        if (isRunActive && !isCaseHalted) {
-          if (!activeFound) {
-            outcome = "RUNNING";
-            activeFound = true;
+      const result: DisplayStep[] = [];
+      let activeFound = false;
+
+      sortedPlanned.forEach((ps, idx) => {
+        const exec = idx < sortedExec.length ? sortedExec[idx] : null;
+        if (exec) {
+          result.push({
+            ...exec,
+            title: exec.title || ps.action,
+            type: exec.type || (ps.target_kind ? ps.target_kind.toLowerCase() : "action"),
+          });
+        } else {
+          let outcome: StepDisplayOutcome = "QUEUED";
+          let errorMessage: string | null = null;
+
+          if (isLive) {
+            if (!isCaseHalted) {
+              if (!activeFound) {
+                outcome = "RUNNING";
+                activeFound = true;
+              } else {
+                outcome = "QUEUED";
+              }
+            } else {
+              outcome = "ABORTED";
+              errorMessage = "Step was aborted because a prior step in this run failed.";
+            }
           } else {
-            outcome = "QUEUED";
+            outcome = "ABORTED";
+            errorMessage =
+              runStatus === "CANCELLED"
+                ? "Step was not executed because the test run was cancelled by user."
+                : "Step was aborted because a prior step in this run failed.";
           }
-        } else if (runStatus === "CANCELLED") {
-          outcome = "ABORTED";
-          errorMessage = "Step aborted: run was cancelled by user.";
-        } else if (isCaseHalted) {
-          outcome = "ABORTED";
-          errorMessage = "Step aborted because a prior step in this test case failed.";
-        } else if (group.rollup === "skipped") {
-          outcome = "SKIP";
-        } else if (group.rollup === "pass") {
-          outcome = "SKIP";
-        }
 
+          result.push({
+            id: `planned-${ps.id}`,
+            case_id: group.caseId,
+            step_order: ps.order,
+            title: ps.action,
+            type: ps.target_kind ? ps.target_kind.toLowerCase() : "action",
+            outcome,
+            duration_ms: null,
+            error_message: errorMessage,
+            stdout: null,
+            isPlannedOnly: true,
+          });
+        }
+      });
+
+      if (sortedExec.length > sortedPlanned.length) {
+        result.push(...sortedExec.slice(sortedPlanned.length));
+      }
+
+      return result;
+    }
+
+    // If plannedSteps is not available (e.g. case deleted or aborted before execution),
+    // synthesize unexecuted aborted rows up to group.total
+    if (group.total > sortedExec.length) {
+      const result: DisplayStep[] = [...sortedExec];
+      const unexecutedCount = group.total - sortedExec.length;
+      for (let i = 0; i < unexecutedCount; i++) {
+        const stepNum = sortedExec.length + i + 1;
         result.push({
-          id: `planned-${ps.id}`,
+          id: `unexecuted-${group.caseId}-${stepNum}`,
           case_id: group.caseId,
-          step_order: ps.order,
-          title: ps.action,
-          type: ps.target_kind ? ps.target_kind.toLowerCase() : "action",
-          outcome,
+          step_order: stepNum,
+          title: `Step ${stepNum} (Unexecuted)`,
+          type: "action",
+          outcome: "ABORTED",
           duration_ms: null,
-          error_message: errorMessage,
+          error_message:
+            runStatus === "CANCELLED"
+              ? "Step was not executed because the test run was cancelled by user."
+              : "Step was aborted because a prior step in this run failed.",
           stdout: null,
           isPlannedOnly: true,
         });
       }
-    });
-
-    if (group.steps.length > sortedPlanned.length) {
-      result.push(...group.steps.slice(sortedPlanned.length));
+      return result;
     }
 
-    return result;
-  }, [group.steps, plannedSteps, group.rollup, group.caseId, runStatus, isZeroSteps]);
+    return sortedExec;
+  }, [group, plannedSteps, isZeroSteps, isLive, isCaseHalted, runStatus]);
 
   const selectedStepLabel = useMemo(() => {
     const idx = displaySteps.findIndex((x) => x.id === selectedStepId);
     return idx >= 0 ? `Step ${(idx + 1).toString()}` : null;
   }, [displaySteps, selectedStepId]);
 
-  const { data: code } = useQuery({
-    queryKey: ["case-detail-code", group.caseId] as const,
-    queryFn: () => fetchTestCaseCode(group.caseId),
-  });
-  const { data: description } = useQuery({
-    queryKey: ["case-detail-desc", group.caseId] as const,
-    queryFn: () => fetchTestCaseDescription(group.caseId),
-  });
   const { data: logPage } = useQuery({
     queryKey: ["run-logs", runId] as const,
     queryFn: () => fetchRunLogs(runId),
@@ -215,14 +270,28 @@ export function CaseDetailPanel({
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={rollupToBadge(group.rollup)} label={rollupLabel(group.rollup)} />
           <span className="font-mono text-[11px] text-fg-5">{group.casePublicId}</span>
-          <Link
-            to="/cases"
-            search={{ case: group.casePublicId }}
-            className="rounded px-1.5 py-0.5 text-[11px] font-medium text-fg-3 underline-offset-2 hover:bg-bg-elev-2 hover:text-fg-1 hover:underline"
-            data-testid="case-edit-link"
-          >
-            Edit case
-          </Link>
+          {isCaseDeleted ? (
+            <span
+              className="rounded bg-amber/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber"
+              data-testid="case-deleted-badge"
+            >
+              Deleted case
+            </span>
+          ) : null}
+          {!isLive && !isCaseDeleted && hasMultipleCases && onRerunCase ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isRerunning}
+              onClick={() => onRerunCase(group.caseId)}
+              className="h-6 gap-1 px-2 text-[11px] text-fg-3 hover:bg-bg-elev-2 hover:text-fg-1"
+              data-testid="case-rerun-button"
+            >
+              <RotateCw className={cn("h-3 w-3", isRerunning && "animate-spin")} aria-hidden="true" />
+              {isRerunning ? "Queuing…" : "Re-run case"}
+            </Button>
+          ) : null}
           <span
             className="rounded bg-bg-elev-2 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-fg-4"
             data-testid="case-kind-badge"
@@ -250,6 +319,17 @@ export function CaseDetailPanel({
         <p className="text-[12px] text-fg-4" data-testid="case-result-summary">
           {resultSummary}
         </p>
+        {isCaseDeleted ? (
+          <div
+            className="flex items-center gap-2 rounded-md bg-bg-elev-2 px-3 py-2 text-[11.5px] text-fg-3 border border-border mt-1"
+            data-testid="case-deleted-banner"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber" aria-hidden="true" />
+            <span>
+              Historical snapshot: This test case is deleted from the workspace. Steps and results below reflect the original execution record.
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {errorClassification?.isEnvironmentError ? (

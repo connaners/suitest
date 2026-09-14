@@ -2065,9 +2065,8 @@ export interface paths {
          * Rerun Run
          * @description Clone the source run's selection into a fresh QUEUED row + enqueue the ARQ job.
          *
-         *     A rerun reuses the original selection + routing override (so the runner
-         *     fans out identically) but re-resolves the workspace tier so a tier change
-         *     between the two runs is honored. Returns 202 like the create endpoint.
+         *     Supports full rerun, selective rerun by ``case_ids`` (via JSON body), or
+         *     failed-only rerun (via ``failedOnly=true`` query param or body). Returns 202.
          */
         post: operations["rerun_run_api_v1_runs__run_id__rerun_post"];
         delete?: never;
@@ -6620,6 +6619,19 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /**
+         * RerunRunBody
+         * @description ``POST /runs/{id}/rerun`` optional body for selective or failed-only reruns.
+         */
+        RerunRunBody: {
+            /** Caseids */
+            caseIds?: string[] | null;
+            /**
+             * Failedonly
+             * @default false
+             */
+            failedOnly: boolean;
+        };
         /** ResetPasswordResponse */
         ResetPasswordResponse: {
             /** Temporarypassword */
@@ -6707,7 +6719,7 @@ export interface components {
              * Total Steps
              * @default 0
              */
-            total_steps?: number;
+            total_steps: number;
         };
         /**
          * RunDetail
@@ -12089,7 +12101,9 @@ export interface operations {
     };
     rerun_run_api_v1_runs__run_id__rerun_post: {
         parameters: {
-            query?: never;
+            query?: {
+                failedOnly?: boolean;
+            };
             header?: {
                 "X-Workspace-Id"?: string | null;
             };
@@ -12098,7 +12112,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RerunRunBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {

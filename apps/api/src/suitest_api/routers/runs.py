@@ -45,7 +45,7 @@ from suitest_api.schemas.run import (
     RunSummary,
     StateChangePublic,
 )
-from suitest_api.schemas.runs import CreateRunBody, CreateSuiteRunBody, RunPublic
+from suitest_api.schemas.runs import CreateRunBody, CreateSuiteRunBody, RerunRunBody, RunPublic
 from suitest_api.services.file_storage import presign_s3_get
 from suitest_api.services.junit_report_service import render_junit
 from suitest_api.services.replay_service import StateChange, compute_state_delta
@@ -616,22 +616,32 @@ async def cancel_run(
 @router.post("/runs/{run_id}/rerun", response_model=RunPublic, status_code=status.HTTP_202_ACCEPTED)
 async def rerun_run(
     run_id: str,
+    body: RerunRunBody | None = None,
+    failed_only: bool = Query(default=False, alias="failedOnly"),
     ctx: TenantContext = Depends(require_workspace_membership),
     session: AsyncSession = Depends(get_async_session),
     arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:
     """Clone the source run's selection into a fresh QUEUED row + enqueue the ARQ job.
 
-    A rerun reuses the original selection + routing override (so the runner
-    fans out identically) but re-resolves the workspace tier so a tier change
-    between the two runs is honored. Returns 202 like the create endpoint.
+    Supports full rerun, selective rerun by ``case_ids`` (via JSON body), or
+    failed-only rerun (via ``failedOnly=true`` query param or body). Returns 202.
     """
     svc = _build_run_service(session, ctx)
     src = await svc.get(run_id)
     if src is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+
+    is_failed_only = failed_only or (body.failed_only if body else False)
+    target_case_ids = body.case_ids if (body and body.case_ids is not None) else None
+
     try:
-        new_run = await svc.clone_for_rerun(src, user_id=ctx.user_id)
+        new_run = await svc.clone_for_rerun(
+            src,
+            user_id=ctx.user_id,
+            failed_only=is_failed_only,
+            case_ids=target_case_ids,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     job_id = await dispatch_run(

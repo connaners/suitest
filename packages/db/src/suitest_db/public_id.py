@@ -80,6 +80,14 @@ _SQLITE_NEXT = text(
 )
 
 
+_PREFIX_TABLE: dict[str, str] = {
+    _TC_PREFIX: "test_cases",
+    _RUN_PREFIX: "runs",
+    _REQ_PREFIX: "requirements",
+    _DEFECT_PREFIX: "defects",
+}
+
+
 # --- transient-attr helpers ---------------------------------------------------
 
 
@@ -110,8 +118,41 @@ async def generate_public_id(db: AsyncSession, prefix: str, workspace_id: str) -
     bind = db.get_bind()
     if bind.dialect.name == "sqlite":
         await db.execute(_SQLITE_COUNTER_DDL)
-        n = (await db.execute(_SQLITE_NEXT, {"w": workspace_id, "p": prefix})).scalar_one()
-        return f"{prefix}-{n}"
+        table = _PREFIX_TABLE.get(prefix)
+        if table:
+            offset = len(prefix) + 2
+            max_in_table = (
+                await db.execute(
+                    text(
+                        f"SELECT max(CAST(substr(public_id, :offset) AS INTEGER)) FROM {table} "
+                        f"WHERE workspace_id = :w AND public_id GLOB :glob"
+                    ),
+                    {"offset": offset, "w": workspace_id, "glob": f"{prefix}-[0-9]*"},
+                )
+            ).scalar_one_or_none()
+            if max_in_table is not None and max_in_table >= 1000:
+                await db.execute(
+                    text(
+                        "INSERT INTO pubid_counters (workspace_id, prefix, n) VALUES (:w, :p, :n) "
+                        "ON CONFLICT (workspace_id, prefix) DO UPDATE SET n = max(pubid_counters.n, :n)"
+                    ),
+                    {"w": workspace_id, "p": prefix, "n": int(max_in_table)},
+                )
+        while True:
+            n = (await db.execute(_SQLITE_NEXT, {"w": workspace_id, "p": prefix})).scalar_one()
+            candidate = f"{prefix}-{n}"
+            if not table:
+                return candidate
+            exists = (
+                await db.execute(
+                    text(
+                        f"SELECT 1 FROM {table} WHERE workspace_id = :w AND public_id = :pid LIMIT 1"
+                    ),
+                    {"w": workspace_id, "pid": candidate},
+                )
+            ).scalar_one_or_none()
+            if not exists:
+                return candidate
     row = await db.execute(
         text("SELECT generate_public_id(:p, :w) AS pid"),
         {"p": prefix, "w": workspace_id},
@@ -123,17 +164,66 @@ async def generate_public_id(db: AsyncSession, prefix: str, workspace_id: str) -
 # --- listener internals -------------------------------------------------------
 
 
+def _sqlite_allocate_public_id(conn: Connection, ws_id: str, prefix: str) -> str:
+    """Synchronize counter and allocate next unique public ID in SQLite."""
+    conn.execute(_SQLITE_COUNTER_DDL)
+    table = _PREFIX_TABLE.get(prefix)
+    if table:
+        offset = len(prefix) + 2
+        max_in_table = conn.execute(
+            text(
+                f"SELECT max(CAST(substr(public_id, :offset) AS INTEGER)) FROM {table} "
+                f"WHERE workspace_id = :w AND public_id GLOB :glob"
+            ),
+            {"offset": offset, "w": ws_id, "glob": f"{prefix}-[0-9]*"},
+        ).scalar_one_or_none()
+        if max_in_table is not None and max_in_table >= 1000:
+            conn.execute(
+                text(
+                    "INSERT INTO pubid_counters (workspace_id, prefix, n) VALUES (:w, :p, :n) "
+                    "ON CONFLICT (workspace_id, prefix) DO UPDATE SET n = max(pubid_counters.n, :n)"
+                ),
+                {"w": ws_id, "p": prefix, "n": int(max_in_table)},
+            )
+    while True:
+        n = conn.execute(_SQLITE_NEXT, {"w": ws_id, "p": prefix}).scalar_one()
+        candidate = f"{prefix}-{n}"
+        if not table:
+            return candidate
+        exists = conn.execute(
+            text(f"SELECT 1 FROM {table} WHERE workspace_id = :w AND public_id = :pid LIMIT 1"),
+            {"w": ws_id, "pid": candidate},
+        ).scalar_one_or_none()
+        if not exists:
+            return candidate
+
+
 def _assign_public_id(target: object, conn: Connection, prefix: str) -> None:
     """Shared ``before_insert`` body for all four models.
 
     - Returns early if ``target.public_id`` is already set (idempotent — lets
-      seeders/migrations pin specific IDs).
+      seeders/migrations pin specific IDs), updating SQLite counter so
+      subsequent auto-allocations do not collide.
     - Raises ``RuntimeError`` if the repo layer forgot to attach
       ``_workspace_id_for_pubid``; the missing context is a programmer error
       and should fail loudly rather than silently generating against a
       placeholder.
     """
-    if getattr(target, "public_id", None):
+    preset_pid = getattr(target, "public_id", None)
+    if preset_pid:
+        if conn.dialect.name == "sqlite":
+            ws_id = _get_workspace_id(target)
+            if ws_id and isinstance(preset_pid, str) and preset_pid.startswith(f"{prefix}-"):
+                suffix = preset_pid[len(prefix) + 1 :]
+                if suffix.isdigit():
+                    conn.execute(_SQLITE_COUNTER_DDL)
+                    conn.execute(
+                        text(
+                            "INSERT INTO pubid_counters (workspace_id, prefix, n) VALUES (:w, :p, :n) "
+                            "ON CONFLICT (workspace_id, prefix) DO UPDATE SET n = max(pubid_counters.n, :n)"
+                        ),
+                        {"w": ws_id, "p": prefix, "n": int(suffix)},
+                    )
         return
     ws_id = _get_workspace_id(target)
     if not ws_id:
@@ -144,9 +234,7 @@ def _assign_public_id(target: object, conn: Connection, prefix: str) -> None:
             "before flush."
         )
     if conn.dialect.name == "sqlite":
-        conn.execute(_SQLITE_COUNTER_DDL)
-        n = conn.execute(_SQLITE_NEXT, {"w": ws_id, "p": prefix}).scalar_one()
-        new_pid = f"{prefix}-{n}"
+        new_pid = _sqlite_allocate_public_id(conn, ws_id, prefix)
     else:
         new_pid = conn.execute(
             text("SELECT generate_public_id(:p, :w)"),

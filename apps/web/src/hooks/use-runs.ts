@@ -286,17 +286,37 @@ export function useCancelRun(): UseMutationResult<RunPublicResponse, Error, stri
   });
 }
 
+export interface RerunRunInput {
+  runId: string;
+  caseIds?: string[] | undefined;
+  failedOnly?: boolean | undefined;
+}
+
 /**
  * ``POST /runs/:id/rerun`` — clone a run's selection into a new QUEUED row.
  *
+ * Supports full rerun, selective rerun by caseIds, or failedOnly rerun.
  * Returns the new run on 202 so the caller can navigate to it. Invalidates
  * the runs list so the new row shows up at the top.
  */
-export function useRerunRun(): UseMutationResult<RunPublicResponse, Error, string> {
+export function useRerunRun(): UseMutationResult<
+  RunPublicResponse,
+  Error,
+  string | RerunRunInput
+> {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (runId: string) => {
-      const res = await api.post<RunPublicResponse>(`/runs/${runId}/rerun`);
+    mutationFn: async (input: string | RerunRunInput) => {
+      const runId = typeof input === "string" ? input : input.runId;
+      const caseIds = typeof input === "string" ? undefined : input.caseIds;
+      const failedOnly = typeof input === "string" ? false : Boolean(input.failedOnly);
+
+      const url = `/runs/${runId}/rerun${failedOnly ? "?failedOnly=true" : ""}`;
+      const body =
+        caseIds && caseIds.length > 0
+          ? { case_ids: caseIds, caseIds, failed_only: failedOnly, failedOnly }
+          : undefined;
+      const res = await api.post<RunPublicResponse>(url, body);
       return res.data;
     },
     onSuccess: () => {

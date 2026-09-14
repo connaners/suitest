@@ -122,7 +122,9 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
               ) : isTerminal && skippedSteps > 0 ? (
                 <span className="flex items-center gap-1.5 text-amber">
                   <span className="inline-block h-2 w-2 rounded-full bg-amber" />
-                  {skippedSteps} skipped
+                  {run.status === "FAIL" || run.status === "ERROR"
+                    ? `${skippedSteps} aborted`
+                    : `${skippedSteps} skipped`}
                 </span>
               ) : null}
               {isRunning ? (

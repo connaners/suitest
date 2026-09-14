@@ -216,5 +216,20 @@ describe("case-grouping", () => {
       const groups = groupStepsByCase(steps, [], adhocPlannedCase, "CANCELLED");
       expect(groups[0]?.rollup).toBe("aborted");
     });
+
+    it("marks partially executed case (fewer steps than planned) as aborted when run halts or cancels", () => {
+      const planned = [
+        { case_id: "c_1", case_public_id: "TC-1", case_title: "Partially Run Case", total_steps: 5 },
+        { case_id: "c_2", case_public_id: "TC-2", case_title: "Other Case", total_steps: 2 },
+      ];
+      // c_1 ran only 2 steps out of 5, both passed
+      const steps = [
+        makeStep({ id: "s_1", case_id: "c_1", outcome: "PASS", step_order: 0 }),
+        makeStep({ id: "s_2", case_id: "c_1", outcome: "PASS", step_order: 1 }),
+      ];
+      const groups = groupStepsByCase(steps, [], planned, "CANCELLED");
+      expect(groups[0]?.rollup).toBe("aborted");
+      expect(groups[1]?.rollup).toBe("aborted");
+    });
   });
 });

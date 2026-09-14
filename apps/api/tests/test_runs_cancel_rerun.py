@@ -17,11 +17,12 @@ from httpx import ASGITransport, AsyncClient
 from suitest_api.deps.arq import get_arq
 from suitest_db.models.case import TestCase, TestStep
 from suitest_db.models.project import Project, Suite
-from suitest_db.models.run import Run
+from suitest_db.models.run import Run, RunStep
 from suitest_shared.domain.enums import (
     CaseSource,
     RunStatus,
     RunTrigger,
+    StepOutcome,
     TargetKind,
     Tier,
 )
@@ -178,3 +179,197 @@ async def test_rerun_clones_selection_and_enqueues(api_db: ApiDb) -> None:
     function, args, _ = arq.enqueued[0]
     assert function == "run_test_case"
     assert args == (body["id"],)
+
+
+@pytest.mark.asyncio
+async def test_rerun_failed_only_clones_only_failing_cases(api_db: ApiDb) -> None:
+    """When failedOnly=true, the new run's selection contains only cases with FAIL/ERROR steps."""
+    user = await api_db.seed_user(email="run-rerun-failed@example.com")
+    ws = await api_db.member_workspace(user, slug="run-rerun-failed-ws")
+    project = Project(workspace_id=ws.id, slug="p-failed", name="P")
+    await api_db.add_all([project])
+    suite = Suite(project_id=project.id, name="S", order=0)
+    await api_db.add_all([suite])
+    case1 = TestCase(
+        suite_id=suite.id, public_id="TC-P1", name="Passing Case", source=CaseSource.MANUAL
+    )
+    case2 = TestCase(
+        suite_id=suite.id, public_id="TC-F1", name="Failing Case", source=CaseSource.MANUAL
+    )
+    await api_db.add_all([case1, case2])
+
+    run = _run_row(
+        project.id,
+        "RUN-RERUN-FAILED-SRC",
+        RunStatus.FAIL,
+        metadata_json={
+            "selection": [
+                {"case_id": case1.id, "selected_step_ids": None},
+                {"case_id": case2.id, "selected_step_ids": None},
+            ],
+            "mcp_routing_override": None,
+        },
+    )
+    await api_db.add_all([run])
+
+    # Record passing step for case1 and failing step for case2
+    step1 = RunStep(run_id=run.id, case_id=case1.id, step_order=0, outcome=StepOutcome.PASS)
+    step2 = RunStep(run_id=run.id, case_id=case2.id, step_order=1, outcome=StepOutcome.FAIL)
+    await api_db.add_all([step1, step2])
+
+    arq = _RecordingArq()
+    app = api_db.app_for(user)
+    _override_arq(app, arq)
+
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                f"/api/v1/runs/{run.id}/rerun?failedOnly=true",
+                headers={"X-Workspace-Id": ws.id},
+            )
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    new_run_id = body["id"]
+
+    # Verify that the cloned run's metadata selection contains ONLY case2
+    async with api_db.maker() as session:
+        cloned = await session.get(Run, new_run_id)
+        assert cloned is not None
+        assert cloned.metadata_json is not None
+        selection = cloned.metadata_json.get("selection", [])
+        assert len(selection) == 1
+        assert selection[0]["case_id"] == case2.id
+        assert cloned.metadata_json.get("rerun_mode") == "failed_only"
+
+
+@pytest.mark.asyncio
+async def test_rerun_failed_only_no_failures_returns_400(api_db: ApiDb) -> None:
+    """When a run has 0 failed cases, calling rerun with failedOnly=true returns 400 Bad Request."""
+    user = await api_db.seed_user(email="run-rerun-nofail@example.com")
+    ws = await api_db.member_workspace(user, slug="run-rerun-nofail-ws")
+    project, case = await _seed_runnable_project(api_db, ws.id, slug="rerun-nofail-p")
+    run = _run_row(
+        project.id,
+        "RUN-RERUN-NOFAIL-SRC",
+        RunStatus.PASS,
+        metadata_json={
+            "selection": [{"case_id": case.id, "selected_step_ids": None}],
+            "mcp_routing_override": None,
+        },
+    )
+    await api_db.add_all([run])
+    step = RunStep(run_id=run.id, case_id=case.id, step_order=0, outcome=StepOutcome.PASS)
+    await api_db.add_all([step])
+
+    arq = _RecordingArq()
+    app = api_db.app_for(user)
+    _override_arq(app, arq)
+
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                f"/api/v1/runs/{run.id}/rerun?failedOnly=true",
+                headers={"X-Workspace-Id": ws.id},
+            )
+    assert resp.status_code == 400
+    assert "No failed test cases" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_rerun_selective_case_ids_body(api_db: ApiDb) -> None:
+    """When caseIds are passed in the JSON body, only those cases are cloned."""
+    user = await api_db.seed_user(email="run-rerun-select@example.com")
+    ws = await api_db.member_workspace(user, slug="run-rerun-select-ws")
+    project = Project(workspace_id=ws.id, slug="p-select", name="P")
+    await api_db.add_all([project])
+    suite = Suite(project_id=project.id, name="S", order=0)
+    await api_db.add_all([suite])
+    case1 = TestCase(suite_id=suite.id, public_id="TC-S1", name="Case 1", source=CaseSource.MANUAL)
+    case2 = TestCase(suite_id=suite.id, public_id="TC-S2", name="Case 2", source=CaseSource.MANUAL)
+    await api_db.add_all([case1, case2])
+
+    run = _run_row(
+        project.id,
+        "RUN-RERUN-SELECT-SRC",
+        RunStatus.PASS,
+        metadata_json={
+            "selection": [
+                {"case_id": case1.id, "selected_step_ids": None},
+                {"case_id": case2.id, "selected_step_ids": None},
+            ],
+            "mcp_routing_override": None,
+        },
+    )
+    await api_db.add_all([run])
+
+    arq = _RecordingArq()
+    app = api_db.app_for(user)
+    _override_arq(app, arq)
+
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                f"/api/v1/runs/{run.id}/rerun",
+                json={"caseIds": [case2.id]},
+                headers={"X-Workspace-Id": ws.id},
+            )
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    async with api_db.maker() as session:
+        cloned = await session.get(Run, body["id"])
+        assert cloned is not None
+        assert cloned.metadata_json is not None
+        selection = cloned.metadata_json.get("selection", [])
+        assert len(selection) == 1
+        assert cloned.metadata_json.get("rerun_mode") == "selective"
+        assert cloned.name == "Ad-hoc: Case 2"
+
+
+@pytest.mark.asyncio
+async def test_rerun_selective_multiple_case_ids_name(api_db: ApiDb) -> None:
+    """When >1 caseIds are passed in the JSON body, name is 'Ad-hoc: <N> selected cases'."""
+    user = await api_db.seed_user(email="run-rerun-multi@example.com")
+    ws = await api_db.member_workspace(user, slug="run-rerun-multi-ws")
+    project = Project(workspace_id=ws.id, slug="p-multi", name="P")
+    await api_db.add_all([project])
+    suite = Suite(project_id=project.id, name="S", order=0)
+    await api_db.add_all([suite])
+    case1 = TestCase(suite_id=suite.id, public_id="TC-M1", name="Case 1", source=CaseSource.MANUAL)
+    case2 = TestCase(suite_id=suite.id, public_id="TC-M2", name="Case 2", source=CaseSource.MANUAL)
+    await api_db.add_all([case1, case2])
+
+    run = _run_row(
+        project.id,
+        "Original Run Name",
+        RunStatus.PASS,
+        metadata_json={
+            "selection": [
+                {"case_id": case1.id, "selected_step_ids": None},
+                {"case_id": case2.id, "selected_step_ids": None},
+            ],
+            "mcp_routing_override": None,
+        },
+    )
+    await api_db.add_all([run])
+
+    arq = _RecordingArq()
+    app = api_db.app_for(user)
+    _override_arq(app, arq)
+
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                f"/api/v1/runs/{run.id}/rerun",
+                json={"caseIds": [case1.id, case2.id]},
+                headers={"X-Workspace-Id": ws.id},
+            )
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    async with api_db.maker() as session:
+        cloned = await session.get(Run, body["id"])
+        assert cloned is not None
+        assert cloned.name == "Ad-hoc: 2 selected cases"

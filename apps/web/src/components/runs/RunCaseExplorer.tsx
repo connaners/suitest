@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CaseDetailPanel } from "@/components/runs/CaseDetailPanel";
 import { CaseList } from "@/components/runs/CaseList";
-import { groupStepsByCase } from "@/components/runs/case-grouping";
+import { groupStepsByCase, type CaseGroup } from "@/components/runs/case-grouping";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { fetchRunArtifacts, fetchRunSteps } from "@/lib/api-client";
 import type { components } from "@/lib/api-types";
@@ -22,6 +22,12 @@ interface RunCaseExplorerProps {
   plannedCases?: RunCaseSummary[] | undefined;
   /** Emitted whenever the focused test case changes (returns public_id like "TC-101"). */
   onSelectCasePublicId?: (publicId: string | null) => void;
+  /** Emitted whenever the grouped test cases change. */
+  onGroupsChange?: (groups: CaseGroup[]) => void;
+  /** Trigger a rerun for a single test case. */
+  onRerunCase?: (caseId: string) => void;
+  /** True while a rerun mutation is in flight. */
+  isRerunning?: boolean;
 }
 
 /** Once a run reaches one of these, no further steps can appear. */
@@ -41,6 +47,9 @@ export function RunCaseExplorer({
   status,
   plannedCases,
   onSelectCasePublicId,
+  onGroupsChange,
+  onRerunCase,
+  isRerunning,
 }: RunCaseExplorerProps): React.ReactElement {
   const terminalRetriesRef = useRef<number>(0);
   const prevRunIdRef = useRef<string>(runId);
@@ -97,6 +106,10 @@ export function RunCaseExplorer({
     () => groupStepsByCase(steps, artifacts, plannedCases, status),
     [steps, artifacts, plannedCases, status],
   );
+
+  useEffect(() => {
+    onGroupsChange?.(groups);
+  }, [groups, onGroupsChange]);
 
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
 
@@ -185,6 +198,9 @@ export function RunCaseExplorer({
             group={selectedGroup}
             artifacts={artifacts}
             runStatus={status}
+            onRerunCase={onRerunCase}
+            isRerunning={isRerunning}
+            hasMultipleCases={groups.length > 1}
           />
         ) : (
           <EmptyState
