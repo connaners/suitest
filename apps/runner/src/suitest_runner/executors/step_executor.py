@@ -32,6 +32,7 @@ fabricating a synthetic tool call.
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -87,6 +88,41 @@ class StepResult:
     stderr: str
     error_message: str | None
     mcp_result: McpToolResult | None
+    is_fatal_infra: bool = False
+
+
+_INFRA_ERROR_PATTERNS: tuple[str, ...] = (
+    "browser is already in use",
+    "target page, context or browser has been closed",
+    "target closed",
+    "browser has been closed",
+    "browser closed",
+    "page has been closed",
+    "connection refused",
+    "econnrefused",
+    "spawn enoent",
+    "auto-disabled (down past threshold)",
+    "failed to connect to mcp",
+    "transport died",
+    "connection reset by peer",
+)
+
+
+def classify_mcp_error(raw_msg: str) -> tuple[StepOutcome, str, bool]:
+    """Classify an MCP tool error string into StepOutcome, clean message, and fatal flag.
+
+    Distinguishes application test failures (e.g. selector missing, assertion mismatch)
+    from infrastructure/environment crashes (e.g. browser locked, target closed, provider down).
+    """
+    clean_msg = raw_msg.strip()
+    clean_msg = re.sub(r"^(?:MCP_TOOL_FAILED:\s*)?(?:###\s*Error\s*\n*)?", "", clean_msg).strip()
+    clean_msg = re.sub(r"^Error:\s*", "", clean_msg).strip()
+
+    lowered = clean_msg.lower()
+    is_infra = any(pat in lowered for pat in _INFRA_ERROR_PATTERNS)
+    if is_infra:
+        return StepOutcome.ERROR, f"MCP_TOOL_ERROR: {clean_msg}", True
+    return StepOutcome.FAIL, f"MCP_TOOL_FAILED: {clean_msg}", False
 
 
 def _normalize_tool_name(tool: str) -> str:
@@ -161,6 +197,7 @@ async def execute_step(
         mcp: McpToolResult | None = None,
         stdout: str = "",
         stderr: str = "",
+        is_fatal_infra: bool = False,
     ) -> StepResult:
         return StepResult(
             outcome=outcome,
@@ -171,6 +208,7 @@ async def execute_step(
             stderr=stderr,
             error_message=msg,
             mcp_result=mcp,
+            is_fatal_infra=is_fatal_infra,
         )
 
     parsed: object
@@ -260,15 +298,17 @@ async def execute_step(
             stderr=result.stderr,
         )
     except McpToolTimeout as exc:
-        return _done(StepOutcome.ERROR, msg=f"MCP_TOOL_TIMEOUT: {exc}")
+        return _done(StepOutcome.ERROR, msg=f"MCP_TOOL_TIMEOUT: {exc}", is_fatal_infra=True)
     except McpToolFailed as exc:
+        outcome, clean_msg, is_fatal = classify_mcp_error(str(exc))
         return _done(
-            StepOutcome.FAIL,
-            msg=f"MCP_TOOL_FAILED: {exc}",
-            stderr=str(exc),
+            outcome,
+            msg=clean_msg,
+            stderr=clean_msg,
+            is_fatal_infra=is_fatal,
         )
     except Exception as exc:
         # Last-resort safety net: anything other than the two MCP exceptions
         # we already handle becomes an ERROR rather than crashing the worker.
         log.exception("step.executor.error", step_id=test_step.id)
-        return _done(StepOutcome.ERROR, msg=f"INTERNAL: {exc}")
+        return _done(StepOutcome.ERROR, msg=f"INTERNAL: {exc}", is_fatal_infra=True)

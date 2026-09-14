@@ -287,6 +287,73 @@ describe("StepEditor", () => {
     });
   });
 
+  it("clicking Remove on a client-side draft does not call PATCH", async () => {
+    const user = userEvent.setup();
+    let patchCalled = false;
+
+    server.use(
+      http.patch("*/api/v1/test-cases/:caseId/steps", () => {
+        patchCalled = true;
+        return HttpResponse.json(FULL_CASE_RESPONSE);
+      }),
+    );
+
+    const onStepsChange = vi.fn();
+    const draftStep: DraftStep = {
+      id: "__new__draft_123",
+      order: 2,
+      action: "New unpersisted step",
+      expected: "",
+      code: null,
+      mcp_provider: "playwright-mcp",
+      target_kind: "FE_WEB",
+    };
+    renderEditor([STEP_2, draftStep], onStepsChange);
+
+    const rows = screen.getAllByTestId("step-row");
+    const removeBtn = within(rows[1] as HTMLElement).getByTestId("step-remove-btn");
+    await user.click(removeBtn);
+
+    expect(onStepsChange).toHaveBeenCalledWith([{ ...STEP_2, order: 1 }]);
+    expect(patchCalled).toBe(false);
+  });
+
+  it("clicking Remove when another step has empty code in ZERO tier removes step locally without failing PATCH", async () => {
+    const user = userEvent.setup();
+    let patchCalled = false;
+
+    server.use(
+      http.patch("*/api/v1/test-cases/:caseId/steps", () => {
+        patchCalled = true;
+        return HttpResponse.json(FULL_CASE_RESPONSE);
+      }),
+    );
+
+    const onStepsChange = vi.fn();
+    const step3: DraftStep = {
+      id: "stp_03",
+      order: 3,
+      action: "Third step",
+      expected: "Third ok",
+      code: "await page.click('#third')",
+      mcp_provider: "playwright-mcp",
+      target_kind: "FE_WEB",
+    };
+    renderEditor([STEP_2, STEP_1, step3], onStepsChange);
+
+    // Click remove on step3
+    const rows = screen.getAllByTestId("step-row");
+    const removeBtn = within(rows[2] as HTMLElement).getByTestId("step-remove-btn");
+    await user.click(removeBtn);
+
+    // step3 is removed from local state without triggering a rejected PATCH
+    expect(onStepsChange).toHaveBeenCalledWith([
+      { ...STEP_2, order: 1 },
+      { ...STEP_1, order: 2 },
+    ]);
+    expect(patchCalled).toBe(false);
+  });
+
   // --------------------------------------------------------------------------
   // AC-5: Save button commits via PATCH /test-cases/:id/steps
   // --------------------------------------------------------------------------
@@ -356,6 +423,50 @@ describe("StepEditor", () => {
     expect(
       await screen.findByTestId("step-editor-error", undefined, { timeout: 3000 }),
     ).toBeInTheDocument();
+  });
+
+  it("assertively highlights failing step and displays ZERO tier code requirement when PATCH fails with STEPS_REQUIRE_CODE_IN_ZERO_LLM", async () => {
+    const user = userEvent.setup();
+
+    server.use(
+      http.patch("*/api/v1/test-cases/:caseId/steps", () => {
+        return HttpResponse.json(
+          {
+            detail: {
+              error: {
+                code: "STEPS_REQUIRE_CODE_IN_ZERO_LLM",
+                message:
+                  "Step #2 has no executable code. ZERO tier cannot translate action -> MCP call at runtime.",
+                details: { stepIndex: 1, stepOrder: 2 },
+              },
+            },
+          },
+          { status: 400 },
+        );
+      }),
+    );
+
+    renderEditor([STEP_1, STEP_2]);
+    const saveBtn = screen.getByTestId("step-save-btn");
+    await user.click(saveBtn);
+
+    const banner = await screen.findByTestId("step-editor-error", undefined, { timeout: 3000 });
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent("Action Code Required in ZERO Tier");
+    expect(banner).toHaveTextContent("Step #2 has an action description but no executable code");
+
+    // The second row (index 1) should be highlighted and show the hint
+    const rows = screen.getAllByTestId("step-row");
+    expect(rows[1]).toHaveClass("border-red/60");
+    const hint = screen.getByTestId("step-code-error-hint");
+    expect(hint).toBeInTheDocument();
+    expect(hint).toHaveTextContent("Executable code is required for this step in ZERO tier.");
+  });
+
+  it("renders ZERO tier specific placeholder in code inputs", () => {
+    renderEditor([STEP_1]);
+    const codeInput = screen.getByTestId("step-code-input");
+    expect(codeInput).toHaveAttribute("placeholder", expect.stringContaining("Required: executable MCP code in ZERO tier"));
   });
 
   // --------------------------------------------------------------------------

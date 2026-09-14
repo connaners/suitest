@@ -10,12 +10,14 @@ import {
   FolderTree,
   ListChecks,
   Paperclip,
+  Play,
   ScrollText,
   Trash2,
 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ConfirmBulkRunDialog } from "@/components/cases/ConfirmBulkRunDialog";
 import { CreateCaseDialog } from "@/components/cases/CreateCaseDialog";
 import { CreateSuiteDialog } from "@/components/cases/CreateSuiteDialog";
 import { ExportUatDialog } from "@/components/cases/ExportUatDialog";
@@ -268,22 +270,58 @@ function CasesHeader({
 
 interface BulkActionBarProps {
   selectedIds: Set<string>;
+  cases?: Case[];
   suites: Suite[];
   onClear: () => void;
+  projectId?: string | null;
 }
 
 function BulkActionBar({
   selectedIds,
+  cases = [],
   suites,
   onClear,
+  projectId = null,
 }: BulkActionBarProps): React.ReactElement | null {
+  const navigate = useNavigate();
+  const createRun = useCreateRun();
   const bulkUpdate = useBulkUpdate();
+  const [confirmRunOpen, setConfirmRunOpen] = useState(false);
 
   const ids = [...selectedIds];
   const count = ids.length;
   const overLimit = count > BULK_LIMIT;
 
   if (count === 0) return null;
+
+  const resolvedProjectId = projectId ?? suites[0]?.project_id ?? null;
+  const canRun = resolvedProjectId !== null && !overLimit && !createRun.isPending;
+
+  const singleCase = count === 1 ? cases.find((c) => c.id === ids[0]) : undefined;
+  const singleCaseTitle = singleCase ? singleCase.title || singleCase.name : undefined;
+
+  const handleConfirmRun = (): void => {
+    if (!resolvedProjectId || overLimit || count === 0) return;
+    const runName = singleCaseTitle
+      ? `Ad-hoc: ${singleCaseTitle}`
+      : `Ad-hoc: ${count} selected case${count === 1 ? "" : "s"}`;
+
+    createRun.mutate(
+      {
+        projectId: resolvedProjectId,
+        name: runName,
+        selection: ids.map((id) => ({ caseId: id })),
+        trigger: "MANUAL",
+      },
+      {
+        onSuccess: (run) => {
+          setConfirmRunOpen(false);
+          onClear();
+          void navigate({ to: "/runs/$runId", params: { runId: run.id } });
+        },
+      },
+    );
+  };
 
   const handleDelete = (): void => {
     // Delay-delete pattern: optimistically hide, commit on toast expire.
@@ -344,6 +382,19 @@ function BulkActionBar({
         <span className="text-[11px] text-amber">Max {BULK_LIMIT} at a time</span>
       ) : null}
       <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          data-testid="bulk-run-btn"
+          disabled={!canRun}
+          className="text-fg-3 hover:text-fg-1"
+          onClick={() => setConfirmRunOpen(true)}
+        >
+          <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+          Run ({count})
+        </Button>
+
         <Button
           type="button"
           size="sm"
@@ -414,6 +465,15 @@ function BulkActionBar({
       >
         Clear
       </button>
+
+      <ConfirmBulkRunDialog
+        open={confirmRunOpen}
+        onOpenChange={setConfirmRunOpen}
+        count={count}
+        caseTitle={singleCaseTitle}
+        onConfirm={handleConfirmRun}
+        isPending={createRun.isPending}
+      />
     </div>
   );
 }
@@ -1048,10 +1108,7 @@ function CaseBasicsTab({
         <Meta label="Priority" value={detail.priority} mono />
         <Meta label="Owner" value={detail.owner_id ?? "—"} />
         <Meta label="Suite" value={detail.suite_id} mono />
-        <Meta
-          label="Updated"
-          value={formatRelativeTime(detail.updated_at)}
-        />
+        <Meta label="Updated" value={formatRelativeTime(detail.updated_at)} />
         <Meta label="Key / slug" value={slugKey ?? "—"} mono />
         <Meta
           label="Tags"
@@ -1674,8 +1731,10 @@ function CasesBody(): React.ReactElement {
             </div>
             <BulkActionBar
               selectedIds={selectedIds}
+              cases={cases.items}
               suites={suites.items}
               onClear={handleClearSelection}
+              projectId={projectId}
             />
           </aside>
           <div
@@ -1712,7 +1771,6 @@ function CasesError({ reset }: { reset: () => void }): React.ReactElement {
     />
   );
 }
-
 
 // Hide the AI tab in ZERO via wrapper — leverages Gated for ergonomic
 // composition, so the CasesHeader doesn't have to know about capabilities.

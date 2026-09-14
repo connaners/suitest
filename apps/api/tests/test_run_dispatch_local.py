@@ -40,3 +40,18 @@ async def test_server_mode_enqueues() -> None:
     result = await dispatch_run(mode="server", arq=arq, run_id="run-1", queue_name="suitest:runs")
     assert arq.calls == [("run_test_case", "run-1")]
     assert result == "job-run-1"
+
+
+@pytest.mark.asyncio
+async def test_local_mode_accepts_none_arq() -> None:
+    result = await dispatch_run(mode="local", arq=None, run_id="run-1", queue_name="suitest:runs")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_server_mode_raises_when_arq_is_none() -> None:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dispatch_run(mode="server", arq=None, run_id="run-1", queue_name="suitest:runs")
+    assert exc_info.value.status_code == 503

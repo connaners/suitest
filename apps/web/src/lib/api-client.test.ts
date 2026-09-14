@@ -138,4 +138,58 @@ describe("api-client", () => {
     expect(caught?.retryable).toBe(false);
     expect(caught?.message).toBe("LLM is disabled in ZERO tier");
   });
+
+  it("extracts code, message, and details from FastAPI detail.error envelope", async () => {
+    server.use(
+      http.patch("*/api/v1/test-cases/TC-1000/steps", () =>
+        HttpResponse.json(
+          {
+            detail: {
+              error: {
+                code: "STEPS_REQUIRE_CODE_IN_ZERO_LLM",
+                message:
+                  "Step #2 has no executable code. ZERO tier cannot translate action -> MCP call at runtime.",
+                details: { stepIndex: 1, stepOrder: 2 },
+              },
+            },
+          },
+          { status: 400 },
+        ),
+      ),
+    );
+
+    let caught: ApiError | null = null;
+    try {
+      await api.patch("/test-cases/TC-1000/steps", { steps: [] });
+    } catch (err) {
+      caught = err as ApiError;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    expect(caught?.status).toBe(400);
+    expect(caught?.code).toBe("STEPS_REQUIRE_CODE_IN_ZERO_LLM");
+    expect(caught?.message).toBe(
+      "Step #2 has no executable code. ZERO tier cannot translate action -> MCP call at runtime.",
+    );
+    expect(caught?.details).toEqual({ stepIndex: 1, stepOrder: 2 });
+  });
+
+  it("extracts message from string detail in FastAPI error response", async () => {
+    server.use(
+      http.get("*/api/v1/some-not-found", () =>
+        HttpResponse.json({ detail: "test case not found" }, { status: 404 }),
+      ),
+    );
+
+    let caught: ApiError | null = null;
+    try {
+      await api.get("/some-not-found");
+    } catch (err) {
+      caught = err as ApiError;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    expect(caught?.status).toBe(404);
+    expect(caught?.message).toBe("test case not found");
+  });
 });

@@ -530,22 +530,23 @@ async def get_test_case_steps(
 
 def _raise_step_validation(exc: StepsRequireCodeError | McpProviderNotRegisteredError) -> None:
     """Translate a validator exception into the canonical envelope + status."""
+    step_order = exc.step_index + 1
     if isinstance(exc, StepsRequireCodeError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_error_envelope(
                 "STEPS_REQUIRE_CODE_IN_ZERO_LLM",
-                f"Step #{exc.step_index} has no executable code. "
+                f"Step #{step_order} has no executable code. "
                 "ZERO tier cannot translate action -> MCP call at runtime.",
-                {"stepIndex": exc.step_index},
+                {"stepIndex": exc.step_index, "stepOrder": step_order},
             ),
         )
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=_error_envelope(
             "MCP_PROVIDER_NOT_REGISTERED",
-            f"MCP provider '{exc.name}' not registered.",
-            {"name": exc.name, "stepIndex": exc.step_index},
+            f"Step #{step_order}: MCP provider '{exc.name}' not registered.",
+            {"name": exc.name, "stepIndex": exc.step_index, "stepOrder": step_order},
         ),
     )
 

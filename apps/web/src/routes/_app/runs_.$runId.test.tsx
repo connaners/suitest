@@ -166,9 +166,9 @@ describe("RunDetailPage", () => {
     expect(within(detail).getByTestId("case-detail-title")).toHaveTextContent(
       "expired_card_is_rejected",
     );
-    // Step with no title falls back to `${type} · step N`, never the TC id.
+    // Step with no title falls back to `${type} · step N` (relative to case), never the TC id.
     const stepTitle = within(detail).getByTestId("step-title");
-    expect(stepTitle).toHaveTextContent("assertion · step 2");
+    expect(stepTitle).toHaveTextContent("assertion · step 1");
     expect(stepTitle.textContent).not.toContain("TC-102");
     // Result summary surfaces the first failure message.
     expect(within(detail).getByTestId("case-result-summary")).toHaveTextContent(
@@ -291,18 +291,188 @@ describe("RunDetailPage", () => {
     });
     await waitFor(() => expect(rerunButton).not.toBeDisabled());
     await user.click(rerunButton);
+    const submitBtn = await screen.findByTestId("rerun-dialog-submit", undefined, {
+      timeout: 3000,
+    });
+    await user.click(submitBtn);
     await waitFor(() => expect(rerunCalls).toBe(1));
   });
 
-  it("shows_edit_cases_link_and_per_case_edit_link", async () => {
+  it("shows_edit_cases_link_reflecting_active_case", async () => {
     renderRunDetail();
     await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
 
-    expect(screen.getByTestId("run-edit-cases-link")).toHaveAttribute("href", "/cases");
+    // The failing case is auto-selected → the top-level Edit case link reflects the active case.
+    await waitFor(() => {
+      expect(screen.getByTestId("run-edit-cases-link")).toHaveAttribute(
+        "href",
+        "/cases?case=TC-102",
+      );
+    });
 
-    // The failing case is auto-selected → its detail carries an Edit case link.
     const detail = await screen.findByTestId("case-detail");
-    const editLink = within(detail).getByTestId("case-edit-link");
-    expect(editLink).toHaveAttribute("href", "/cases?case=TC-102");
+    expect(within(detail).queryByTestId("case-edit-link")).not.toBeInTheDocument();
+  });
+
+  it("renders abort button when run is live and posts cancel on click", async () => {
+    let cancelCalls = 0;
+    server.use(
+      http.post(`*/api/v1/runs/${RUN_ID}/cancel`, () => {
+        cancelCalls += 1;
+        return HttpResponse.json({
+          id: RUN_ID,
+          public_id: "RUN-1001",
+          status: "CANCELLED",
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+
+    const abortBtn = await screen.findByTestId("run-cancel-button", undefined, { timeout: 3000 });
+    expect(abortBtn).toBeInTheDocument();
+    expect(abortBtn).toHaveTextContent("Abort run");
+
+    await user.click(abortBtn);
+    await waitFor(() => expect(cancelCalls).toBe(1));
+  });
+
+  it("does not render abort button when run is in a terminal state", async () => {
+    server.use(
+      http.get(`*/api/v1/runs/${RUN_ID}`, () =>
+        HttpResponse.json({
+          id: RUN_ID,
+          public_id: "RUN-1001",
+          project_id: "prj_demo",
+          name: "Checkout flow rejects expired cards",
+          branch: "main",
+          commit_sha: "abcd123",
+          env: "staging",
+          status: "PASS",
+          trigger: "MANUAL",
+          tier_at_runtime: "ZERO",
+          started_at: "2026-05-27T10:00:00Z",
+          completed_at: "2026-05-27T10:00:30Z",
+          duration_ms: 30000,
+          summary: { total_steps: 4, passed_steps: 4, failed_steps: 0, duration_ms: 30000 },
+          created_at: "2026-05-27T10:00:00Z",
+          updated_at: "2026-05-27T10:00:30Z",
+        }),
+      ),
+    );
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+    expect(screen.queryByTestId("run-cancel-button")).toBeNull();
+  });
+
+  it("displays planned cases with QUEUED status when steps have not executed yet", async () => {
+    server.use(
+      http.get(`*/api/v1/runs/${RUN_ID}`, () =>
+        HttpResponse.json({
+          id: RUN_ID,
+          public_id: "RUN-1001",
+          project_id: "prj_demo",
+          name: "Ad-hoc bulk run",
+          branch: "main",
+          commit_sha: null,
+          env: "staging",
+          status: "QUEUED",
+          trigger: "MANUAL",
+          tier_at_runtime: "ZERO",
+          started_at: null,
+          completed_at: null,
+          duration_ms: null,
+          summary: { total_steps: 0, passed_steps: 0, failed_steps: 0, duration_ms: null },
+          cases: [
+            { case_id: "c1", case_public_id: "TC-01", case_title: "Login case" },
+            { case_id: "c2", case_public_id: "TC-02", case_title: "Checkout case" },
+          ],
+          created_at: "2026-05-27T10:00:00Z",
+          updated_at: "2026-05-27T10:00:00Z",
+        }),
+      ),
+      http.get(`*/api/v1/runs/${RUN_ID}/steps`, () => HttpResponse.json({ items: [] })),
+    );
+
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+
+    const rows = await screen.findAllByTestId("case-row");
+    expect(rows).toHaveLength(2);
+    const [row0, row1] = rows;
+    expect(row0).toBeDefined();
+    expect(row1).toBeDefined();
+    if (!row0 || !row1) throw new Error("Expected 2 case rows");
+    expect(within(row0).getByText("Login case")).toBeInTheDocument();
+    expect(within(row0).getByText("QUEUED")).toBeInTheDocument();
+    expect(within(row1).getByText("Checkout case")).toBeInTheDocument();
+    expect(within(row1).getByText("QUEUED")).toBeInTheDocument();
+  });
+
+  it("marks unexecuted planned cases as ABORTED when run is cancelled", async () => {
+    server.use(
+      http.get(`*/api/v1/runs/${RUN_ID}`, () =>
+        HttpResponse.json({
+          id: RUN_ID,
+          public_id: "RUN-1001",
+          project_id: "prj_demo",
+          name: "Ad-hoc bulk run",
+          branch: "main",
+          commit_sha: null,
+          env: "staging",
+          status: "CANCELLED",
+          trigger: "MANUAL",
+          tier_at_runtime: "ZERO",
+          started_at: "2026-05-27T10:00:00Z",
+          completed_at: "2026-05-27T10:00:10Z",
+          duration_ms: 10000,
+          summary: { total_steps: 1, passed_steps: 1, failed_steps: 0, duration_ms: 10000 },
+          cases: [
+            {
+              case_id: "case_01",
+              case_public_id: "TC-101",
+              case_title: "successful_login_opens_the_dashboard",
+            },
+            { case_id: "c2", case_public_id: "TC-02", case_title: "Unrun checkout case" },
+          ],
+          created_at: "2026-05-27T10:00:00Z",
+          updated_at: "2026-05-27T10:00:10Z",
+        }),
+      ),
+      http.get(`*/api/v1/runs/${RUN_ID}/steps`, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "rs_01",
+              run_id: RUN_ID,
+              case_id: "case_01",
+              case_public_id: "TC-101",
+              case_name: "successful_login_opens_the_dashboard",
+              title: "Click 'Sign in'",
+              type: "action",
+              step_order: 1,
+              outcome: "PASS",
+              started_at: "2026-05-27T10:00:00Z",
+              completed_at: "2026-05-27T10:00:10Z",
+              duration_ms: 10000,
+              error_message: null,
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+
+    const rows = await screen.findAllByTestId("case-row");
+    expect(rows).toHaveLength(2);
+    const [row0, row1] = rows;
+    expect(row0).toBeDefined();
+    expect(row1).toBeDefined();
+    if (!row0 || !row1) throw new Error("Expected 2 case rows");
+    expect(within(row0).getByText("PASS")).toBeInTheDocument();
+    expect(within(row1).getByText("ABORTED")).toBeInTheDocument();
   });
 });

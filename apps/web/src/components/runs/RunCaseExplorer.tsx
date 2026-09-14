@@ -1,29 +1,38 @@
 import { useQuery } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CaseDetailPanel } from "@/components/runs/CaseDetailPanel";
 import { CaseList } from "@/components/runs/CaseList";
-import { groupStepsByCase } from "@/components/runs/case-grouping";
+import { groupStepsByCase, type CaseGroup } from "@/components/runs/case-grouping";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { fetchRunArtifacts, fetchRunSteps } from "@/lib/api-client";
 import type { components } from "@/lib/api-types";
 import { useRunStream } from "@/lib/ws-client";
 
 type RunStatus = components["schemas"]["RunStatus"];
+type RunCaseSummary = components["schemas"]["RunCaseSummary"];
 
 interface RunCaseExplorerProps {
   /** Run id OR public_id — the endpoints resolve either. */
   runId: string;
   /** Run status, when the caller already has it — drives polling + empty copy. */
   status?: RunStatus | undefined;
+  /** Planned cases configured for this run (M1-15b). */
+  plannedCases?: RunCaseSummary[] | undefined;
+  /** Emitted whenever the focused test case changes (returns public_id like "TC-101"). */
+  onSelectCasePublicId?: (publicId: string | null) => void;
+  /** Emitted whenever the grouped test cases change. */
+  onGroupsChange?: (groups: CaseGroup[]) => void;
+  /** Trigger a rerun for a single test case. */
+  onRerunCase?: (caseId: string) => void;
+  /** True while a rerun mutation is in flight. */
+  isRerunning?: boolean;
 }
 
 /** Once a run reaches one of these, no further steps can appear. */
 function isTerminal(status: RunStatus | undefined): boolean {
-  return (
-    status === "PASS" || status === "FAIL" || status === "ERROR" || status === "CANCELLED"
-  );
+  return status === "PASS" || status === "FAIL" || status === "ERROR" || status === "CANCELLED";
 }
 
 /**
@@ -33,25 +42,74 @@ function isTerminal(status: RunStatus | undefined): boolean {
  * dump. Shared by the full-page run route AND the /runs side panel so both give
  * the same video/code/screenshot experience.
  */
-export function RunCaseExplorer({ runId, status }: RunCaseExplorerProps): React.ReactElement {
+export function RunCaseExplorer({
+  runId,
+  status,
+  plannedCases,
+  onSelectCasePublicId,
+  onGroupsChange,
+  onRerunCase,
+  isRerunning,
+}: RunCaseExplorerProps): React.ReactElement {
+  const terminalRetriesRef = useRef<number>(0);
+  const prevRunIdRef = useRef<string>(runId);
+  const prevStatusRef = useRef<RunStatus | undefined>(status);
+
   // Poll until the run is terminal. The WS refetch below is the fast path, but
   // local mode publishes to a NullPublisher — no event ever reaches the browser,
-  // so without polling the panel stayed empty until a manual reload (issue #109).
-  const refetchInterval = isTerminal(status) ? false : 2000;
   const { data: stepsData, refetch: refetchSteps } = useQuery({
     queryKey: ["run-steps", runId] as const,
     queryFn: () => fetchRunSteps(runId),
-    refetchInterval,
+    refetchInterval: (query) => {
+      if (!isTerminal(status)) return 1500;
+      const items = query.state.data?.items ?? [];
+      const hasMissing =
+        status !== "CANCELLED" &&
+        plannedCases !== undefined &&
+        plannedCases.length > 0 &&
+        plannedCases.some((pc) => {
+          const stepsCount = pc.total_steps ?? 0;
+          return stepsCount > 0 && !items.some((s) => s.case_id === pc.case_id);
+        });
+      if (hasMissing && terminalRetriesRef.current < 2) {
+        terminalRetriesRef.current += 1;
+        return 1500;
+      }
+      return false;
+    },
   });
   const { data: artifactsData, refetch: refetchArtifacts } = useQuery({
     queryKey: ["run-artifacts", runId] as const,
     queryFn: () => fetchRunArtifacts(runId),
-    refetchInterval,
+    refetchInterval: () => (!isTerminal(status) ? 1500 : false),
   });
 
   const steps = useMemo(() => stepsData?.items ?? [], [stepsData]);
   const artifacts = useMemo(() => artifactsData?.items ?? [], [artifactsData]);
-  const groups = useMemo(() => groupStepsByCase(steps, artifacts), [steps, artifacts]);
+
+  useEffect(() => {
+    const runChanged = prevRunIdRef.current !== runId;
+    prevRunIdRef.current = runId;
+    const wasTerminal = isTerminal(prevStatusRef.current);
+    const nowTerminal = isTerminal(status);
+    prevStatusRef.current = status;
+    if (!nowTerminal) {
+      terminalRetriesRef.current = 0;
+    }
+    if (runChanged || (!wasTerminal && nowTerminal)) {
+      void refetchSteps();
+      void refetchArtifacts();
+    }
+  }, [runId, status, refetchSteps, refetchArtifacts]);
+
+  const groups = useMemo(
+    () => groupStepsByCase(steps, artifacts, plannedCases, status),
+    [steps, artifacts, plannedCases, status],
+  );
+
+  useEffect(() => {
+    onGroupsChange?.(groups);
+  }, [groups, onGroupsChange]);
 
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
 
@@ -86,6 +144,11 @@ export function RunCaseExplorer({ runId, status }: RunCaseExplorerProps): React.
     () => groups.find((g) => g.caseId === selectedCaseId) ?? null,
     [groups, selectedCaseId],
   );
+
+  const selectedCasePublicId = selectedGroup?.casePublicId ?? null;
+  useEffect(() => {
+    onSelectCasePublicId?.(selectedCasePublicId);
+  }, [selectedCasePublicId, onSelectCasePublicId]);
 
   if (groups.length === 0) {
     // Distinguish "hasn't run yet" from "ran and produced nothing" — the old
@@ -130,7 +193,15 @@ export function RunCaseExplorer({ runId, status }: RunCaseExplorerProps): React.
       </div>
       <div className="col-span-12 min-w-0 @3xl:col-span-8" data-testid="run-case-detail">
         {selectedGroup ? (
-          <CaseDetailPanel runId={runId} group={selectedGroup} artifacts={artifacts} />
+          <CaseDetailPanel
+            runId={runId}
+            group={selectedGroup}
+            artifacts={artifacts}
+            runStatus={status}
+            onRerunCase={onRerunCase}
+            isRerunning={isRerunning}
+            hasMultipleCases={groups.length > 1}
+          />
         ) : (
           <EmptyState
             icon={ListChecks}

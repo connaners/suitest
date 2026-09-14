@@ -52,8 +52,16 @@ from suitest_mcp.models import McpProviderConfig, McpToolSchema, McpTransport
 #: keep the install handshake non-interactive (see module docstring).
 #: ``--browser chromium`` pins the Playwright-managed chromium build: the
 #: default Chrome channel binary does not exist on linux/arm64 runner images,
-#: while chromium is preinstalled on every platform (Dockerfile.runner).
-PLAYWRIGHT_COMMAND: list[str] = ["npx", "-y", "@playwright/mcp@latest", "--browser", "chromium"]
+#: ``--isolated`` keeps the browser profile in-memory per session so concurrent
+#: or consecutive test runs never collide on disk lock files (~/Library/Caches/...).
+PLAYWRIGHT_COMMAND: list[str] = [
+    "npx",
+    "-y",
+    "@playwright/mcp@latest",
+    "--browser",
+    "chromium",
+    "--isolated",
+]
 
 
 #: Informational tool catalog. Authoritative list comes from

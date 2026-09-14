@@ -114,3 +114,60 @@ async def test_zero_steps_marks_run_error(stub_ctx_no_steps: dict[str, object]) 
     out = await run_test_case(stub_ctx_no_steps, "run-1")
     assert out["status"] == "ERROR"
     assert out["total"] == 0
+
+
+async def test_aborts_subsequent_steps_in_failed_case_and_advances_to_next_case(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a case step fails, subsequent steps in that case are skipped and the next case runs."""
+    from tests.conftest import (
+        _install_repo_stubs,
+        _make_capability,
+        _make_invoker,
+        _make_project,
+        _make_registry_instance,
+        _make_run,
+        _make_step,
+        _RecordingRedis,
+        _session_factory,
+    )
+
+    c1_s0 = _make_step("c1_s0", {"tool": "t", "arguments": {}})
+    c1_s1 = _make_step("c1_s1", {"tool": "t", "arguments": {}})
+    c1_s2 = _make_step("c1_s2", {"tool": "t", "arguments": {}})
+    c2_s0 = _make_step("c2_s0", {"tool": "t", "arguments": {}})
+    c2_s1 = _make_step("c2_s1", {"tool": "t", "arguments": {}})
+
+    selection = [
+        ("case-1", 0, c1_s0),
+        ("case-1", 1, c1_s1),
+        ("case-1", 2, c1_s2),
+        ("case-2", 3, c2_s0),
+        ("case-2", 4, c2_s1),
+    ]
+
+    invoker = _make_invoker(["PASS", "FAIL", "PASS", "PASS"])
+    run = _make_run()
+    cap = _make_capability()
+    inserted_steps: list[dict[str, object]] = []
+    _install_repo_stubs(
+        monkeypatch,
+        run=run,
+        selection=selection,
+        capability=cap,
+        inserted_steps=inserted_steps,
+    )
+    redis = _RecordingRedis()
+    ctx: dict[str, object] = {
+        "session_factory": _session_factory(_make_project()),
+        "redis": redis,
+        "invoker": invoker,
+        "registry": _make_registry_instance(),
+    }
+    out = await run_test_case(ctx, "run-1")
+    assert out["status"] == "FAIL"
+    assert out["passed"] == 3  # c1_s0, c2_s0, c2_s1
+    assert out["failed"] == 1  # c1_s1
+    assert len(inserted_steps) == 4
+    case_ids = [s["case_id"] for s in inserted_steps]
+    assert case_ids == ["case-1", "case-1", "case-2", "case-2"]

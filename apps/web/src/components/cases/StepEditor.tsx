@@ -34,7 +34,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Code, GripVertical, Plus, Trash2, Wrench } from "lucide-react";
+import { AlertCircle, Code, GripVertical, Plus, Trash2, Wrench } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { SelectorRepairDialog } from "@/components/cases/SelectorRepairDialog";
@@ -42,10 +42,18 @@ import { Gated } from "@/components/gating/Gated";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { api } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
 import { outcomeToBadge } from "@/lib/badge-maps";
+import { useCapabilities } from "@/stores/use-capabilities";
 import type { components } from "@/lib/api-types";
 import { cn } from "@/lib/utils";
+
+export interface StepEditorError {
+  message: string;
+  title?: string | undefined;
+  stepIndex?: number | undefined;
+  code?: string | undefined;
+}
 
 type TargetKind = components["schemas"]["TargetKind"];
 type TestCaseDetail = components["schemas"]["TestCaseDetail"];
@@ -130,7 +138,9 @@ export function StepEditor({
   outcomeByOrder,
 }: StepEditorProps): React.ReactElement {
   const queryClient = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
+  const tier = useCapabilities((s) => s.capabilities?.tier);
+  const isZeroTier = tier === "ZERO";
+  const [error, setError] = useState<StepEditorError | null>(null);
   const [repairStep, setRepairStep] = useState<DraftStep | null>(null);
 
   // ------------------------------------------------------------------
@@ -159,8 +169,55 @@ export function StepEditor({
       setError(null);
     },
     onError: (err: unknown) => {
+      if (err instanceof ApiError) {
+        const stepIndex =
+          typeof err.details?.stepIndex === "number"
+            ? (err.details.stepIndex as number)
+            : undefined;
+        const stepOrder =
+          typeof err.details?.stepOrder === "number"
+            ? (err.details.stepOrder as number)
+            : stepIndex !== undefined
+              ? stepIndex + 1
+              : undefined;
+
+        if (err.code === "STEPS_REQUIRE_CODE_IN_ZERO_LLM") {
+          setError({
+            code: err.code,
+            title: "Action Code Required in ZERO Tier",
+            message:
+              `Step #${stepOrder ?? (stepIndex !== undefined ? stepIndex + 1 : 1)} has an action description but no executable code. ` +
+              "ZERO tier cannot translate natural language into browser actions at runtime. Please provide executable Playwright/MCP code.",
+            stepIndex,
+          });
+          return;
+        }
+
+        if (err.code === "MCP_PROVIDER_NOT_REGISTERED") {
+          const name = typeof err.details?.name === "string" ? err.details.name : "";
+          setError({
+            code: err.code,
+            title: "Unregistered MCP Provider",
+            message: `Step #${stepOrder ?? (stepIndex !== undefined ? stepIndex + 1 : 1)} references MCP provider '${name}', which is not registered in this workspace.`,
+            stepIndex,
+          });
+          return;
+        }
+
+        setError({
+          code: err.code,
+          title: "Failed to save steps",
+          message: err.message,
+          stepIndex,
+        });
+        return;
+      }
+
       const msg = err instanceof Error ? err.message : "Failed to save steps";
-      setError(msg);
+      setError({
+        title: "Failed to save steps",
+        message: msg,
+      });
     },
   });
 
@@ -190,7 +247,10 @@ export function StepEditor({
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : "Failed to reorder steps";
-      setError(msg);
+      setError({
+        title: "Failed to reorder steps",
+        message: msg,
+      });
     },
   });
 
@@ -199,6 +259,14 @@ export function StepEditor({
   // ------------------------------------------------------------------
   const handleFieldChange = useCallback(
     (stepId: string, field: keyof DraftStep, value: string) => {
+      setError((prev) => {
+        if (!prev || prev.stepIndex === undefined) return prev;
+        const targetStep = steps[prev.stepIndex];
+        if (targetStep && targetStep.id === stepId) {
+          return null;
+        }
+        return prev;
+      });
       const updated = steps.map((s) =>
         s.id === stepId
           ? {
@@ -213,22 +281,56 @@ export function StepEditor({
   );
 
   // ------------------------------------------------------------------
-  // Remove a step — optimistic: update local state, then PATCH
+  // Remove a step — local update + conditional server sync
   // ------------------------------------------------------------------
   const handleRemove = useCallback(
     (stepId: string) => {
-      const snapshot = steps;
       const remaining = removeAndReorder(steps, stepId);
       // Optimistic update
       onStepsChange(remaining);
-      replaceStepsMutation.mutate(remaining, {
-        onError: () => {
-          // Rollback on failure
-          onStepsChange(snapshot);
-        },
+
+      // Adjust or clear any active error pointing to the removed step or beyond
+      setError((prev) => {
+        if (!prev || prev.stepIndex === undefined) return null;
+        const removedIndex = steps.findIndex((s) => s.id === stepId);
+        if (removedIndex === prev.stepIndex) return null;
+        if (removedIndex < prev.stepIndex) {
+          return {
+            ...prev,
+            stepIndex: prev.stepIndex - 1,
+          };
+        }
+        return prev;
       });
+
+      // Draft steps exist only on the client — no server mutation needed
+      if (!isPersisted(stepId)) return;
+
+      // If any remaining steps are unpersisted drafts, defer sync to "Save steps"
+      if (remaining.some((s) => !isPersisted(s.id))) return;
+
+      // If any remaining step has an action but no code in ZERO tier, defer sync
+      // so the user can delete/repair the other invalid steps without getting locked out
+      if (isZeroTier) {
+        const invalidIndex = remaining.findIndex(
+          (s) => s.action.trim().length > 0 && (!s.code || s.code.trim().length === 0),
+        );
+        if (invalidIndex !== -1) {
+          setError({
+            code: "STEPS_REQUIRE_CODE_IN_ZERO_LLM",
+            title: "Action Code Required in ZERO Tier",
+            message:
+              `Step #${invalidIndex + 1} has an action description but no executable code. ` +
+              "ZERO tier cannot translate natural language into browser actions at runtime. Please provide executable Playwright/MCP code.",
+            stepIndex: invalidIndex,
+          });
+          return;
+        }
+      }
+
+      replaceStepsMutation.mutate(remaining);
     },
-    [steps, onStepsChange, replaceStepsMutation],
+    [steps, onStepsChange, isZeroTier, replaceStepsMutation],
   );
 
   // ------------------------------------------------------------------
@@ -331,9 +433,15 @@ export function StepEditor({
       {error ? (
         <div
           data-testid="step-editor-error"
-          className="rounded-md border border-red/40 bg-red/10 px-3 py-2 text-[12px] text-red"
+          className="flex items-start gap-2.5 rounded-md border border-red/40 bg-red/10 p-3 text-[12px] text-red"
         >
-          {error}
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red" aria-hidden="true" />
+          <div className="flex flex-1 flex-col gap-0.5">
+            {error.title ? (
+              <span className="font-semibold text-fg-1">{error.title}</span>
+            ) : null}
+            <span className="leading-relaxed text-fg-2">{error.message}</span>
+          </div>
         </div>
       ) : null}
 
@@ -351,6 +459,8 @@ export function StepEditor({
                   step={step}
                   index={idx}
                   disabled={saving}
+                  isZeroTier={isZeroTier}
+                  hasError={error?.stepIndex === idx}
                   outcome={outcomeByOrder?.get(idx + 1)}
                   onFieldChange={handleFieldChange}
                   onRemove={handleRemove}
@@ -391,6 +501,8 @@ interface StepRowProps {
   step: DraftStep;
   index: number;
   disabled: boolean;
+  isZeroTier?: boolean | undefined;
+  hasError?: boolean | undefined;
   outcome?: StepOutcome | undefined;
   onFieldChange: (stepId: string, field: keyof DraftStep, value: string) => void;
   onRemove: (stepId: string) => void;
@@ -401,6 +513,8 @@ function StepRow({
   step,
   index,
   disabled,
+  isZeroTier,
+  hasError,
   outcome,
   onFieldChange,
   onRemove,
@@ -422,7 +536,12 @@ function StepRow({
       ref={setNodeRef}
       style={style}
       data-testid="step-row"
-      className="rounded-md border border-border bg-bg-elev-1 p-3"
+      className={cn(
+        "rounded-md border p-3 transition-colors",
+        hasError
+          ? "border-red/60 bg-red/[0.04] ring-1 ring-red/30"
+          : "border-border bg-bg-elev-1",
+      )}
     >
       {/* Header row: drag handle + order badge + action input + outcome + remove */}
       <div className="mb-2 flex items-center gap-2">
@@ -553,24 +672,50 @@ function StepRow({
       </div>
 
       {/* Code textarea */}
-      <div className="flex items-start gap-2">
-        <Code className="mt-1.5 h-3 w-3 shrink-0 text-fg-5" aria-hidden="true" />
-        <textarea
-          data-testid="step-code-input"
-          className={cn(
-            "w-full resize-y rounded-md border border-border bg-bg-code p-2",
-            "font-mono text-[11px] text-fg-3 placeholder:text-fg-5",
-            "focus:outline-none focus:ring-1 focus:ring-accent/40",
-            "disabled:cursor-not-allowed disabled:opacity-50",
-            "min-h-[56px]",
-          )}
-          placeholder="// Optional: MCP step code"
-          value={step.code ?? ""}
-          disabled={disabled}
-          onChange={(e) => {
-            onFieldChange(step.id, "code", e.target.value);
-          }}
-        />
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-start gap-2">
+          <Code
+            className={cn(
+              "mt-1.5 h-3 w-3 shrink-0",
+              hasError ? "text-red" : "text-fg-5",
+            )}
+            aria-hidden="true"
+          />
+          <div className="flex flex-1 flex-col gap-1">
+            <textarea
+              data-testid="step-code-input"
+              className={cn(
+                "w-full resize-y rounded-md border p-2",
+                "font-mono text-[11px]",
+                "focus:outline-none focus:ring-1",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+                "min-h-[56px]",
+                hasError
+                  ? "border-red/70 bg-red/[0.06] text-fg-1 placeholder:text-red/60 focus:ring-red/50"
+                  : "border-border bg-bg-code text-fg-3 placeholder:text-fg-5 focus:ring-accent/40",
+              )}
+              placeholder={
+                isZeroTier
+                  ? "// Required: executable MCP code in ZERO tier (e.g. {\"tool\": \"...\"})"
+                  : "// Optional: MCP step code"
+              }
+              value={step.code ?? ""}
+              disabled={disabled}
+              onChange={(e) => {
+                onFieldChange(step.id, "code", e.target.value);
+              }}
+            />
+            {hasError ? (
+              <div
+                data-testid="step-code-error-hint"
+                className="flex items-center gap-1 text-[11px] font-medium text-red"
+              >
+                <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <span>Executable code is required for this step in ZERO tier.</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </div>
     </li>
   );

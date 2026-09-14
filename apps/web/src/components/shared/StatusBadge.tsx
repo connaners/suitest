@@ -4,7 +4,7 @@ export type StatusBadgeStatus = "pass" | "fail" | "warn" | "info" | "ai" | "runn
 
 export interface StatusBadgeProps {
   status: StatusBadgeStatus;
-  label?: string;
+  label?: string | undefined;
   /** When false, omit the colored dot prefix. Defaults to true. */
   withDot?: boolean;
   className?: string;

@@ -119,8 +119,11 @@ class RunRepo(AsyncRepository[Run, RunCreate, RunUpdate]):
         steps = list(
             (await self.session.scalars(select(RunStep).where(RunStep.run_id == run_id))).all()
         )
+        total = (
+            run.total_steps if run.total_steps is not None and run.total_steps > 0 else len(steps)
+        )
         summary = RunSummary(
-            total_steps=len(steps),
+            total_steps=max(total, len(steps)),
             passed_steps=sum(1 for s in steps if s.outcome == StepOutcome.PASS),
             failed_steps=sum(
                 1 for s in steps if s.outcome in (StepOutcome.FAIL, StepOutcome.ERROR)
@@ -297,7 +300,10 @@ class RunRepo(AsyncRepository[Run, RunCreate, RunUpdate]):
         )
         if case_ids:
             stmt = stmt.where(TestCase.id.in_(case_ids))
-        rows = (await self.session.execute(stmt)).all()
+        rows = list((await self.session.execute(stmt)).all())
+        if case_ids:
+            case_order = {cid: idx for idx, cid in enumerate(case_ids)}
+            rows.sort(key=lambda r: (case_order.get(r[0], 999999), r[1].order))
         selection: list[tuple[str, int, TestStep]] = [
             (case_id, idx, step) for idx, (case_id, step) in enumerate(rows)
         ]
@@ -326,7 +332,11 @@ class RunRepo(AsyncRepository[Run, RunCreate, RunUpdate]):
         run = await self.get_by_id(run_id)
         if run is None:
             return None
-        run.status = status
+        # Don't regress CANCELLED back to RUNNING
+        if run.status == RunStatus.CANCELLED and status == RunStatus.RUNNING:
+            pass
+        else:
+            run.status = status
         if started_at is not None:
             run.started_at = started_at
         if completed_at is not None:

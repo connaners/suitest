@@ -325,11 +325,15 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             # (such steps stay SKIP, exactly as before).
             translator = await _build_translator(session, tier=tier, workspace_id=workspace_id)
 
+            total_planned_steps = len(selection)
             await run_repo.update_status(
                 run_id,
                 RunStatus.RUNNING,
                 started_at=datetime.now(UTC),
                 tier_at_runtime=tier,
+                total_steps=total_planned_steps,
+                passed_steps=0,
+                failed_steps=0,
             )
             await session.commit()
 
@@ -344,8 +348,26 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
         # --- per-step dispatch --------------------------------------------
         summary = {"total": 0, "passed": 0, "failed": 0, "errored": 0, "skipped": 0}
         t0 = time.perf_counter()
+        cancelled = False
+        failed_case_ids: set[str] = set()
 
         for case_id, step_order, test_step in selection:
+            async with factory() as session:
+                r_check = await RunRepo(session).get_by_id(run_id)
+                if r_check is not None and r_check.status == RunStatus.CANCELLED:
+                    log.info("runner.job.cancelled_by_user", run_id=run_id)
+                    cancelled = True
+                    break
+
+            if case_id in failed_case_ids:
+                log.info(
+                    "runner.step.skip_after_case_failure",
+                    run_id=run_id,
+                    case_id=case_id,
+                    step_order=step_order,
+                )
+                continue
+
             summary["total"] += 1
             await _publish(
                 redis_client,
@@ -421,6 +443,17 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                         else False
                     )
 
+            if result.outcome == StepOutcome.PASS:
+                summary["passed"] += 1
+            elif result.outcome == StepOutcome.FAIL:
+                summary["failed"] += 1
+                failed_case_ids.add(case_id)
+            elif result.outcome == StepOutcome.ERROR:
+                summary["errored"] += 1
+                failed_case_ids.add(case_id)
+            elif result.outcome == StepOutcome.SKIP:
+                summary["skipped"] += 1
+
             async with factory() as session:
                 run_step_repo = RunStepRepo(session)
                 run_step = await run_step_repo.create_step(
@@ -460,7 +493,22 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                         step_order=step_order,
                         artifacts=result.mcp_result.artifacts,
                     )
+                repo = RunRepo(session)
+                r_check = await repo.get_by_id(run_id)
+                if r_check is not None and r_check.status == RunStatus.CANCELLED:
+                    cancelled = True
+                else:
+                    await repo.update_status(
+                        run_id,
+                        RunStatus.RUNNING,
+                        passed_steps=summary["passed"],
+                        failed_steps=summary["failed"] + summary["errored"],
+                    )
                 await session.commit()
+
+            if cancelled:
+                log.info("runner.job.cancelled_by_user", run_id=run_id)
+                break
 
             await _publish(
                 redis_client,
@@ -496,10 +544,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             ):
                 await asyncio.sleep(settings_obj.evidence_pause_ms / 1000)
 
-            if result.outcome == StepOutcome.PASS:
-                summary["passed"] += 1
-            elif result.outcome == StepOutcome.FAIL:
-                summary["failed"] += 1
+            if result.outcome == StepOutcome.FAIL:
                 # M1d-10: hand the failed step off to the defect auto-filer.
                 # The hook owns its own try/except so a degraded defect
                 # pipeline never blocks run completion. We swallow any
@@ -526,21 +571,30 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                         run_step_id=run_step.id,
                         reason=str(exc),
                     )
-            elif result.outcome == StepOutcome.SKIP:
-                summary["skipped"] += 1
-            else:
-                summary["errored"] += 1
+
+            if getattr(result, "is_fatal_infra", False):
+                log.error(
+                    "runner.job.fatal_infra_circuit_breaker",
+                    run_id=run_id,
+                    step_order=step_order,
+                    error=result.error_message,
+                )
+                break
 
         # --- finalize -----------------------------------------------------
         duration_ms = int((time.perf_counter() - t0) * 1000)
         failed_total = summary["failed"] + summary["errored"]
-        if summary["total"] == 0:
+        if cancelled:
+            final_status = RunStatus.CANCELLED
+        elif summary["total"] == 0:
             # A run that executed nothing is not a green run — reporting PASS
             # here hid empty selections behind a passing badge (issue #109).
             log.warning("runner.run.empty_selection", run_id=run_id)
             final_status = RunStatus.ERROR
-        elif failed_total > 0:
+        elif summary["failed"] > 0:
             final_status = RunStatus.FAIL
+        elif summary["errored"] > 0:
+            final_status = RunStatus.ERROR
         else:
             final_status = RunStatus.PASS
 
@@ -550,7 +604,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                 final_status,
                 completed_at=datetime.now(UTC),
                 duration_ms=duration_ms,
-                total_steps=summary["total"],
+                total_steps=total_planned_steps,
                 passed_steps=summary["passed"],
                 failed_steps=failed_total,
             )
@@ -563,7 +617,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             {
                 "runId": run_id,
                 "status": final_status.value,
-                "totalSteps": summary["total"],
+                "totalSteps": total_planned_steps,
                 "passedSteps": summary["passed"],
                 "failedSteps": failed_total,
                 "durationMs": duration_ms,
@@ -575,7 +629,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
         # M1d-10 ships per-step defect filing via the ``on_run_step_failed``
         # hook above; the old per-run filer below is retained as a no-op
         # safety net until M2 deletes it.
-        if failed_total > 0:
+        if summary["failed"] > 0 and not cancelled:
             await _try_file_defect(factory, run_id)
 
         return {

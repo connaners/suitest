@@ -110,6 +110,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent/chat/{session_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent Chat History
+         * @description Replay a stored conversation so the panel survives a page reload.
+         *
+         *     USER turns map to ``user``; AGENT turns to ``assistant``. 404 when the
+         *     session does not exist or belongs to another workspace (no scoping leak).
+         */
+        get: operations["agent_chat_history_api_v1_agent_chat__session_id__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analytics/coverage": {
         parameters: {
             query?: never;
@@ -2042,9 +2065,8 @@ export interface paths {
          * Rerun Run
          * @description Clone the source run's selection into a fresh QUEUED row + enqueue the ARQ job.
          *
-         *     A rerun reuses the original selection + routing override (so the runner
-         *     fans out identically) but re-resolves the workspace tier so a tier change
-         *     between the two runs is honored. Returns 202 like the create endpoint.
+         *     Supports full rerun, selective rerun by ``case_ids`` (via JSON body), or
+         *     failed-only rerun (via ``failedOnly=true`` query param or body). Returns 202.
          */
         post: operations["rerun_run_api_v1_runs__run_id__rerun_post"];
         delete?: never;
@@ -3072,7 +3094,12 @@ export interface paths {
         };
         /**
          * List Llm Models
-         * @description List the curated model catalog for ``provider`` (query param).
+         * @description List the models ``provider`` (query param) can be asked for.
+         *
+         *     A Code Assist account is entitled to a list of its own, and Antigravity's
+         *     changes often enough that a curated table goes stale between releases — so
+         *     the account is asked when one is signed in, and the table is the fallback
+         *     for when that read fails or nothing is configured yet.
          */
         get: operations["list_llm_models_api_v1_workspaces__workspaceId__llm_config_models_get"];
         put?: never;
@@ -3445,6 +3472,11 @@ export interface components {
     schemas: {
         /** AcceptInviteRequest */
         AcceptInviteRequest: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
             /** Name */
             name: string;
             /** Password */
@@ -3459,6 +3491,11 @@ export interface components {
              * @default true
              */
             ok: boolean;
+            /**
+             * Requires Login
+             * @default false
+             */
+            requires_login: boolean;
         };
         /**
          * AdHocRunResponse
@@ -4075,8 +4112,11 @@ export interface components {
          * @description ``POST /agent/chat`` body — the running history + optional session id.
          */
         ChatRequest: {
+            approved_tool?: components["schemas"]["ConfirmedTool"] | null;
             /** Messages */
             messages: components["schemas"]["ChatMessageInput"][];
+            /** Model */
+            model?: string | null;
             /** Seed */
             seed?: number | null;
             /** Session Id */
@@ -4093,6 +4133,18 @@ export interface components {
             recommended_mcp: components["schemas"]["RecommendedMcp"];
             recommended_strategy: components["schemas"]["RecommendedStrategy"];
             target_kind: components["schemas"]["TargetKind"];
+        };
+        /**
+         * ConfirmedTool
+         * @description The user's approval of a specific pending tool call.
+         *
+         *     Only the opaque ``call_id`` of a server-recorded pending call crosses the
+         *     wire — the tool name and arguments are read back from the database row, so
+         *     neither model output nor natural-language text can authorize a write.
+         */
+        ConfirmedTool: {
+            /** Call Id */
+            call_id: string;
         };
         /**
          * ConnectionTestResponse
@@ -6567,6 +6619,19 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /**
+         * RerunRunBody
+         * @description ``POST /runs/{id}/rerun`` optional body for selective or failed-only reruns.
+         */
+        RerunRunBody: {
+            /** Caseids */
+            caseIds?: string[] | null;
+            /**
+             * Failedonly
+             * @default false
+             */
+            failedOnly: boolean;
+        };
         /** ResetPasswordResponse */
         ResetPasswordResponse: {
             /** Temporarypassword */
@@ -6640,12 +6705,31 @@ export interface components {
             primary: string;
         };
         /**
+         * RunCaseSummary
+         * @description Summary of a planned test case in a run (M1-15b).
+         */
+        RunCaseSummary: {
+            /** Case Id */
+            case_id: string;
+            /** Case Public Id */
+            case_public_id: string;
+            /** Case Title */
+            case_title: string;
+            /**
+             * Total Steps
+             * @default 0
+             */
+            total_steps: number;
+        };
+        /**
          * RunDetail
          * @description Detail for ``GET /runs/:id`` — adds the computed summary.
          */
         RunDetail: {
             /** Branch */
             branch?: string | null;
+            /** Cases */
+            cases?: components["schemas"]["RunCaseSummary"][];
             /** Commit Sha */
             commit_sha?: string | null;
             /** Completed At */
@@ -6779,6 +6863,7 @@ export interface components {
             /** Started At */
             started_at?: string | null;
             status: components["schemas"]["RunStatus"];
+            summary?: components["schemas"]["RunSummary"] | null;
             tier_at_runtime: components["schemas"]["Tier"];
             trigger: components["schemas"]["RunTrigger"];
             /**
@@ -7120,6 +7205,12 @@ export interface components {
         /**
          * StepAppend
          * @description Body shape for ``POST /test-cases/:id/steps`` — ``order`` always ignored.
+         *
+         *     ``action`` MAY be empty here: the web StepEditor appends a blank draft
+         *     step for the user to fill in before saving. The ZERO-tier strict check
+         *     (``STEPS_REQUIRE_CODE_IN_ZERO_LLM``) still runs when the case is *run*,
+         *     and a full replace (PATCH) re-validates completeness — an empty step
+         *     just cannot be executed while it is still a draft.
          */
         StepAppend: {
             /** Action */
@@ -7188,10 +7279,15 @@ export interface components {
         /**
          * StepReplace
          * @description Body for ``PATCH /test-cases/:id/steps`` — atomic replace.
+         *
+         *     Accepts the same shapes as the editor sends: a step whose ``action`` is
+         *     empty is a user draft (never executable) and is stored as-is. Running the
+         *     case re-runs the ZERO-tier strict check per step; a persisted draft simply
+         *     fails at run time unless it is filled in first.
          */
         StepReplace: {
             /** Steps */
-            steps?: components["schemas"]["StepCreate"][];
+            steps?: components["schemas"]["StepAppend"][];
         };
         /** StrategyAlternative */
         StrategyAlternative: {
@@ -8370,6 +8466,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_chat_history_api_v1_agent_chat__session_id__history_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Workspace-Id"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    }[];
                 };
             };
             /** @description Validation Error */
@@ -11970,7 +12101,9 @@ export interface operations {
     };
     rerun_run_api_v1_runs__run_id__rerun_post: {
         parameters: {
-            query?: never;
+            query?: {
+                failedOnly?: boolean;
+            };
             header?: {
                 "X-Workspace-Id"?: string | null;
             };
@@ -11979,7 +12112,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RerunRunBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {

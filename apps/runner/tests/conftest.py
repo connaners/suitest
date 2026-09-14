@@ -309,7 +309,7 @@ def stub_ctx_with_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[dict[str, object], _RecordingRedis]:
     """3 steps: 2 PASS + 1 FAIL — the headline orchestrator fixture."""
-    ctx, redis_stub, _ = _build_ctx(monkeypatch, outcomes=["PASS", "FAIL", "PASS"])
+    ctx, redis_stub, _ = _build_ctx(monkeypatch, outcomes=["PASS", "PASS", "FAIL"])
     return ctx, redis_stub
 
 

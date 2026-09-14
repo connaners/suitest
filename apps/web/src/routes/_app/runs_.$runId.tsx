@@ -1,12 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { RotateCw, Square } from "lucide-react";
+import { useMemo, useState } from "react";
 
+import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
 import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
+import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunSummaryCard } from "@/components/runs/RunSummaryCard";
 import { Button } from "@/components/ui/button";
-import { useRerunRun } from "@/hooks/use-runs";
+import { useCancelRun, useRerunRun } from "@/hooks/use-runs";
 import { ApiError, fetchRun } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/runs_/$runId")({
   component: RunDetailPage,
@@ -17,7 +21,11 @@ export function RunDetailPage(): React.ReactElement {
   const { runId } = Route.useParams();
   const navigate = useNavigate();
   const rerunMutation = useRerunRun();
+  const cancelMutation = useCancelRun();
   const [rerunForbidden, setRerunForbidden] = useState(false);
+  const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
+  const [explorerGroups, setExplorerGroups] = useState<CaseGroup[]>([]);
+  const [selectedCasePublicId, setSelectedCasePublicId] = useState<string | null>(null);
 
   const { data: run } = useQuery({
     queryKey: ["run", runId] as const,
@@ -30,43 +38,123 @@ export function RunDetailPage(): React.ReactElement {
     },
   });
 
+  const fallbackGroups: CaseGroup[] = useMemo(() => {
+    return (run?.cases ?? []).map((c) => ({
+      caseId: c.case_id,
+      casePublicId: c.case_public_id,
+      caseName: c.case_title || c.case_public_id,
+      steps: [],
+      total: c.total_steps ?? 0,
+      passed: 0,
+      failed: 0,
+      rollup: "neutral" as const,
+      durationMs: 0,
+      kind: "frontend" as const,
+      firstFailure: null,
+    }));
+  }, [run?.cases]);
+
   // Same guard as the /runs side panel: a live run cannot be re-queued.
   const isLive = run?.status === "RUNNING" || run?.status === "QUEUED";
+  const cancelDisabled = !isLive || cancelMutation.isPending;
   const rerunDisabled = run === undefined || isLive || rerunMutation.isPending;
-  const handleRerun = (): void => {
+
+  const dialogGroups = explorerGroups.length > 0 ? explorerGroups : fallbackGroups;
+  const failedSteps = run?.summary?.failed_steps ?? 0;
+  const failedCasesCount = dialogGroups.filter(
+    (g) => g.rollup === "fail" || g.rollup === "aborted",
+  ).length;
+  const hasFailures = failedSteps > 0 || failedCasesCount > 0;
+  const failedCount = failedCasesCount > 0 ? failedCasesCount : failedSteps;
+
+  const handleCancel = (): void => {
     if (run === undefined) return;
-    rerunMutation.mutate(run.id, {
-      onSuccess: (data) => {
-        void navigate({ to: "/runs/$runId", params: { runId: data.public_id } });
-      },
-      onError: (err) => {
-        if (err instanceof ApiError && err.status === 403) {
-          setRerunForbidden(true);
-        }
-      },
-    });
+    cancelMutation.mutate(run.id);
   };
+
+  const handleConfirmRerun = (selectedCaseIds: string[]): void => {
+    if (run === undefined) return;
+    rerunMutation.mutate(
+      { runId: run.id, caseIds: selectedCaseIds },
+      {
+        onSuccess: (data) => {
+          setRerunDialogOpen(false);
+          const targetId = data.publicId || data.public_id || data.id;
+          void navigate({ to: "/runs/$runId", params: { runId: targetId } });
+        },
+        onError: (err) => {
+          if (err instanceof ApiError && err.status === 403) {
+            setRerunForbidden(true);
+          }
+        },
+      },
+    );
+  };
+
+  const handleRerunCase = (caseId: string): void => {
+    if (run === undefined) return;
+    rerunMutation.mutate(
+      { runId: run.id, caseIds: [caseId] },
+      {
+        onSuccess: (data) => {
+          const targetId = data.publicId || data.public_id || data.id;
+          void navigate({ to: "/runs/$runId", params: { runId: targetId } });
+        },
+        onError: (err) => {
+          if (err instanceof ApiError && err.status === 403) {
+            setRerunForbidden(true);
+          }
+        },
+      },
+    );
+  };
+
+  const targetCasePublicId = selectedCasePublicId ?? run?.cases?.[0]?.case_public_id;
+
   return (
     <section className="flex flex-col gap-4" data-testid="run-detail-page">
       <div className="flex justify-end">
         <div className="flex flex-wrap items-center gap-1.5">
+          {isLive ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={cancelDisabled}
+              onClick={handleCancel}
+              className="border-red/40 text-red hover:bg-red/10"
+              data-testid="run-cancel-button"
+            >
+              <Square className="h-3 w-3 fill-current" aria-hidden="true" />
+              {cancelMutation.isPending ? "Aborting…" : "Abort run"}
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
             variant="outline"
             disabled={rerunDisabled}
-            onClick={handleRerun}
+            onClick={() => setRerunDialogOpen(true)}
+            className={cn(hasFailures && "border-red/40 text-red hover:bg-red/10")}
             data-testid="run-rerun-button"
           >
-            {rerunMutation.isPending ? "Queuing…" : "Re-run"}
+            <RotateCw
+              className={cn("mr-1.5 h-3.5 w-3.5", rerunMutation.isPending && "animate-spin")}
+              aria-hidden="true"
+            />
+            {rerunMutation.isPending
+              ? "Queuing…"
+              : hasFailures
+                ? `Re-run (${failedCount} failed)`
+                : "Re-run"}
           </Button>
           <Link
             to="/cases"
-            search={{}}
+            search={targetCasePublicId ? { case: targetCasePublicId } : {}}
             className="inline-flex h-8 items-center rounded-md border border-border bg-bg-elev-1 px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
             data-testid="run-edit-cases-link"
           >
-            Edit cases
+            {run?.cases && run.cases.length > 1 ? "Edit selected case" : "Edit case"}
           </Link>
           <Link
             to="/runs/$runId/replay"
@@ -92,7 +180,26 @@ export function RunDetailPage(): React.ReactElement {
       <RunSummaryCard run={run} />
 
       {/* TEST CASE master-detail — the primary run view (shared with the panel). */}
-      <RunCaseExplorer runId={runId} status={run?.status} />
+      <RunCaseExplorer
+        runId={runId}
+        status={run?.status}
+        plannedCases={run?.cases}
+        onSelectCasePublicId={setSelectedCasePublicId}
+        onGroupsChange={setExplorerGroups}
+        onRerunCase={handleRerunCase}
+        isRerunning={rerunMutation.isPending}
+      />
+
+      {run ? (
+        <RerunSelectionDialog
+          open={rerunDialogOpen}
+          onOpenChange={setRerunDialogOpen}
+          runPublicId={run.public_id}
+          groups={dialogGroups}
+          onConfirm={handleConfirmRerun}
+          isPending={rerunMutation.isPending}
+        />
+      ) : null}
     </section>
   );
 }

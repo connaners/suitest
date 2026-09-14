@@ -128,4 +128,92 @@ describe("Test Runs screen", () => {
     const footer = await screen.findByTestId("run-cost-footer", undefined, { timeout: 3000 });
     expect(footer).toHaveTextContent(/deterministic/i);
   });
+
+  it("renders load more button when nextCursor is available and appends runs", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("*/api/v1/runs", ({ request }) => {
+        const url = new URL(request.url);
+        const cursor = url.searchParams.get("cursor");
+        if (!cursor) {
+          return HttpResponse.json({
+            items: [
+              {
+                id: "run_p1",
+                public_id: "RUN-P1",
+                project_id: "prj_demo",
+                name: "Page 1 Run",
+                branch: "main",
+                commit_sha: "1111111",
+                env: "staging",
+                status: "PASS",
+                trigger: "MANUAL",
+                tier_at_runtime: "ZERO",
+                started_at: "2026-05-27T10:00:00Z",
+                completed_at: "2026-05-27T10:01:00Z",
+                duration_ms: 60000,
+                created_at: "2026-05-27T10:00:00Z",
+                updated_at: "2026-05-27T10:01:00Z",
+              },
+            ],
+            meta: { limit: 30, nextCursor: "cur_page_2" },
+          });
+        }
+        return HttpResponse.json({
+          items: [
+            {
+              id: "run_p2",
+              public_id: "RUN-P2",
+              project_id: "prj_demo",
+              name: "Page 2 Run",
+              branch: "main",
+              commit_sha: "2222222",
+              env: "staging",
+              status: "FAIL",
+              trigger: "MANUAL",
+              tier_at_runtime: "ZERO",
+              started_at: "2026-05-27T09:00:00Z",
+              completed_at: "2026-05-27T09:01:00Z",
+              duration_ms: 60000,
+              created_at: "2026-05-27T09:00:00Z",
+              updated_at: "2026-05-27T09:01:00Z",
+            },
+          ],
+          meta: { limit: 30, nextCursor: null },
+        });
+      }),
+    );
+
+    renderRuns();
+    const loadMoreBtn = await screen.findByTestId("runs-load-more-button", undefined, {
+      timeout: 3000,
+    });
+    expect(loadMoreBtn).toBeInTheDocument();
+    expect(screen.getByText("Page 1 Run")).toBeInTheDocument();
+
+    await user.click(loadMoreBtn);
+
+    expect(await screen.findByText("Page 2 Run", undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.queryByTestId("runs-load-more-button")).not.toBeInTheDocument();
+  });
+
+  it("run detail panel renders Edit case link targeting the active case", async () => {
+    const user = userEvent.setup();
+    renderRuns();
+    const rows = await screen.findAllByTestId("runs-row", undefined, { timeout: 3000 });
+    await user.click(rows[0] as HTMLElement);
+    await screen.findByTestId("run-detail", undefined, { timeout: 3000 });
+
+    const editLink = await screen.findByTestId("run-edit-cases-link", undefined, { timeout: 3000 });
+    expect(editLink).toHaveAttribute("href", expect.stringContaining("/cases?case="));
+  });
+
+  it("summary bar counters have tooltips explaining the counts", async () => {
+    renderRuns();
+    await screen.findByTestId("runs-summary", undefined, { timeout: 3000 });
+    const passedCounter = screen.getByText("Passed");
+    expect(passedCounter).toBeInTheDocument();
+    const counters = screen.getAllByTestId("runs-counter");
+    expect(counters.length).toBe(6);
+  });
 });

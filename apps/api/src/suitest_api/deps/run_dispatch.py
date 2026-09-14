@@ -23,7 +23,7 @@ class _Enqueuer(Protocol):
 async def dispatch_run(
     *,
     mode: str,
-    arq: _Enqueuer,
+    arq: _Enqueuer | None,
     run_id: str,
     queue_name: str,
 ) -> str | None:
@@ -34,6 +34,13 @@ async def dispatch_run(
     """
     if mode == "local":
         return None  # ponytail: supervisor drains QUEUED runs; nothing to enqueue
+    if arq is None:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Background queue is unavailable in server mode",
+        )
     job = await arq.enqueue_job("run_test_case", run_id, _queue_name=queue_name)
     if job is None:
         return None

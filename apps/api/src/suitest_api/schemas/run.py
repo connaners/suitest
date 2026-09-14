@@ -12,10 +12,6 @@ from suitest_shared.domain.enums import (
 from suitest_shared.schemas.responses import RunListOut
 
 
-class RunListItem(RunListOut):
-    """List row for ``GET /runs`` (docs/API.md §3.5)."""
-
-
 class RunSummary(BaseModel):
     """Aggregate step outcomes for a run."""
 
@@ -25,11 +21,29 @@ class RunSummary(BaseModel):
     duration_ms: int | None = None
 
 
+class RunListItem(RunListOut):
+    """List row for ``GET /runs`` (docs/API.md §3.5)."""
+
+    summary: RunSummary | None = None
+
+
+class RunCaseSummary(BaseModel):
+    """Summary of a planned test case in a run (M1-15b)."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    case_id: str
+    case_public_id: str
+    case_title: str
+    total_steps: int = 0
+
+
 class RunDetail(RunListItem):
     """Detail for ``GET /runs/:id`` — adds the computed summary."""
 
     summary: RunSummary
     coverage_summary: dict[str, object] | None = None
+    cases: list[RunCaseSummary] = Field(default_factory=list)
 
 
 class RunStepPublic(BaseModel):

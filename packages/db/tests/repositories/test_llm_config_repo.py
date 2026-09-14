@@ -48,9 +48,9 @@ async def test_oauth_tokens_round_trip_and_stay_encrypted(session: AsyncSession)
     repo = LLMConfigRepo(session)
     ws = await make_workspace(session)
     tokens = StoredOAuthTokens(
-        access_token="at",
-        refresh_token="rt",
-        id_token="it",
+        access_token="secret_access_token_at_12345",
+        refresh_token="secret_refresh_token_rt_12345",
+        id_token="secret_id_token_it_12345",
         expires_at=datetime(2026, 8, 19, 12, 0, tzinfo=UTC),
         account_id="acc_1",
         email="dev@example.com",
@@ -74,7 +74,7 @@ async def test_oauth_tokens_round_trip_and_stay_encrypted(session: AsyncSession)
         text("SELECT oauth_tokens_encrypted FROM llm_configs WHERE id = :id"), {"id": row.id}
     )
     assert raw is not None
-    assert b"at" not in bytes(raw)
+    assert b"secret_access_token_at_12345" not in bytes(raw)
 
 
 @pytest.mark.asyncio
