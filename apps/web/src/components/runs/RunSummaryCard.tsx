@@ -40,11 +40,9 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
       ? run.cases.reduce((acc, c) => acc + (c.total_steps ?? 0), 0)
       : 0;
   const totalSteps =
-    run.status === "PASS" && run.summary && run.summary.passed_steps > 0
-      ? run.summary.passed_steps
-      : totalStepsFromCases > 0
-        ? Math.max(totalStepsFromCases, run.summary?.total_steps ?? 0)
-        : run.summary?.total_steps ?? 0;
+    totalStepsFromCases > 0
+      ? Math.max(totalStepsFromCases, run.summary?.total_steps ?? 0)
+      : run.summary?.total_steps ?? 0;
   const effectiveSummary = run.summary
     ? { ...run.summary, total_steps: totalSteps }
     : { total_steps: totalSteps, passed_steps: 0, failed_steps: 0, duration_ms: 0 };
