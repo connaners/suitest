@@ -88,6 +88,10 @@ repos:
           # int; fpdf2 2.8.x actually accepts float) and produced false
           # positives here.
           - fpdf2>=2.8.5
+          # api-http-mcp bundled server (packages/mcp/.../bundled/api_http.py)
+          # parses PDFs via pypdf. Without it the isolated pre-commit mypy env
+          # resolves the import to Any and trips ``disallow_any_unimported``.
+          - pypdf>=6.1
           # M3-1/M3-4: the agent package (providers/litellm_router, graphs/*)
           # imports litellm + langgraph. Both ship py.typed; without them the
           # isolated pre-commit mypy env resolves the imports to Any and trips
