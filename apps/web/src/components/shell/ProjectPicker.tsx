@@ -17,11 +17,15 @@ type ProjectsPage = { items: Project[] };
  * (e.g. a backend + a frontend suite), so without this switcher only the first
  * project's data is ever visible. Sits under the workspace picker in the sidebar.
  */
-export function ProjectPicker(): React.ReactElement | null {
+export function ProjectPicker({
+  collapsed = false,
+}: {
+  /** Collapsed rail — show only the folder icon, hide the label + chevron. */
+  collapsed?: boolean;
+}): React.ReactElement | null {
   const [open, setOpen] = useState(false);
   const projectId = useActiveProject((s) => s.projectId);
   const setProjectId = useActiveProject((s) => s.setProjectId);
-
   const { data } = useQuery({
     queryKey: ["projects"] as const,
     queryFn: async () => (await api.get<ProjectsPage>("/projects")).data,
@@ -37,17 +41,20 @@ export function ProjectPicker(): React.ReactElement | null {
         <PopoverTrigger asChild>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-bg-elev-2"
+            className={cn(
+              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-bg-elev-2",
+              collapsed ? "md:justify-center md:px-0" : "",
+            )}
             data-testid="project-picker"
           >
             <FolderKanban className="h-3.5 w-3.5 shrink-0 text-fg-4" aria-hidden="true" />
-            <span className="flex flex-col overflow-hidden">
+            <span className={cn("flex flex-col overflow-hidden", collapsed ? "md:hidden" : "")}>
               <span className="text-[9.5px] uppercase tracking-wide text-fg-5">Project</span>
               <span className="truncate text-[12px] font-medium text-fg-1">
                 {active?.name ?? "Select project"}
               </span>
             </span>
-            <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-fg-4" aria-hidden="true" />
+            <ChevronDown className={cn("ml-auto h-3.5 w-3.5 shrink-0 text-fg-4", collapsed ? "md:hidden" : "")} aria-hidden="true" />
           </button>
         </PopoverTrigger>
         <PopoverContent
