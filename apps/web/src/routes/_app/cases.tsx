@@ -1721,13 +1721,8 @@ function CaseArtifactsTab({
     const q = searchQuery.trim().toLowerCase();
     if (!q) return allItems;
     return allItems.filter((item) => {
-      if (item.runPublicId?.toLowerCase().includes(q)) return true;
-      if (item.kind?.toLowerCase().includes(q)) return true;
-      if (item.mimeType?.toLowerCase().includes(q)) return true;
-      if (item.stepTitle?.toLowerCase().includes(q)) return true;
-      if (`step ${item.stepOrder}`.toLowerCase().includes(q)) return true;
-      if (item.id.toLowerCase().includes(q)) return true;
-      return false;
+      const haystack = `${item.runPublicId ?? ""} ${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`.toLowerCase();
+      return haystack.includes(q);
     });
   }, [allItems, searchQuery]);
 
@@ -1772,16 +1767,11 @@ function CaseArtifactsTab({
 
       const matchesSearch =
         !q ||
-        run.publicId.toLowerCase().includes(q) ||
-        run.id.toLowerCase().includes(q) ||
-        runItems.some(
-          (item) =>
-            item.kind?.toLowerCase().includes(q) ||
-            item.mimeType?.toLowerCase().includes(q) ||
-            item.stepTitle?.toLowerCase().includes(q) ||
-            `step ${item.stepOrder}`.toLowerCase().includes(q) ||
-            item.id.toLowerCase().includes(q),
-        );
+        `${run.publicId} ${run.id}`.toLowerCase().includes(q) ||
+        runItems.some((item) => {
+          const itemHaystack = `${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`.toLowerCase();
+          return itemHaystack.includes(q);
+        });
 
       if (!matchesSearch) {
         continue;
@@ -1807,12 +1797,9 @@ function CaseArtifactsTab({
 
         const matchesSearch =
           !q ||
-          runPublicId.toLowerCase().includes(q) ||
-          item.kind?.toLowerCase().includes(q) ||
-          item.mimeType?.toLowerCase().includes(q) ||
-          item.stepTitle?.toLowerCase().includes(q) ||
-          `step ${item.stepOrder}`.toLowerCase().includes(q) ||
-          item.id.toLowerCase().includes(q);
+          `${runPublicId} ${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`
+            .toLowerCase()
+            .includes(q);
 
         if (!matchesSearch) continue;
 

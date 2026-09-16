@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { ExecutionSettingsPanel } from "@/components/runs/ExecutionSettingsPanel";
 import {
+  extractExecutionConfig,
   loadSavedExecutionSettings,
   normalizeExecutionSettings,
   saveExecutionSettings,
@@ -52,14 +53,7 @@ export function ConfirmBulkRunDialog({
 
   const handleSubmit = (): void => {
     saveExecutionSettings(executionSettings);
-    onConfirm({
-      headless: executionSettings.headless,
-      screenshot: executionSettings.screenshot,
-      video: executionSettings.video,
-      videoQuality: executionSettings.videoQuality,
-      highlightSteps: executionSettings.highlightSteps,
-      cleanSessionBetweenCases: executionSettings.cleanSessionBetweenCases,
-    });
+    onConfirm(extractExecutionConfig(executionSettings));
   };
 
 

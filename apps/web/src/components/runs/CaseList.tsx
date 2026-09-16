@@ -54,11 +54,9 @@ export function CaseList({
   const displayedGroups = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return filteredByStatus;
-    return filteredByStatus.filter((g) => {
-      const idMatch = g.casePublicId.toLowerCase().includes(q);
-      const nameMatch = g.caseName.toLowerCase().includes(q);
-      return idMatch || nameMatch;
-    });
+    return filteredByStatus.filter((g) =>
+      `${g.casePublicId} ${g.caseName}`.toLowerCase().includes(q),
+    );
   }, [filteredByStatus, searchQuery]);
 
   if (groups.length === 0) {

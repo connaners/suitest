@@ -62,6 +62,8 @@ from suitest_runner.observability import get_tracer
 from suitest_runner.settings import RunnerSettings
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from suitest_api.schemas.self_heal import SelectorRepairPublic
     from suitest_api.services.defect_auto_filer import DefectAutoFiler
     from suitest_db.models.case import TestStep
@@ -94,6 +96,30 @@ def _is_defect_auto_filer(obj: object) -> bool:
     return hasattr(obj, "file_for_failed_step") and callable(
         getattr(obj, "file_for_failed_step", None)
     )
+
+
+def _extract_target_selector(parsed_step: dict[str, object]) -> str | None:
+    """Extract a target selector from action arguments or step assertions."""
+    args = parsed_step.get("arguments")
+    if isinstance(args, dict):
+        sel = (
+            args.get("selector") or args.get("target") or args.get("locator") or args.get("element")
+        )
+        if isinstance(sel, str) and sel.strip():
+            return sel.strip()
+    assertions = parsed_step.get("assertions")
+    if isinstance(assertions, list):
+        for a in assertions:
+            if isinstance(a, dict) and isinstance(a.get("arguments"), dict):
+                sel = a["arguments"].get("selector") or a["arguments"].get("target")
+                if isinstance(sel, str) and sel.strip():
+                    return sel.strip()
+    return None
+
+
+def _has_screenshot_artifact(artifacts: Sequence[object]) -> bool:
+    """Check whether a screenshot artifact is present in the list."""
+    return any(getattr(a, "kind", None) == "SCREENSHOT" for a in artifacts)
 
 
 @runtime_checkable
@@ -750,26 +776,8 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                 try:
                     parsed_step = json.loads(test_step.code)
                     if isinstance(parsed_step, dict):
-                        sel: str | None = None
-                        args = parsed_step.get("arguments")
-                        if isinstance(args, dict):
-                            sel = (
-                                args.get("selector")
-                                or args.get("target")
-                                or args.get("locator")
-                                or args.get("element")
-                            )
-                        if not sel:
-                            assertions = parsed_step.get("assertions")
-                            if isinstance(assertions, list):
-                                for a in assertions:
-                                    if isinstance(a, dict) and isinstance(a.get("arguments"), dict):
-                                        sel = a["arguments"].get("selector") or a["arguments"].get(
-                                            "target"
-                                        )
-                                        if sel:
-                                            break
-                        if isinstance(sel, str) and sel.strip():
+                        sel = _extract_target_selector(parsed_step)
+                        if sel:
                             target_sel = sel
                             h_ctx = InvokeContext(
                                 workspace_id=workspace_id,
@@ -873,7 +881,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                         log.debug("runner.highlight.reapply_failed", error=str(re_err))
 
                 artifacts = result.mcp_result.artifacts if result.mcp_result is not None else []
-                has_shot = any(a.kind == "SCREENSHOT" for a in artifacts)
+                has_shot = _has_screenshot_artifact(artifacts)
                 has_failure = result.outcome in (StepOutcome.FAIL, StepOutcome.ERROR)
                 should_capture = is_web_step and (
                     (not has_shot and screenshot_mode == "on")

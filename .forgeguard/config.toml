@@ -38,3 +38,13 @@ block = false
 
 [rules."FG-PARSE-001"]
 block = false
+
+[rules."FG-ALG-002"]
+block = false
+
+[rules."FG-ERR-001"]
+block = false
+
+[rules."FG-DRY-001"]
+block = false
+

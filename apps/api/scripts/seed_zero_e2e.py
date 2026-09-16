@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 
@@ -179,8 +180,8 @@ async def _ensure_db_exists(url: str) -> None:
                 await conn.execute(f'CREATE DATABASE "{target_db}"')
         finally:
             await conn.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.getLogger("suitest.seed_zero_e2e").debug("Database creation check skipped: %s", exc)
 
 
 async def seed() -> str:

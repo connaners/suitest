@@ -4,6 +4,7 @@ import * as React from "react";
 import { rollupLabel, rollupToBadge, type CaseGroup } from "@/components/runs/case-grouping";
 import { ExecutionSettingsPanel } from "@/components/runs/ExecutionSettingsPanel";
 import {
+  extractExecutionConfig,
   loadSavedExecutionSettings,
   normalizeExecutionSettings,
   saveExecutionSettings,
@@ -111,14 +112,7 @@ export function RerunSelectionDialog({
   const handleSubmit = (): void => {
     if (count === 0) return;
     saveExecutionSettings(executionSettings);
-    onConfirm(Array.from(selectedCaseIds), {
-      headless: executionSettings.headless,
-      screenshot: executionSettings.screenshot,
-      video: executionSettings.video,
-      videoQuality: executionSettings.videoQuality,
-      highlightSteps: executionSettings.highlightSteps,
-      cleanSessionBetweenCases: executionSettings.cleanSessionBetweenCases,
-    });
+    onConfirm(Array.from(selectedCaseIds), extractExecutionConfig(executionSettings));
   };
 
 

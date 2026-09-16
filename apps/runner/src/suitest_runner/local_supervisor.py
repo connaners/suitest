@@ -153,8 +153,8 @@ async def serve() -> None:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
             lock.close()
-        except Exception:
-            pass
+        except OSError as exc:
+            log.debug("supervisor.lock_release_failed", error=str(exc))
 
 
 if __name__ == "__main__":

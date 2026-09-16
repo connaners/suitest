@@ -74,4 +74,15 @@ export function saveExecutionSettings(settings: ExecutionSettings): void {
   }
 }
 
+export function extractExecutionConfig(settings: ExecutionSettings): ExecutionSettingsInput {
+  return {
+    headless: settings.headless,
+    screenshot: settings.screenshot,
+    video: settings.video,
+    videoQuality: settings.videoQuality,
+    highlightSteps: settings.highlightSteps,
+    cleanSessionBetweenCases: settings.cleanSessionBetweenCases,
+  };
+}
+
 
