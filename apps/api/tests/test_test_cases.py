@@ -329,7 +329,7 @@ async def test_list_test_case_runs_includes_runs_without_artifacts(api_db: ApiDb
         trigger=RunTrigger.MANUAL,
         status=RunStatus.PASS,
         tier_at_runtime=Tier.LOCAL,
-        metadata_={
+        metadata_json={
             "playwright_config": {
                 "headless": True,
                 "screenshot": "off",
@@ -347,7 +347,7 @@ async def test_list_test_case_runs_includes_runs_without_artifacts(api_db: ApiDb
         trigger=RunTrigger.MANUAL,
         status=RunStatus.PASS,
         tier_at_runtime=Tier.LOCAL,
-        metadata_={
+        metadata_json={
             "playwright_config": {
                 "headless": True,
                 "screenshot": "on",
