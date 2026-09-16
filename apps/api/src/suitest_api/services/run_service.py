@@ -139,6 +139,7 @@ class RunService:
         user_id: str | None,
         mcp_routing_override: dict[str, str] | None,
         triggered_by: str | None = None,
+        playwright_config: dict[str, Any] | None = None,
     ) -> RunRow:
         """Validate, insert one ``runs`` row, and append an audit log.
 
@@ -254,6 +255,7 @@ class RunService:
             "selection": selection,
             "planned_cases": planned_cases_snapshot,
             "mcp_routing_override": mcp_routing_override,
+            **({"playwright_config": playwright_config} if playwright_config is not None else {}),
         }
         run = RunRow(
             project_id=project_id,
@@ -296,6 +298,7 @@ class RunService:
         trigger: RunTrigger,
         user_id: str | None,
         mcp_routing_override: dict[str, str] | None,
+        playwright_config: dict[str, Any] | None = None,
     ) -> RunRow:
         """Run every active case in a suite as ONE bundle run (QA suite-run entry).
 
@@ -325,6 +328,7 @@ class RunService:
             trigger=trigger,
             user_id=user_id,
             mcp_routing_override=mcp_routing_override,
+            playwright_config=playwright_config,
         )
 
     @require_tier(TierFlag.ANY)
@@ -351,6 +355,7 @@ class RunService:
         user_id: str,
         failed_only: bool = False,
         case_ids: Sequence[str] | None = None,
+        playwright_config: dict[str, Any] | None = None,
     ) -> RunRow:
         """Insert a fresh QUEUED run row cloning ``src``'s selection.
 
@@ -485,12 +490,23 @@ class RunService:
                     }
                 )
 
+        effective_pw_config = (
+            playwright_config
+            if playwright_config is not None
+            else src_metadata.get("playwright_config")
+        )
+
         metadata: dict[str, Any] = {
             "selection": new_selection,
             "planned_cases": rerun_planned_snapshot,
             "mcp_routing_override": src_metadata.get("mcp_routing_override"),
             "rerun_of": src.id,
             "rerun_mode": rerun_mode,
+            **(
+                {"playwright_config": effective_pw_config}
+                if effective_pw_config is not None
+                else {}
+            ),
         }
 
         run = RunRow(

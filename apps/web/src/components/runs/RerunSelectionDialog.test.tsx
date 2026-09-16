@@ -46,6 +46,8 @@ describe("<RerunSelectionDialog>", () => {
 
     const submitBtn = screen.getByTestId("rerun-dialog-submit");
     expect(submitBtn).toHaveTextContent(/Run 1 selected test case/i);
+    expect(screen.getByTestId("execution-settings-container")).toBeInTheDocument();
+    expect(screen.getByTestId("execution-settings-summary")).toHaveTextContent("Headless • Failure only");
   });
 
   it("defaults to selecting all cases when all passed", () => {
@@ -112,7 +114,7 @@ describe("<RerunSelectionDialog>", () => {
     expect(screen.getByTestId("checkbox-case-tc_2")).toBeChecked();
   });
 
-  it("submits selected case IDs on confirm", async () => {
+  it("submits selected case IDs and default execution settings on confirm", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
     const groups: CaseGroup[] = [
@@ -136,7 +138,58 @@ describe("<RerunSelectionDialog>", () => {
     await user.click(screen.getByTestId("rerun-dialog-submit"));
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    expect(onConfirm).toHaveBeenCalledWith(["tc_2"]);
+    expect(onConfirm).toHaveBeenCalledWith(["tc_2"], {
+      headless: true,
+      screenshot: "only-on-failure",
+      video: "off",
+      videoQuality: "1080p",
+      highlightSteps: false,
+      cleanSessionBetweenCases: true,
+    });
+  });
+
+  it("inherits initialSettings from previous run and allows customizing before confirm", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    const groups: CaseGroup[] = [
+      makeGroup({ caseId: "tc_1", casePublicId: "TC-101", rollup: "fail" }),
+    ];
+
+    render(
+      <RerunSelectionDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        runPublicId="RUN-1001"
+        groups={groups}
+        onConfirm={onConfirm}
+        isPending={false}
+        initialSettings={{
+          headless: false,
+          screenshot: "on",
+          highlightSteps: true,
+        }}
+      />,
+    );
+
+    // Shows inherited settings in summary
+    expect(screen.getByTestId("execution-settings-summary")).toHaveTextContent(
+      "Headed • Every step • Highlight",
+    );
+
+    // Expand settings and modify screenshot back to only-on-failure
+    await user.click(screen.getByTestId("toggle-execution-settings"));
+    const screenshotSelect = screen.getByTestId("config-screenshot-select");
+    await user.selectOptions(screenshotSelect, "only-on-failure");
+
+    await user.click(screen.getByTestId("rerun-dialog-submit"));
+    expect(onConfirm).toHaveBeenCalledWith(["tc_1"], {
+      headless: false,
+      screenshot: "only-on-failure",
+      video: "off",
+      videoQuality: "1080p",
+      highlightSteps: true,
+      cleanSessionBetweenCases: true,
+    });
   });
 
   it("handles soft-deleted cases safely by disabling their selection", async () => {

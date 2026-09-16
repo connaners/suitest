@@ -1,7 +1,8 @@
-import { Camera, X } from "lucide-react";
+import { Camera, CameraOff, Maximize2, X } from "lucide-react";
 import { useState } from "react";
 
-import { ImageLightbox } from "./ImageLightbox";
+import type { PlaywrightConfigInput } from "@/hooks/use-runs";
+import { ImageLightboxModal } from "./ImageLightboxModal";
 
 interface BrowserPreviewProps {
   url: string | null;
@@ -15,6 +16,8 @@ interface BrowserPreviewProps {
   stepLabel?: string | null;
   /** Clear the selected step and return to the run video. */
   onClearStep?: () => void;
+  /** Execution settings from run metadata (if media was disabled). */
+  playwrightConfig?: PlaywrightConfigInput | null | undefined;
 }
 
 type Tab = "preview" | "code";
@@ -32,8 +35,10 @@ export function BrowserPreview({
   stepScreenshotUrl,
   stepLabel,
   onClearStep,
+  playwrightConfig,
 }: BrowserPreviewProps): React.ReactElement {
   const [tab, setTab] = useState<Tab>("preview");
+  const [lightboxImage, setLightboxImage] = useState<{ src: string; title?: string } | null>(null);
   const hasCode = Boolean(code);
   const showStep = Boolean(stepScreenshotUrl);
 
@@ -89,17 +94,29 @@ export function BrowserPreview({
       {tab === "preview" ? (
         <div className="mt-3 flex h-[280px] items-center justify-center overflow-hidden rounded-md bg-bg-code text-[12px] text-fg-5">
           {showStep && stepScreenshotUrl ? (
-            <ImageLightbox
-              src={stepScreenshotUrl}
-              title={stepLabel ? `${stepLabel} — Screenshot` : "Step screenshot"}
+            <button
+              type="button"
+              onClick={() =>
+                setLightboxImage({
+                  src: stepScreenshotUrl,
+                  title: stepLabel ? `${stepLabel} screenshot` : "Step screenshot",
+                })
+              }
+              className="group relative flex h-full w-full items-center justify-center cursor-zoom-in focus:outline-none"
+              aria-label="Zoom step screenshot"
+              data-testid="browser-preview-zoom-step-trigger"
             >
               <img
                 src={stepScreenshotUrl}
                 alt={stepLabel ? `${stepLabel} screenshot` : "Step screenshot"}
                 data-testid="browser-preview-step-image"
-                className="max-h-full max-w-full object-contain"
+                className="max-h-full max-w-full object-contain transition-transform group-hover:scale-[1.01]"
               />
-            </ImageLightbox>
+              <span className="pointer-events-none absolute bottom-2 right-2 flex items-center gap-1 rounded bg-bg-root/80 px-2 py-0.5 text-[11px] text-fg-2 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                <Maximize2 className="h-3 w-3" aria-hidden="true" />
+                Click to expand
+              </span>
+            </button>
           ) : videoUrl ? (
             <video
               src={videoUrl}
@@ -108,19 +125,50 @@ export function BrowserPreview({
               className="max-h-full max-w-full"
             />
           ) : url ? (
-            <ImageLightbox src={url} title="Latest run screenshot">
+            <button
+              type="button"
+              onClick={() =>
+                setLightboxImage({
+                  src: url,
+                  title: "Latest run screenshot",
+                })
+              }
+              className="group relative flex h-full w-full items-center justify-center cursor-zoom-in focus:outline-none"
+              aria-label="Zoom latest run screenshot"
+              data-testid="browser-preview-zoom-run-trigger"
+            >
               <img
                 src={url}
                 alt="Latest run screenshot"
                 data-testid="browser-preview-image"
-                className="max-h-full max-w-full object-contain"
+                className="max-h-full max-w-full object-contain transition-transform group-hover:scale-[1.01]"
               />
-            </ImageLightbox>
+              <span className="pointer-events-none absolute bottom-2 right-2 flex items-center gap-1 rounded bg-bg-root/80 px-2 py-0.5 text-[11px] text-fg-2 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                <Maximize2 className="h-3 w-3" aria-hidden="true" />
+                Click to expand
+              </span>
+            </button>
           ) : (
-            <span className="flex items-center gap-2" data-testid="browser-preview-placeholder">
-              <Camera className="h-4 w-4" aria-hidden="true" />
-              Preview
-            </span>
+            <div
+              className="flex flex-col items-center justify-center gap-1.5 p-4 text-center"
+              data-testid="browser-preview-placeholder"
+            >
+              {playwrightConfig &&
+              (playwrightConfig.screenshot === "off" || playwrightConfig.video === "off") ? (
+                <>
+                  <CameraOff className="h-5 w-5 text-fg-4/70" />
+                  <span className="font-medium text-[12px] text-fg-3">No preview available</span>
+                  <span className="text-[11px] text-fg-4 max-w-xs">
+                    Screenshots and video recording were disabled in Execution Settings.
+                  </span>
+                </>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Camera className="h-4 w-4" aria-hidden="true" />
+                  Preview
+                </span>
+              )}
+            </div>
           )}
         </div>
       ) : (
@@ -131,6 +179,17 @@ export function BrowserPreview({
           {code ?? "No generated source."}
         </pre>
       )}
+
+      <ImageLightboxModal
+        open={lightboxImage !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setLightboxImage(null);
+          }
+        }}
+        src={lightboxImage?.src ?? ""}
+        title={lightboxImage?.title}
+      />
     </div>
   );
 }

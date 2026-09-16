@@ -2341,6 +2341,26 @@ export interface paths {
         patch: operations["update_test_case_api_v1_test_cases__case_id__patch"];
         trace?: never;
     };
+    "/api/v1/test-cases/{case_id}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Case Artifacts
+         * @description Return historical artifacts created by all test runs that executed this test case.
+         */
+        get: operations["list_case_artifacts_api_v1_test_cases__case_id__artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/test-cases/{case_id}/duplicate": {
         parameters: {
             query?: never;
@@ -2436,6 +2456,26 @@ export interface paths {
          *     subscribe to the live ``run:<id>`` channel.
          */
         post: operations["run_test_case_now_api_v1_test_cases__case_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/test-cases/{case_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List historical runs for a test case
+         * @description Return historical runs that executed this test case.
+         */
+        get: operations["list_case_runs_api_v1_test_cases__case_id__runs_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4078,6 +4118,61 @@ export interface components {
             version: string;
         };
         /**
+         * CaseArtifactPublic
+         * @description Historical artifact record for a test case across all its runs.
+         */
+        CaseArtifactPublic: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Id */
+            id: string;
+            kind: components["schemas"]["ArtifactKind"];
+            /** Mimetype */
+            mimeType: string;
+            /**
+             * Rundate
+             * Format: date-time
+             */
+            runDate: string;
+            /** Runid */
+            runId: string;
+            /** Runpublicid */
+            runPublicId: string;
+            runStatus?: components["schemas"]["RunStatus"] | null;
+            /** Runstepid */
+            runStepId: string;
+            /** Sizebytes */
+            sizeBytes: number;
+            /** Steporder */
+            stepOrder: number;
+            /** Steptitle */
+            stepTitle?: string | null;
+        };
+        /**
+         * CaseRunPublic
+         * @description Historical run summary that executed a test case.
+         */
+        CaseRunPublic: {
+            /** Completedat */
+            completedAt?: string | null;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Id */
+            id: string;
+            playwrightConfig?: components["schemas"]["PlaywrightConfig"] | null;
+            /** Publicid */
+            publicId: string;
+            /** Startedat */
+            startedAt?: string | null;
+            status?: components["schemas"]["RunStatus"] | null;
+        };
+        /**
          * CaseSource
          * @enum {string}
          */
@@ -4311,6 +4406,7 @@ export interface components {
             } | null;
             /** Name */
             name: string;
+            playwrightConfig?: components["schemas"]["PlaywrightConfig"] | null;
             /** Projectid */
             projectId: string;
             /** Selection */
@@ -4343,6 +4439,7 @@ export interface components {
             } | null;
             /** Name */
             name?: string | null;
+            playwrightConfig?: components["schemas"]["PlaywrightConfig"] | null;
             /** @default MANUAL */
             trigger: components["schemas"]["RunTrigger"];
         };
@@ -6115,6 +6212,45 @@ export interface components {
             /** Items */
             items: components["schemas"]["PasswordResetRequestOut"][];
         };
+        /**
+         * PlaywrightConfig
+         * @description Playwright test runner execution settings (headless, capture, highlighting).
+         */
+        PlaywrightConfig: {
+            /**
+             * Cleansessionbetweencases
+             * @default true
+             */
+            cleanSessionBetweenCases: boolean;
+            /**
+             * Headless
+             * @default true
+             */
+            headless: boolean;
+            /**
+             * Highlightsteps
+             * @default false
+             */
+            highlightSteps: boolean;
+            /**
+             * Screenshot
+             * @default only-on-failure
+             * @enum {string}
+             */
+            screenshot: "off" | "only-on-failure" | "on";
+            /**
+             * Video
+             * @default off
+             * @enum {string}
+             */
+            video: "off" | "retain-on-failure" | "on";
+            /**
+             * Videoquality
+             * @default 1080p
+             * @enum {string}
+             */
+            videoQuality: "360p" | "480p" | "720p" | "1080p";
+        };
         /** PluginManifestOut */
         PluginManifestOut: {
             /** Author */
@@ -6631,6 +6767,7 @@ export interface components {
              * @default false
              */
             failedOnly: boolean;
+            playwrightConfig?: components["schemas"]["PlaywrightConfig"] | null;
         };
         /** ResetPasswordResponse */
         ResetPasswordResponse: {
@@ -6751,6 +6888,7 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            playwrightConfig?: components["schemas"]["PlaywrightConfig"] | null;
             /** Project Id */
             project_id: string;
             /** Public Id */
@@ -12698,6 +12836,39 @@ export interface operations {
             };
         };
     };
+    list_case_artifacts_api_v1_test_cases__case_id__artifacts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Workspace-Id"?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseArtifactPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     duplicate_test_case_api_v1_test_cases__case_id__duplicate_post: {
         parameters: {
             query?: never;
@@ -12815,6 +12986,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdHocRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_case_runs_api_v1_test_cases__case_id__runs_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Workspace-Id"?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseRunPublic"][];
                 };
             };
             /** @description Validation Error */

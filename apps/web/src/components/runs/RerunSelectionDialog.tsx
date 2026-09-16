@@ -2,6 +2,13 @@ import { AlertTriangle, Loader2, RotateCw } from "lucide-react";
 import * as React from "react";
 
 import { rollupLabel, rollupToBadge, type CaseGroup } from "@/components/runs/case-grouping";
+import { ExecutionSettingsPanel } from "@/components/runs/ExecutionSettingsPanel";
+import {
+  loadSavedExecutionSettings,
+  normalizeExecutionSettings,
+  saveExecutionSettings,
+  type ExecutionSettings,
+} from "@/components/runs/execution-settings";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { PlaywrightConfigInput } from "@/hooks/use-runs";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
 
@@ -20,8 +28,9 @@ export interface RerunSelectionDialogProps {
   onOpenChange: (open: boolean) => void;
   runPublicId: string;
   groups: CaseGroup[];
-  onConfirm: (selectedCaseIds: string[]) => void;
+  onConfirm: (selectedCaseIds: string[], config?: PlaywrightConfigInput) => void;
   isPending: boolean;
+  initialSettings?: (PlaywrightConfigInput & { highlight_steps?: boolean }) | null;
 }
 
 export function RerunSelectionDialog({
@@ -31,6 +40,7 @@ export function RerunSelectionDialog({
   groups,
   onConfirm,
   isPending,
+  initialSettings,
 }: RerunSelectionDialogProps): React.ReactElement {
   const activeGroups = React.useMemo(
     () => groups.filter((g) => !g.isDeleted),
@@ -49,7 +59,11 @@ export function RerunSelectionDialog({
     return new Set(activeGroups.map((g) => g.caseId));
   });
 
-  // Re-sync preset selection whenever the dialog opens or groups change
+  const [executionSettings, setExecutionSettings] = React.useState<ExecutionSettings>(() =>
+    initialSettings ? normalizeExecutionSettings(initialSettings) : loadSavedExecutionSettings(),
+  );
+
+  // Re-sync preset selection and execution settings whenever the dialog opens or dependencies change
   React.useEffect(() => {
     if (open) {
       if (failedGroups.length > 0) {
@@ -57,8 +71,11 @@ export function RerunSelectionDialog({
       } else {
         setSelectedCaseIds(new Set(activeGroups.map((g) => g.caseId)));
       }
+      setExecutionSettings(
+        initialSettings ? normalizeExecutionSettings(initialSettings) : loadSavedExecutionSettings(),
+      );
     }
-  }, [open, failedGroups, activeGroups]);
+  }, [open, failedGroups, activeGroups, initialSettings]);
 
   const toggleCase = (caseId: string): void => {
     setSelectedCaseIds((prev) => {
@@ -93,8 +110,17 @@ export function RerunSelectionDialog({
 
   const handleSubmit = (): void => {
     if (count === 0) return;
-    onConfirm(Array.from(selectedCaseIds));
+    saveExecutionSettings(executionSettings);
+    onConfirm(Array.from(selectedCaseIds), {
+      headless: executionSettings.headless,
+      screenshot: executionSettings.screenshot,
+      video: executionSettings.video,
+      videoQuality: executionSettings.videoQuality,
+      highlightSteps: executionSettings.highlightSteps,
+      cleanSessionBetweenCases: executionSettings.cleanSessionBetweenCases,
+    });
   };
+
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -157,7 +183,7 @@ export function RerunSelectionDialog({
 
           {/* Checklist container */}
           <div
-            className="flex-1 min-h-[120px] max-h-[45vh] overflow-y-auto rounded-md border border-border bg-bg-elev-1 p-1.5"
+            className="flex-1 min-h-[120px] max-h-[35vh] overflow-y-auto rounded-md border border-border bg-bg-elev-1 p-1.5"
             data-testid="rerun-case-list"
           >
             <ul className="flex flex-col gap-1">
@@ -210,6 +236,14 @@ export function RerunSelectionDialog({
                 );
               })}
             </ul>
+          </div>
+
+          {/* Reusable Execution Settings Panel */}
+          <div className="shrink-0">
+            <ExecutionSettingsPanel
+              value={executionSettings}
+              onChange={setExecutionSettings}
+            />
           </div>
 
           {/* Notice */}

@@ -3,13 +3,30 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from suitest_shared.domain.enums import (
     ArtifactKind,
+    RunStatus,
     StepOutcome,
 )
 from suitest_shared.schemas.responses import RunListOut
+
+
+class PlaywrightConfig(BaseModel):
+    """Playwright test runner execution settings (headless, capture, highlighting)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    headless: bool = True
+    screenshot: Literal["off", "only-on-failure", "on"] = "only-on-failure"
+    video: Literal["off", "retain-on-failure", "on"] = "off"
+    video_quality: Literal["360p", "480p", "720p", "1080p"] = Field(
+        default="1080p", alias="videoQuality"
+    )
+    highlight_steps: bool = Field(default=False, alias="highlightSteps")
+    clean_session_between_cases: bool = Field(default=True, alias="cleanSessionBetweenCases")
 
 
 class RunSummary(BaseModel):
@@ -44,6 +61,7 @@ class RunDetail(RunListItem):
     summary: RunSummary
     coverage_summary: dict[str, object] | None = None
     cases: list[RunCaseSummary] = Field(default_factory=list)
+    playwright_config: PlaywrightConfig | None = Field(default=None, alias="playwrightConfig")
 
 
 class RunStepPublic(BaseModel):
@@ -158,6 +176,41 @@ class ArtifactPublic(BaseModel):
     size_bytes: int
     mime_type: str
     created_at: datetime
+
+
+class CaseArtifactPublic(BaseModel):
+    """Historical artifact record for a test case across all its runs."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: str
+    run_id: str = Field(serialization_alias="runId")
+    run_public_id: str = Field(serialization_alias="runPublicId")
+    run_status: RunStatus | None = Field(default=None, serialization_alias="runStatus")
+    run_date: datetime = Field(serialization_alias="runDate")
+    run_step_id: str = Field(serialization_alias="runStepId")
+    step_order: int = Field(serialization_alias="stepOrder")
+    step_title: str | None = Field(default=None, serialization_alias="stepTitle")
+    kind: ArtifactKind
+    size_bytes: int = Field(serialization_alias="sizeBytes")
+    mime_type: str = Field(serialization_alias="mimeType")
+    created_at: datetime = Field(serialization_alias="createdAt")
+
+
+class CaseRunPublic(BaseModel):
+    """Historical run summary that executed a test case."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: str
+    public_id: str = Field(serialization_alias="publicId")
+    status: RunStatus | None = None
+    created_at: datetime = Field(serialization_alias="createdAt")
+    started_at: datetime | None = Field(default=None, serialization_alias="startedAt")
+    completed_at: datetime | None = Field(default=None, serialization_alias="completedAt")
+    playwright_config: PlaywrightConfig | None = Field(
+        default=None, serialization_alias="playwrightConfig"
+    )
 
 
 class ArtifactSignedUrl(BaseModel):

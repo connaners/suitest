@@ -1274,6 +1274,156 @@
         "title": "Capabilities",
         "type": "object"
       },
+      "CaseArtifactPublic": {
+        "description": "Historical artifact record for a test case across all its runs.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ArtifactKind"
+          },
+          "mimeType": {
+            "title": "Mimetype",
+            "type": "string"
+          },
+          "runDate": {
+            "format": "date-time",
+            "title": "Rundate",
+            "type": "string"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "runPublicId": {
+            "title": "Runpublicid",
+            "type": "string"
+          },
+          "runStatus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runStepId": {
+            "title": "Runstepid",
+            "type": "string"
+          },
+          "sizeBytes": {
+            "title": "Sizebytes",
+            "type": "integer"
+          },
+          "stepOrder": {
+            "title": "Steporder",
+            "type": "integer"
+          },
+          "stepTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steptitle"
+          }
+        },
+        "required": [
+          "id",
+          "runId",
+          "runPublicId",
+          "runDate",
+          "runStepId",
+          "stepOrder",
+          "kind",
+          "sizeBytes",
+          "mimeType",
+          "createdAt"
+        ],
+        "title": "CaseArtifactPublic",
+        "type": "object"
+      },
+      "CaseRunPublic": {
+        "description": "Historical run summary that executed a test case.",
+        "properties": {
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "playwrightConfig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaywrightConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publicId": {
+            "title": "Publicid",
+            "type": "string"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "publicId",
+          "createdAt"
+        ],
+        "title": "CaseRunPublic",
+        "type": "object"
+      },
       "CaseSource": {
         "enum": [
           "MANUAL",
@@ -1829,6 +1979,16 @@
             "title": "Name",
             "type": "string"
           },
+          "playwrightConfig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaywrightConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "projectId": {
             "title": "Projectid",
             "type": "string"
@@ -1908,6 +2068,16 @@
               }
             ],
             "title": "Name"
+          },
+          "playwrightConfig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaywrightConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "trigger": {
             "$ref": "#/components/schemas/RunTrigger",
@@ -6021,6 +6191,59 @@
         "title": "PasswordResetRequestsEnvelope",
         "type": "object"
       },
+      "PlaywrightConfig": {
+        "description": "Playwright test runner execution settings (headless, capture, highlighting).",
+        "properties": {
+          "cleanSessionBetweenCases": {
+            "default": true,
+            "title": "Cleansessionbetweencases",
+            "type": "boolean"
+          },
+          "headless": {
+            "default": true,
+            "title": "Headless",
+            "type": "boolean"
+          },
+          "highlightSteps": {
+            "default": false,
+            "title": "Highlightsteps",
+            "type": "boolean"
+          },
+          "screenshot": {
+            "default": "only-on-failure",
+            "enum": [
+              "off",
+              "only-on-failure",
+              "on"
+            ],
+            "title": "Screenshot",
+            "type": "string"
+          },
+          "video": {
+            "default": "off",
+            "enum": [
+              "off",
+              "retain-on-failure",
+              "on"
+            ],
+            "title": "Video",
+            "type": "string"
+          },
+          "videoQuality": {
+            "default": "1080p",
+            "enum": [
+              "360p",
+              "480p",
+              "720p",
+              "1080p"
+            ],
+            "title": "Videoquality",
+            "type": "string"
+          }
+        },
+        "title": "PlaywrightConfig",
+        "type": "object"
+      },
       "PluginManifestOut": {
         "properties": {
           "author": {
@@ -7279,6 +7502,16 @@
             "default": false,
             "title": "Failedonly",
             "type": "boolean"
+          },
+          "playwrightConfig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaywrightConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "RerunRunBody",
@@ -7531,6 +7764,16 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "playwrightConfig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaywrightConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "project_id": {
             "title": "Project Id",
@@ -20456,6 +20699,77 @@
         ]
       }
     },
+    "/api/v1/test-cases/{case_id}/artifacts": {
+      "get": {
+        "description": "Return historical artifacts created by all test runs that executed this test case.",
+        "operationId": "list_case_artifacts_api_v1_test_cases__case_id__artifacts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CaseArtifactPublic"
+                  },
+                  "title": "Response List Case Artifacts Api V1 Test Cases  Case Id  Artifacts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Case Artifacts",
+        "tags": [
+          "test-cases"
+        ]
+      }
+    },
     "/api/v1/test-cases/{case_id}/duplicate": {
       "post": {
         "description": "Clone a case + its steps + tags inside the same suite (new public id).",
@@ -20715,6 +21029,77 @@
           }
         ],
         "summary": "Run Test Case Now",
+        "tags": [
+          "test-cases"
+        ]
+      }
+    },
+    "/api/v1/test-cases/{case_id}/runs": {
+      "get": {
+        "description": "Return historical runs that executed this test case.",
+        "operationId": "list_case_runs_api_v1_test_cases__case_id__runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CaseRunPublic"
+                  },
+                  "title": "Response List Case Runs Api V1 Test Cases  Case Id  Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List historical runs for a test case",
         "tags": [
           "test-cases"
         ]
