@@ -99,7 +99,9 @@ export function Sidebar({
   onMobileClose,
 }: SidebarProps): React.ReactElement {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("suitest.sidebarCollapsed") === "1";
@@ -115,11 +117,12 @@ export function Sidebar({
       /* private-mode storage unavailable — keep in-memory state */
     }
   };
-  // Temporarily open the compact rail while the cursor is over it — and keep
-  // it open while the workspace popover is up, otherwise the rail collapses
-  // under the open dropdown the moment the cursor leaves the aside (the
-  // dropdown ends up floating detached over the content, out of the 64px rail).
-  const isOpen = !collapsed || hovered || pickerOpen;
+  // Temporarily open the compact rail while the cursor is over it or focus is
+  // inside it (keyboard users tabbing through), and keep it open while either
+  // popover is up — otherwise the rail collapses under the open dropdown the
+  // moment the cursor leaves the aside (the dropdown ends up floating detached
+  // over the content, out of the 64px rail).
+  const isOpen = !collapsed || hovered || focused || pickerOpen || projectPickerOpen;
 
   const configItems: NavItem[] = [
     { label: "Integrations", icon: Plug, to: "/integrations" },
@@ -178,6 +181,8 @@ export function Sidebar({
       <aside
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
+        onFocusCapture={() => setFocused(true)}
+        onBlurCapture={() => setFocused(false)}
         className={cn(
           "flex h-full shrink-0 flex-col border-r border-border-subtle bg-bg-elev-1 transition-[width] duration-200",
           !isOpen ? "w-[224px] md:w-[64px]" : "w-[224px]",
@@ -290,7 +295,11 @@ export function Sidebar({
         </div>
 
         {/* Section 2b — Project picker (Test Cases / Runs are project-scoped) */}
-        <ProjectPicker collapsed={!isOpen} />
+        <ProjectPicker
+          collapsed={!isOpen}
+          open={projectPickerOpen}
+          onOpenChange={setProjectPickerOpen}
+        />
 
         {/* Section 3 — Nav. min-h-0 is load-bearing: a flex child keeps
             min-height:auto, so flex-1 alone let the nav grow to its content
@@ -367,12 +376,12 @@ export function Sidebar({
           </div>
           <button
             type="button"
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={isOpen ? "Collapse sidebar" : "Expand sidebar"}
             data-testid="sidebar-collapse-toggle"
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-bg-elev-2 hover:text-fg-1",
-              collapsed ? "md:mx-auto" : "",
+              !isOpen ? "md:mx-auto" : "",
             )}
             onClick={() => persistCollapsed(!collapsed)}
           >
@@ -415,6 +424,8 @@ function SidebarItem({
     return (
       <div
         aria-disabled="true"
+        aria-label={item.label}
+        title={collapsed ? item.label : undefined}
         className={cn(baseCls, collapsedCls, "cursor-not-allowed text-fg-5 hover:bg-transparent hover:text-fg-5")}
         data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
         data-disabled="true"
@@ -427,6 +438,8 @@ function SidebarItem({
   return (
     <Link
       to={item.to}
+      aria-label={item.label}
+      title={collapsed ? item.label : undefined}
       className={cn(baseCls, collapsedCls)}
       activeProps={{
         className: cn(baseCls, collapsedCls, "bg-bg-elev-2 text-fg-1 [&_svg]:text-accent"),

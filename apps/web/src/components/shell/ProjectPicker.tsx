@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, FolderKanban } from "lucide-react";
-import { useState } from "react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "@/lib/api-client";
@@ -19,11 +18,15 @@ type ProjectsPage = { items: Project[] };
  */
 export function ProjectPicker({
   collapsed = false,
+  open,
+  onOpenChange,
 }: {
   /** Collapsed rail — show only the folder icon, hide the label + chevron. */
   collapsed?: boolean;
+  /** Controlled popover state — owned by Sidebar so the rail stays expanded while the dropdown is open. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }): React.ReactElement | null {
-  const [open, setOpen] = useState(false);
   const projectId = useActiveProject((s) => s.projectId);
   const setProjectId = useActiveProject((s) => s.setProjectId);
   const { data } = useQuery({
@@ -37,10 +40,12 @@ export function ProjectPicker({
 
   return (
     <div className="shrink-0 border-b border-border-subtle px-3 py-2">
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
           <button
             type="button"
+            aria-label={collapsed ? `Project: ${active?.name ?? "Select project"}` : undefined}
+            title={collapsed ? (active?.name ?? "Select project") : undefined}
             className={cn(
               "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-bg-elev-2",
               collapsed ? "md:justify-center md:px-0" : "",
@@ -71,7 +76,7 @@ export function ProjectPicker({
                     data-testid="project-picker-item"
                     data-active={isActive ? "true" : "false"}
                     onClick={() => {
-                      setOpen(false);
+                      onOpenChange(false);
                       if (!isActive) setProjectId(p.id);
                     }}
                     className={cn(

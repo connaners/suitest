@@ -475,4 +475,14 @@ describe("RunDetailPage", () => {
     expect(within(row0).getByText("PASS")).toBeInTheDocument();
     expect(within(row1).getByText("ABORTED")).toBeInTheDocument();
   });
+
+  it("minimize link points back to the runs list with the run's public id", async () => {
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+    // Route param is the internal id (run_abc123); the /runs?run= contract
+    // expects the public id (RUN-1001) so the list can re-select the row.
+    await waitFor(() => {
+      expect(screen.getByTestId("run-minimize")).toHaveAttribute("href", "/runs?run=RUN-1001");
+    });
+  });
 });

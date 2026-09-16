@@ -117,7 +117,7 @@ export function RunDetailPage(): React.ReactElement {
         <div className="flex flex-wrap items-center gap-1.5">
           <Link
             to="/runs"
-            search={{ run: runId }}
+            search={{ run: run?.public_id ?? runId }}
             className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-bg-elev-1 px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
             aria-label="Minimize to runs list"
             data-testid="run-minimize"
