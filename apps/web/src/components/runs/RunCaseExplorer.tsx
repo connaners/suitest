@@ -7,6 +7,7 @@ import { CaseList } from "@/components/runs/CaseList";
 import { groupStepsByCase, type CaseGroup } from "@/components/runs/case-grouping";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { fetchRunArtifacts, fetchRunSteps } from "@/lib/api-client";
+import type { PlaywrightConfigInput } from "@/hooks/use-runs";
 import type { components } from "@/lib/api-types";
 import { useRunStream } from "@/lib/ws-client";
 
@@ -20,6 +21,8 @@ interface RunCaseExplorerProps {
   status?: RunStatus | undefined;
   /** Planned cases configured for this run (M1-15b). */
   plannedCases?: RunCaseSummary[] | undefined;
+  /** Execution settings (Playwright configuration) used for this run. */
+  playwrightConfig?: PlaywrightConfigInput | null | undefined;
   /** Emitted whenever the focused test case changes (returns public_id like "TC-101"). */
   onSelectCasePublicId?: (publicId: string | null) => void;
   /** Emitted whenever the grouped test cases change. */
@@ -46,6 +49,7 @@ export function RunCaseExplorer({
   runId,
   status,
   plannedCases,
+  playwrightConfig,
   onSelectCasePublicId,
   onGroupsChange,
   onRerunCase,
@@ -183,12 +187,13 @@ export function RunCaseExplorer({
   return (
     // Container query (not viewport): the explorer renders both full-page and
     // inside the /runs side panel, so column split keys off its own width.
-    <div className="grid min-w-0 grid-cols-12 gap-4 @container">
-      <div className="col-span-12 min-w-0 @3xl:col-span-4" data-testid="run-case-master">
+    <div className="grid min-w-0 grid-cols-12 items-start gap-4 @container">
+      <div className="col-span-12 min-w-0 @3xl:sticky @3xl:top-4 self-start @3xl:col-span-4" data-testid="run-case-master">
         <CaseList
           groups={groups}
           selectedCaseId={selectedCaseId}
           onSelectCase={setSelectedCaseId}
+          runStatus={status}
         />
       </div>
       <div className="col-span-12 min-w-0 @3xl:col-span-8" data-testid="run-case-detail">
@@ -201,6 +206,7 @@ export function RunCaseExplorer({
             onRerunCase={onRerunCase}
             isRerunning={isRerunning}
             hasMultipleCases={groups.length > 1}
+            playwrightConfig={playwrightConfig}
           />
         ) : (
           <EmptyState

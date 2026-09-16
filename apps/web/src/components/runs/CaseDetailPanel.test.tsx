@@ -17,6 +17,7 @@ import type { components } from "@/lib/api-types";
 import { server } from "@/mocks/server";
 
 type RunStepPublic = components["schemas"]["RunStepPublic"];
+type ArtifactPublic = components["schemas"]["ArtifactPublic"];
 
 function makeStep(order: number, title: string, outcome: components["schemas"]["StepOutcome"]): RunStepPublic {
   return {
@@ -39,6 +40,13 @@ function renderPanel(
   runStatus: components["schemas"]["RunStatus"] = "PASS",
   onRerunCase?: (caseId: string) => void,
   hasMultipleCases = true,
+  artifacts: ArtifactPublic[] = [],
+  playwrightConfig?: {
+    headless?: boolean;
+    screenshot?: "off" | "only-on-failure" | "on";
+    video?: "off" | "retain-on-failure" | "on";
+    highlightSteps?: boolean;
+  } | null,
 ) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -49,10 +57,11 @@ function renderPanel(
       <CaseDetailPanel
         runId="run_1"
         group={group}
-        artifacts={[]}
+        artifacts={artifacts}
         runStatus={runStatus}
         onRerunCase={onRerunCase}
         hasMultipleCases={hasMultipleCases}
+        playwrightConfig={playwrightConfig}
       />
     ),
   });
@@ -300,4 +309,476 @@ describe("<CaseDetailPanel>", () => {
     expect(screen.queryByTestId("case-deleted-banner")).not.toBeInTheDocument();
     expect(screen.getByTestId("case-rerun-button")).toBeInTheDocument();
   });
+
+  it("opens lightbox modal when clicking Zoom on a screenshot artifact in Artifacts tab", async () => {
+    const group: CaseGroup = {
+      caseId: "tc_1",
+      casePublicId: "TC-101",
+      caseName: "Checkout",
+      steps: [makeStep(1, "Navigate to home", "PASS")],
+      total: 1,
+      passed: 1,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 200,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_shot_1",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:00Z",
+      },
+    ];
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    // Click Artifacts tab
+    const artifactsTab = await screen.findByRole("tab", { name: "Artifacts" });
+    await userEvent.click(artifactsTab);
+
+    // Find and click Zoom button
+    const zoomBtn = await screen.findByTestId("case-artifact-zoom-btn");
+    expect(zoomBtn).toBeInTheDocument();
+
+    await userEvent.click(zoomBtn);
+
+    // Lightbox modal should appear
+    expect(await screen.findByTestId("image-lightbox-modal")).toBeInTheDocument();
+    expect(screen.getByTestId("lightbox-image")).toHaveAttribute(
+      "src",
+      "https://example.invalid/blob/fake",
+    );
+  });
+
+  it("renders step-by-step screenshot navigator in Preview tab and allows zooming step screenshot", async () => {
+    const group: CaseGroup = {
+      caseId: "tc_1",
+      casePublicId: "TC-101",
+      caseName: "Checkout",
+      steps: [
+        makeStep(1, "Navigate to home", "PASS"),
+        makeStep(2, "Click buy button", "FAIL"),
+      ],
+      total: 2,
+      passed: 1,
+      failed: 1,
+      rollup: "fail",
+      durationMs: 400,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_shot_1",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:00Z",
+      },
+      {
+        id: "art_shot_2",
+        run_step_id: "step_2",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 2048,
+        created_at: "2026-09-14T00:00:01Z",
+      },
+    ];
+
+    renderPanel(group, "FAIL", undefined, true, artifacts);
+
+    // Preview tab is active by default
+    expect(await screen.findByTestId("step-screenshot-navigator")).toBeInTheDocument();
+    expect(screen.getByTestId("step-nav-btn-1")).toBeInTheDocument();
+    expect(screen.getByTestId("step-nav-btn-2")).toBeInTheDocument();
+
+    // Click step 2 button
+    await userEvent.click(screen.getByTestId("step-nav-btn-2"));
+
+    // Click zoom trigger on step image
+    const zoomTrigger = await screen.findByTestId("case-preview-zoom-trigger");
+    await userEvent.click(zoomTrigger);
+
+    // Lightbox modal opens
+    expect(await screen.findByTestId("image-lightbox-modal")).toBeInTheDocument();
+  });
+
+  it("renders video player in Preview tab when only VIDEO artifact is present", async () => {
+    server.use(
+      http.get("*/api/v1/runs/:runId/artifacts/:artifactId", () =>
+        HttpResponse.json({
+          url: "https://example.com/recording.webm",
+          expires_at: "2026-09-17T00:00:00Z",
+        }),
+      ),
+    );
+
+    const group: CaseGroup = {
+      caseId: "tc_1",
+      casePublicId: "TC-101",
+      caseName: "Checkout",
+      steps: [
+        makeStep(1, "Navigate to home", "PASS"),
+        makeStep(2, "Click buy button", "PASS"),
+      ],
+      total: 2,
+      passed: 2,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 400,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_video_1",
+        run_step_id: "step_2",
+        kind: "VIDEO",
+        mime_type: "video/webm",
+        size_bytes: 50000,
+        created_at: "2026-09-14T00:00:01Z",
+      },
+    ];
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    // Should display video recording label and video element
+    expect(await screen.findByText("Video recording")).toBeInTheDocument();
+    const videoElem = await screen.findByTestId("case-preview-video");
+    expect(videoElem).toBeInTheDocument();
+    expect(videoElem).toHaveAttribute("src", "https://example.com/recording.webm");
+  });
+
+  it("opens video modal when clicking expand button in Preview tab", async () => {
+    server.use(
+      http.get("*/api/v1/runs/:runId/artifacts/:artifactId", () =>
+        HttpResponse.json({
+          url: "https://example.com/recording.webm",
+          expires_at: "2026-09-17T00:00:00Z",
+        }),
+      ),
+    );
+
+    const group: CaseGroup = {
+      caseId: "tc_1",
+      casePublicId: "TC-101",
+      caseName: "Checkout",
+      steps: [makeStep(1, "Navigate to home", "PASS")],
+      total: 1,
+      passed: 1,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 200,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_video_1",
+        run_step_id: "step_1",
+        kind: "VIDEO",
+        mime_type: "video/webm",
+        size_bytes: 50000,
+        created_at: "2026-09-14T00:00:01Z",
+      },
+    ];
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    const videoTrigger = await screen.findByTestId("case-preview-video-trigger");
+    await userEvent.click(videoTrigger);
+
+    expect(await screen.findByTestId("video-player-modal")).toBeInTheDocument();
+  });
+
+  it("opens video modal when clicking expand button in Artifacts tab", async () => {
+    server.use(
+      http.get("*/api/v1/runs/:runId/artifacts/:artifactId", () =>
+        HttpResponse.json({
+          url: "https://example.com/recording.webm",
+          expires_at: "2026-09-17T00:00:00Z",
+        }),
+      ),
+    );
+
+    const group: CaseGroup = {
+      caseId: "tc_1",
+      casePublicId: "TC-101",
+      caseName: "Checkout",
+      steps: [makeStep(1, "Navigate to home", "PASS")],
+      total: 1,
+      passed: 1,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 200,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_video_1",
+        run_step_id: "step_1",
+        kind: "VIDEO",
+        mime_type: "video/webm",
+        size_bytes: 50000,
+        created_at: "2026-09-14T00:00:01Z",
+      },
+    ];
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    // Switch to artifacts tab
+    const tabBtn = await screen.findByRole("tab", { name: /artifacts/i });
+    await userEvent.click(tabBtn);
+
+    const expandBtn = await screen.findByTestId("case-artifact-video-expand-btn");
+    await userEvent.click(expandBtn);
+
+    expect(await screen.findByTestId("video-player-modal")).toBeInTheDocument();
+  });
+
+  it("paginates artifacts progressively with Load More button", async () => {
+    const steps = Array.from({ length: 15 }, (_, i) =>
+      makeStep(i + 1, `Step ${i + 1}`, "PASS"),
+    );
+    const group: CaseGroup = {
+      caseId: "tc_1",
+      casePublicId: "TC-101",
+      caseName: "Checkout",
+      steps,
+      total: 15,
+      passed: 15,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 3000,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    // Create 15 artifacts
+    const artifacts: ArtifactPublic[] = Array.from({ length: 15 }, (_, i) => ({
+      id: `art_${i + 1}`,
+      run_step_id: `step_${i + 1}`,
+      kind: "SCREENSHOT",
+      mime_type: "image/png",
+      size_bytes: 1024,
+      created_at: "2026-09-14T00:00:01Z",
+    }));
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    // Switch to artifacts tab
+    const tabBtn = await screen.findByRole("tab", { name: /artifacts/i });
+    await userEvent.click(tabBtn);
+
+    // Count indicator shows 10 of 15
+    expect(screen.getByTestId("case-artifacts-count")).toHaveTextContent("Showing 10 of 15 artifacts");
+
+    // Exactly 10 artifact items rendered
+    const items = screen.getAllByTestId("case-artifact");
+    expect(items).toHaveLength(10);
+
+    // Load more button shows 5 remaining
+    const loadMoreBtn = screen.getByTestId("case-artifacts-load-more");
+    expect(loadMoreBtn).toHaveTextContent("Load more (5 remaining)");
+
+    // Click load more
+    await userEvent.click(loadMoreBtn);
+
+    // Count updates to 15 of 15
+    expect(screen.getByTestId("case-artifacts-count")).toHaveTextContent("Showing 15 of 15 artifacts");
+    expect(screen.getAllByTestId("case-artifact")).toHaveLength(15);
+    expect(screen.queryByTestId("case-artifacts-load-more")).not.toBeInTheDocument();
+  });
+
+  it("deduplicates multiple screenshots for the same step and orders buttons 1..N relative to case", async () => {
+    const steps = [
+      makeStep(88, "Open modal", "PASS"),
+      makeStep(89, "Fill input", "FAIL"),
+    ];
+
+    const group: CaseGroup = {
+      caseId: "tc_bulk_1",
+      casePublicId: "TC-3003",
+      caseName: "Bulk Test Case",
+      steps,
+      total: 2,
+      passed: 1,
+      failed: 1,
+      rollup: "fail",
+      durationMs: 400,
+      kind: "frontend",
+      firstFailure: "Element not found",
+    };
+
+    // Step 89 has BOTH a step execution screenshot AND a failure screenshot
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_shot_88",
+        run_step_id: "step_88",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:01Z",
+      },
+      {
+        id: "art_shot_89_exec",
+        run_step_id: "step_89",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:02Z",
+      },
+      {
+        id: "art_shot_89_failure",
+        run_step_id: "step_89",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:03Z",
+      },
+    ];
+
+    renderPanel(group, "FAIL", undefined, true, artifacts);
+
+    // Step navigator buttons should be exactly 2 buttons: Step 1 and Step 2 (not Step 88 or duplicate Step 2)
+    const btn1 = await screen.findByTestId("step-nav-btn-1");
+    expect(btn1).toBeInTheDocument();
+    expect(btn1).toHaveTextContent("Step 1");
+
+    const btn2 = await screen.findByTestId("step-nav-btn-2");
+    expect(btn2).toBeInTheDocument();
+    expect(btn2).toHaveTextContent("Step 2");
+
+    // Must NOT have buttons labeled with raw global orders 88 or 89
+    expect(screen.queryByTestId("step-nav-btn-88")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("step-nav-btn-89")).not.toBeInTheDocument();
+
+    // Total step buttons in navigator should be exactly 2 (deduplicated)
+    const navigator = screen.getByTestId("step-screenshot-navigator");
+    expect(navigator.querySelectorAll("button")).toHaveLength(2);
+  });
+
+  it("toggles cleanly between Video and Step captures without rogue snapping, and hides X button in video mode", async () => {
+    server.use(
+      http.get("*/api/v1/runs/:runId/artifacts/:artifactId", ({ params }) => {
+        return HttpResponse.json({
+          url: `https://storage.suitest.local/artifacts/${params.artifactId}`,
+        });
+      }),
+    );
+
+    const steps = [makeStep(1, "Step 1", "PASS")];
+    const group: CaseGroup = {
+      caseId: "tc_media_1",
+      casePublicId: "TC-5001",
+      caseName: "Media Case",
+      steps,
+      total: 1,
+      passed: 1,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 300,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_video_1",
+        run_step_id: "step_1",
+        kind: "VIDEO",
+        mime_type: "video/webm",
+        size_bytes: 4096,
+        created_at: "2026-09-14T00:00:01Z",
+      },
+      {
+        id: "art_shot_1",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:02Z",
+      },
+    ];
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    // Initial state with video + screenshots starts in video mode
+    const videoBtn = await screen.findByTestId("preview-mode-video");
+    const shotsBtn = screen.getByTestId("preview-mode-screenshots");
+    expect(videoBtn).toBeInTheDocument();
+    expect(shotsBtn).toBeInTheDocument();
+
+    // In video mode: video player trigger is present
+    expect(await screen.findByTestId("case-preview-video-trigger")).toBeInTheDocument();
+
+    // Switch to step captures via mode tab
+    await userEvent.click(shotsBtn);
+    expect(await screen.findByTestId("case-preview-step-image")).toBeInTheDocument();
+
+    // Click Video button: mode switches back to video cleanly
+    await userEvent.click(videoBtn);
+    expect(await screen.findByTestId("case-preview-video")).toBeInTheDocument();
+  });
+
+  it("renders informative empty state in Artifacts tab with execution settings when media capture is disabled", async () => {
+    const group: CaseGroup = {
+      caseId: "tc_no_media",
+      casePublicId: "TC-1001",
+      caseName: "Login Authentication Flow",
+      total: 3,
+      passed: 3,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 450,
+      kind: "frontend",
+      firstFailure: null,
+      steps: [
+        makeStep(1, "Open app", "PASS"),
+        makeStep(2, "Enter credentials", "PASS"),
+        makeStep(3, "Submit login", "PASS"),
+      ],
+    };
+
+    renderPanel(group, "PASS", undefined, true, [], {
+      headless: true,
+      screenshot: "off",
+      video: "off",
+      highlightSteps: true,
+    });
+
+    // Preview tab shows informative placeholder
+    const previewPlaceholder = await screen.findByTestId("case-preview-placeholder");
+    expect(previewPlaceholder).toHaveTextContent(/No preview available/);
+    expect(previewPlaceholder).toHaveTextContent(/Screenshots and video recording were disabled/);
+
+    // Switch to Artifacts tab
+    const artifactsTabTrigger = screen.getByRole("tab", { name: "Artifacts" });
+    await userEvent.click(artifactsTabTrigger);
+
+    const emptyArtifacts = screen.getByTestId("case-artifacts-empty");
+    expect(emptyArtifacts).toBeInTheDocument();
+    expect(emptyArtifacts).toHaveTextContent("No media artifacts captured for this case");
+    expect(emptyArtifacts).toHaveTextContent(/disabled in Execution Settings/);
+    expect(emptyArtifacts).toHaveTextContent("Headless: On");
+    expect(emptyArtifacts).toHaveTextContent("Screenshots: Off");
+    expect(emptyArtifacts).toHaveTextContent("Video: Off");
+    expect(emptyArtifacts).toHaveTextContent("Highlight: Enabled");
+  });
 });
+
+
+
+
