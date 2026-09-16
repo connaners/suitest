@@ -28,7 +28,7 @@ function isFree(port) {
 
 // No silent fallback to preferred+1: the IDE MCP config and the user's muscle
 // memory both point at ONE port — booting somewhere else just hides the problem.
-async function pickPort(preferred = 4000) {
+async function pickPort(preferred = 4002) {
   if (await isFree(preferred)) return preferred;
   throw new Error(
     `Port ${preferred} is already in use.\n` +
@@ -147,20 +147,22 @@ async function up(cwd, { webDist, python, port: preferred }) {
     if (isAlive(prev.api) && (await isHealthy(`http://127.0.0.1:${prev.port}`))) {
       if (prev.version && prev.version !== pkg.version) {
         console.log(
-          `Already running: http://127.0.0.1:${prev.port}\n` +
-            `But it's version ${prev.version} and you invoked ${pkg.version} — ` +
-            `run "suitest down" then "suitest up" to switch.`,
+          `Detected version bump (${prev.version} -> ${pkg.version}). Recycling running stack...`,
         );
+        down(cwd);
+        await new Promise((resolve) => setTimeout(resolve, 500));
       } else {
         console.log(`Already running: http://127.0.0.1:${prev.port}`);
+        return prev;
       }
-      return prev;
     }
-    fs.rmSync(dirs.pids);
+    if (fs.existsSync(dirs.pids)) {
+      fs.rmSync(dirs.pids);
+    }
   }
 
   // Priority: explicit --port > port this project used before > 4000.
-  const port = await pickPort(preferred || config.port || 4000);
+  const port = await pickPort(preferred || config.port || 4002);
   const creds = loadOrCreateCredentials(dirs.credentials);
   const env = buildEnv(cwd, { port, webDist, creds });
   const base = `http://127.0.0.1:${port}`;

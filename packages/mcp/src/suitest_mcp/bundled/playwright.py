@@ -61,6 +61,7 @@ PLAYWRIGHT_COMMAND: list[str] = [
     "--browser",
     "chromium",
     "--isolated",
+    "--headless",
 ]
 
 

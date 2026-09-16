@@ -46,6 +46,7 @@ BUILTIN_SPECS: list[McpProviderConfig] = [
             "--browser",
             "chromium",
             "--isolated",
+            "--headless",
         ],
         config_json={"version_pin": "@playwright/mcp@latest"},
         is_default_for_target={"FE_WEB": True},
@@ -270,3 +271,55 @@ BUILTIN_SPECS: list[McpProviderConfig] = [
         call_timeout_seconds=60.0,
     ),
 ]
+
+
+def build_playwright_provider(
+    workspace_id: str,
+    *,
+    headless: bool = True,
+    video: str = "off",
+    viewport_size: str | None = None,
+) -> McpProviderConfig:
+    """Build a workspace-scoped playwright-mcp provider configuration.
+
+    When headless is False (Headed mode), --headless is omitted and the provider ID
+    is suffixed with :headed so McpPool isolates headed browser sessions from
+    headless sessions and they never collide or leak across runs.
+    """
+    command = [
+        "npx",
+        "-y",
+        "@playwright/mcp@latest",
+        "--browser",
+        "chromium",
+        "--isolated",
+        "--caps=devtools",
+    ]
+    if headless:
+        command.append("--headless")
+    if viewport_size:
+        command.extend(["--viewport-size", viewport_size])
+
+    provider_id = (
+        f"builtin:playwright-mcp:{workspace_id}"
+        if headless
+        else f"builtin:playwright-mcp:{workspace_id}:headed"
+    )
+    return McpProviderConfig(
+        id=provider_id,
+        workspace_id=workspace_id,
+        name="playwright-mcp",
+        kind="browser",
+        transport=McpTransport.STDIO,
+        command=command,
+        config_json={
+            "version_pin": "@playwright/mcp@latest",
+            "headless": headless,
+            "video": video,
+            **({"viewport_size": viewport_size} if viewport_size else {}),
+        },
+        is_default_for_target={"FE_WEB": True},
+        max_sessions=2,
+        spawn_timeout_seconds=120.0,
+        call_timeout_seconds=90.0,
+    )

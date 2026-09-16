@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 _DEFAULT_API_URL = "http://localhost:4000"
 _DEFAULT_WS_URL = "ws://localhost:4000"
 _DEFAULT_NGINX_URL = "http://localhost:8090"
-_DEFAULT_DB_URL = "postgresql+asyncpg://suitest:suitest@localhost:5432/suitest"
+_DEFAULT_DB_URL = "postgresql+asyncpg://suitest:suitest@localhost:5432/suitest_e2e"
 
 
 def _env(name: str, default: str) -> str:

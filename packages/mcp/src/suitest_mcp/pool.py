@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from suitest_mcp.client import McpSession, open_session
-from suitest_mcp.errors import McpPoolExhausted
+from suitest_mcp.errors import McpPoolExhausted, McpToolFailed
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -200,11 +200,23 @@ class McpPool:
         recycle = False
         try:
             yield sess
+        except McpToolFailed:
+            # Application-level tool failures (e.g. element missing, assertion mismatch)
+            # do not corrupt transport or browser state. Preserve the session so post-failure
+            # screenshots and video recording capture the actual failure state.
+            raise
         except Exception:
             recycle = True
             raise
         finally:
             await pool.release(sess, recycle=recycle)
+
+    async def recycle_provider(self, provider_id: str) -> None:
+        """Shut down and remove all active/idle sessions for a specific provider id."""
+        async with self._lock:
+            pool = self._pools.pop(provider_id, None)
+        if pool is not None:
+            await pool.shutdown()
 
     async def shutdown(self) -> None:
         async with self._lock:

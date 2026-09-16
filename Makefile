@@ -16,6 +16,7 @@ PY_SRC := apps packages
 # resolve to the top-level module name `conftest` under pytest's importlib mode
 # (see CI workflow note). Keep this list in sync with `.github/workflows/ci.yml`.
 PY_MYPY_TARGETS := apps/api apps/runner packages/agent packages/core packages/db packages/mcp packages/shared
+PNPM ?= $(shell which pnpm 2>/dev/null || echo "npx -y pnpm")
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  %-20s %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
@@ -68,47 +69,57 @@ migrate-rollback: ## Rollback last migration
 
 ##@ Frontend (pnpm / web)
 
-dev-web: ## Start Vite dev server (port 3000)
-	cd apps/web && pnpm dev
+dev-web: ## Start Vite dev server (port 3000, or VITE_PORT from env)
+	cd apps/web && VITE_PORT=$${VITE_PORT:-3000} VITE_BACKEND_PORT=$${VITE_BACKEND_PORT:-$${SUITEST_API_PORT:-4000}} $(PNPM) dev
 
 build-web: ## Build frontend for production
-	cd apps/web && pnpm build
+	cd apps/web && $(PNPM) build
 
 typecheck-web: ## TypeScript typecheck
-	cd apps/web && pnpm typecheck
+	cd apps/web && $(PNPM) typecheck
 
 lint-web: ## ESLint check
-	cd apps/web && pnpm lint
+	cd apps/web && $(PNPM) lint
 
 test-web: ## Vitest (frontend tests)
-	cd apps/web && pnpm test
+	cd apps/web && $(PNPM) test
 
 e2e-real: ## Real-backend dogfood e2e: seed ZERO state, boot api+web+runner, drive the UI
-	uv run python apps/api/scripts/seed_zero_e2e.py
-	@echo "pre-warming the playwright-mcp npx package (cuts the first run's cold-start)..."; \
-	npx -y @playwright/mcp@latest --version >/dev/null 2>&1 || true
-	@echo "starting ARQ runner in the background (run e2e needs it; api+web boot via the playwright config)..."; \
-	SUITEST_OTEL_DISABLED=true uv run python -m suitest_runner > /tmp/suitest_e2e_runner.log 2>&1 & \
+	@export SUITEST_DATABASE_URL="$${SUITEST_DATABASE_URL:-postgresql+asyncpg://suitest:suitest@localhost:5432/suitest_e2e}"; \
+	echo "Running E2E tests against isolated database: $$SUITEST_DATABASE_URL"; \
+	uv run python apps/api/scripts/seed_zero_e2e.py && \
+	uv run alembic upgrade head && \
+	npx -y @playwright/mcp@latest --version >/dev/null 2>&1 || true; \
+	SUITEST_OTEL_DISABLED=true SUITEST_DATABASE_URL="$$SUITEST_DATABASE_URL" uv run python -m suitest_runner > /tmp/suitest_e2e_runner.log 2>&1 & \
 	RUNNER_PID=$$!; \
 	trap "kill $$RUNNER_PID 2>/dev/null" EXIT INT TERM; \
-	cd apps/web && pnpm exec playwright test --config=playwright.realbackend.config.ts
+	cd apps/web && SUITEST_DATABASE_URL="$$SUITEST_DATABASE_URL" $(PNPM) exec playwright test --config=playwright.realbackend.config.ts
+
+SUITEST_API_PORT ?= 4000
 
 ##@ Dev servers
 
-dev-api: ## Start FastAPI dev server (port 4000, hot-reload)
-	uv run uvicorn --factory suitest_api.main:create_app --host 0.0.0.0 --port 4000 --reload
+dev-api: ## Start FastAPI dev server (port 4000, or SUITEST_API_PORT from env)
+	uv run uvicorn --factory suitest_api.main:create_app --host 0.0.0.0 --port $(SUITEST_API_PORT) --reload
 
 dev-api-zero: ## Start FastAPI at the ZERO base (default; LLM is workspace-configured via the web UI)
-	uv run uvicorn --factory suitest_api.main:create_app --host 0.0.0.0 --port 4000
+	uv run uvicorn --factory suitest_api.main:create_app --host 0.0.0.0 --port $(SUITEST_API_PORT)
 
 dev-api-docs: ## Open API docs in browser
-	open http://localhost:4000/docs
+	open http://localhost:$(SUITEST_API_PORT)/docs
 
-dev-runner: ## Start ARQ worker (runner)
-	uv run python -m suitest_runner
+dev-runner: ## Start runner (local supervisor in local mode, ARQ worker in server mode)
+	@if [ "$$(echo $${SUITEST_MODE})" = "local" ]; then \
+		uv run python -m suitest_runner.local_supervisor; \
+	else \
+		uv run python -m suitest_runner; \
+	fi
+
+dev-runner-local: ## Start LOCAL-mode run supervisor (SQLite polling, no Redis)
+	uv run python -m suitest_runner.local_supervisor
 
 dev: ## Start API + web + runner together (Ctrl-C stops all)
-	@echo "Starting API (4000), web (3000), runner..."
+	@echo "Starting API ($(SUITEST_API_PORT)), web ($${VITE_PORT:-3000}), runner..."
 	@trap 'kill 0' EXIT INT TERM; \
 	$(MAKE) dev-api & \
 	$(MAKE) dev-web & \

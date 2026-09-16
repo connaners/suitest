@@ -112,18 +112,31 @@ class McpRegistry:
             for spec in BUILTIN_SPECS
         }
 
+    def register_provider(self, workspace_id: str, provider: McpProviderConfig) -> None:
+        """Register or override an in-memory provider configuration for ``workspace_id``."""
+        if workspace_id not in self._by_workspace:
+            self._by_workspace[workspace_id] = {}
+        self._by_workspace[workspace_id][provider.name] = provider
+        if provider.id != provider.name:
+            self._by_workspace[workspace_id][provider.id] = provider
+
     def get(self, workspace_id: str, name: str) -> McpProviderConfig:
         """Return the provider config for ``name`` in ``workspace_id``.
 
         Raises:
             McpProviderUnavailable: workspace not loaded or name not registered.
         """
-        try:
-            return self._by_workspace[workspace_id][name]
-        except KeyError as exc:
-            raise McpProviderUnavailable(
-                f"unknown provider {name!r} for workspace {workspace_id!r}"
-            ) from exc
+        by_workspace = self._by_workspace.get(workspace_id, {})
+        if name in by_workspace:
+            return by_workspace[name]
+        if name.startswith("builtin:"):
+            stripped = name[len("builtin:") :]
+            if stripped in by_workspace:
+                return by_workspace[stripped]
+        for p in by_workspace.values():
+            if p.id == name:
+                return p
+        raise McpProviderUnavailable(f"unknown provider {name!r} for workspace {workspace_id!r}")
 
     def list_for_workspace(self, workspace_id: str) -> list[McpProviderConfig]:
         """List every provider currently registered for ``workspace_id``."""
