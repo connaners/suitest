@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory, createRouter } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -438,4 +438,167 @@ describe("Test Cases screen", () => {
       });
     });
   });
+
+  it("renders informative historical audit state in Artifacts tab when last run had media capture disabled", async () => {
+    const user = userEvent.setup();
+
+    server.use(
+      http.get("*/api/v1/test-cases/TC-101", () =>
+        HttpResponse.json({
+          id: "case_TC-101",
+          public_id: "TC-101",
+          name: "Checkout flow rejects expired cards",
+          description: "Verify expired card path returns a friendly error.",
+          priority: "P1",
+          status: "ACTIVE",
+          source: "MANUAL",
+          suite_id: "ste_smoke",
+          last_run_id: "run_nomedia_1",
+          steps: [],
+        }),
+      ),
+      http.get("*/api/v1/runs/run_nomedia_1", () =>
+        HttpResponse.json({
+          id: "run_nomedia_1",
+          public_id: "RUN-1001",
+          status: "PASS",
+          created_at: "2026-05-01T08:00:00Z",
+          started_at: "2026-05-01T08:00:01Z",
+          playwrightConfig: {
+            headless: true,
+            screenshot: "off",
+            video: "off",
+            highlightSteps: true,
+          },
+        }),
+      ),
+      http.get("*/api/v1/test-cases/case_TC-101/artifacts", () =>
+        HttpResponse.json({ items: [] }),
+      ),
+      http.get("*/api/v1/test-cases/case_TC-101/runs", () =>
+        HttpResponse.json([
+          {
+            id: "run_nomedia_1",
+            publicId: "RUN-1001",
+            status: "PASS",
+            createdAt: "2026-05-01T08:00:00Z",
+            startedAt: "2026-05-01T08:00:01Z",
+            playwrightConfig: {
+              headless: true,
+              screenshot: "off",
+              video: "off",
+              highlightSteps: true,
+            },
+          },
+        ]),
+      ),
+    );
+
+    renderCases("/cases?case=TC-101");
+
+    const artifactsTabTrigger = await screen.findByTestId("case-tab-artifacts", undefined, {
+      timeout: 3000,
+    });
+    await user.click(artifactsTabTrigger);
+
+    // Verify informative historical audit card or group empty state appears with execution settings badges
+    const emptyNotice = await screen.findByText(/No media artifacts captured/i);
+    expect(emptyNotice).toBeInTheDocument();
+    expect(screen.getByText("Headless: On")).toBeInTheDocument();
+    expect(screen.getByText("Screenshots: Off")).toBeInTheDocument();
+    expect(screen.getByText("Video: Off")).toBeInTheDocument();
+    expect(screen.getByText("Highlight: Enabled")).toBeInTheDocument();
+  });
+
+  it("renders both runs with artifacts and runs without artifacts in historical order in Artifacts tab", async () => {
+    const user = userEvent.setup();
+
+    server.use(
+      http.get("*/api/v1/test-cases/TC-101", () =>
+        HttpResponse.json({
+          id: "case_TC-101",
+          public_id: "TC-101",
+          name: "Checkout flow rejects expired cards",
+          description: "Verify expired card path returns a friendly error.",
+          priority: "P1",
+          status: "ACTIVE",
+          source: "MANUAL",
+          suite_id: "ste_smoke",
+          last_run_id: "run_nomedia_1238",
+          steps: [],
+        }),
+      ),
+      http.get("*/api/v1/test-cases/case_TC-101/runs", () =>
+        HttpResponse.json([
+          {
+            id: "run_nomedia_1238",
+            publicId: "R-1238",
+            status: "PASS",
+            createdAt: "2026-09-16T12:53:30Z",
+            startedAt: "2026-09-16T12:53:31Z",
+            playwrightConfig: {
+              headless: true,
+              screenshot: "off",
+              video: "off",
+              highlightSteps: false,
+            },
+          },
+          {
+            id: "run_media_1236",
+            publicId: "R-1236",
+            status: "PASS",
+            createdAt: "2026-09-16T12:18:09Z",
+            startedAt: "2026-09-16T12:18:10Z",
+            playwrightConfig: {
+              headless: true,
+              screenshot: "on",
+              video: "off",
+              highlightSteps: true,
+            },
+          },
+        ]),
+      ),
+      http.get("*/api/v1/test-cases/case_TC-101/artifacts", () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "art_1236_shot_1",
+              runId: "run_media_1236",
+              runPublicId: "R-1236",
+              runStatus: "PASS",
+              runDate: "2026-09-16T12:18:09Z",
+              runStepId: "step_1",
+              stepOrder: 1,
+              stepTitle: "Open login page",
+              kind: "SCREENSHOT",
+              sizeBytes: 15420,
+              mimeType: "image/png",
+              createdAt: "2026-09-16T12:18:15Z",
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderCases("/cases?case=TC-101");
+
+    const artifactsTabTrigger = await screen.findByTestId("case-tab-artifacts", undefined, {
+      timeout: 3000,
+    });
+    await user.click(artifactsTabTrigger);
+
+    // Verify both R-1238 and R-1236 artifact groups render
+    const group1238 = await screen.findByTestId("artifact-group-R-1238");
+    expect(group1238).toBeInTheDocument();
+    expect(within(group1238).getByText(/0 artifacts/i)).toBeInTheDocument();
+    expect(within(group1238).getByText(/No media artifacts captured for this run/i)).toBeInTheDocument();
+    expect(within(group1238).getByText(/Screenshots:/i)).toBeInTheDocument();
+    expect(within(group1238).getByText(/Video:/i)).toBeInTheDocument();
+
+    const group1236 = await screen.findByTestId("artifact-group-R-1236");
+    expect(group1236).toBeInTheDocument();
+    expect(within(group1236).getByText(/1 artifact/i)).toBeInTheDocument();
+  });
 });
+
+

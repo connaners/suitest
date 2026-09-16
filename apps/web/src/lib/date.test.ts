@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { formatRelativeTime, formatTimestamp, parseUtcDate } from "@/lib/date";
+import {
+  formatFriendlyTimestamp,
+  formatRelativeTime,
+  formatTimestamp,
+  parseUtcDate,
+} from "@/lib/date";
 
 describe("parseUtcDate", () => {
   it("parses ISO string with explicit Z", () => {
@@ -74,5 +79,18 @@ describe("formatRelativeTime", () => {
   it("returns fallback for null or undefined", () => {
     expect(formatRelativeTime(null)).toBe("—");
     expect(formatRelativeTime(undefined, { fallback: "Never" })).toBe("Never");
+  });
+});
+
+describe("formatFriendlyTimestamp", () => {
+  it("formats valid UTC timestamp to friendly standard format", () => {
+    const str = formatFriendlyTimestamp("2026-09-10T10:30:15Z");
+    expect(str).toMatch(/^Sep 10, 2026 · \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it("returns fallback for null or invalid dates", () => {
+    expect(formatFriendlyTimestamp(null)).toBe("—");
+    expect(formatFriendlyTimestamp(undefined)).toBe("—");
+    expect(formatFriendlyTimestamp("invalid-date", "N/A")).toBe("N/A");
   });
 });

@@ -485,4 +485,113 @@ describe("RunDetailPage", () => {
       expect(screen.getByTestId("run-minimize")).toHaveAttribute("href", "/runs?run=RUN-1001");
     });
   });
+
+  it("opens rerun dialog with inherited execution settings and sends them in rerun payload", async () => {
+    const user = userEvent.setup();
+    let rerunBody: unknown = null;
+
+    server.use(
+      http.get(`*/api/v1/runs/${RUN_ID}`, () =>
+        HttpResponse.json({
+          id: RUN_ID,
+          public_id: "RUN-1001",
+          project_id: "prj_demo",
+          name: "Checkout flow with custom config",
+          branch: "main",
+          commit_sha: "abcd123",
+          env: "staging",
+          status: "PASS",
+          trigger: "MANUAL",
+          tier_at_runtime: "ZERO",
+          started_at: "2026-05-27T10:00:00Z",
+          completed_at: "2026-05-27T10:00:30Z",
+          duration_ms: 30000,
+          summary: { total_steps: 1, passed_steps: 1, failed_steps: 0, duration_ms: 30000 },
+          playwright_config: {
+            headless: false,
+            screenshot: "on",
+            highlight_steps: true,
+          },
+          cases: [
+            { case_id: "case_01", case_public_id: "TC-101", case_title: "Checkout test" },
+          ],
+          created_at: "2026-05-27T10:00:00Z",
+          updated_at: "2026-05-27T10:00:30Z",
+        }),
+      ),
+      http.get(`*/api/v1/runs/${RUN_ID}/steps`, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "rs_01",
+              run_id: RUN_ID,
+              case_id: "case_01",
+              case_public_id: "TC-101",
+              case_name: "checkout_test",
+              title: "Step 1",
+              type: "action",
+              step_order: 1,
+              outcome: "PASS",
+              started_at: "2026-05-27T10:00:00Z",
+              completed_at: "2026-05-27T10:00:10Z",
+              duration_ms: 10000,
+              error_message: null,
+            },
+          ],
+        }),
+      ),
+      http.post(`*/api/v1/runs/${RUN_ID}/rerun`, async ({ request }) => {
+        rerunBody = await request.json();
+        return HttpResponse.json(
+          {
+            id: "run_new123",
+            public_id: "RUN-1002",
+            projectId: "prj_demo",
+            name: "Ad-hoc: Checkout test",
+            branch: "main",
+            commitSha: "abcd123",
+            env: "staging",
+            trigger: "MANUAL",
+            status: "QUEUED",
+            tierAtRuntime: "ZERO",
+            startedAt: null,
+            completedAt: null,
+            durationMs: null,
+            totalSteps: 1,
+            passedSteps: 0,
+            failedSteps: 0,
+            createdAt: "2026-05-27T10:01:00Z",
+          },
+          { status: 202 },
+        );
+      }),
+    );
+
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+
+    const rerunBtn = await screen.findByTestId("run-rerun-button");
+    await user.click(rerunBtn);
+
+    expect(await screen.findByTestId("rerun-selection-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("execution-settings-summary")).toHaveTextContent(
+      "Headed • Every step • Highlight",
+    );
+
+    const submitBtn = screen.getByTestId("rerun-dialog-submit");
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(rerunBody).toEqual(
+        expect.objectContaining({
+          caseIds: ["case_01"],
+          playwrightConfig: expect.objectContaining({
+            headless: false,
+            screenshot: "on",
+            highlightSteps: true,
+          }),
+        }),
+      );
+    });
+  });
 });

@@ -170,6 +170,31 @@ export async function fetchTestCaseSteps(
   return res.data;
 }
 
+export type CaseArtifactPublic = components["schemas"]["CaseArtifactPublic"];
+
+/** ``GET /test-cases/:id/artifacts`` — historical artifacts across all runs for this test case. */
+export async function fetchCaseArtifacts(
+  caseId: string,
+): Promise<{ items: CaseArtifactPublic[] }> {
+  const res = await api.get<CaseArtifactPublic[] | { items: CaseArtifactPublic[] }>(
+    `/test-cases/${caseId}/artifacts`,
+  );
+  return { items: Array.isArray(res.data) ? res.data : (res.data.items ?? []) };
+}
+
+export type CaseRunPublic = components["schemas"]["CaseRunPublic"];
+
+/** ``GET /test-cases/:id/runs`` — historical runs that executed this test case. */
+export async function fetchCaseRuns(
+  caseId: string,
+): Promise<{ items: CaseRunPublic[] }> {
+  const res = await api.get<CaseRunPublic[] | { items: CaseRunPublic[] }>(
+    `/test-cases/${caseId}/runs`,
+  );
+  return { items: Array.isArray(res.data) ? res.data : (res.data.items ?? []) };
+}
+
+
 // ---------------------------------------------------------------------------
 // Screenshot diff threshold (M12-3 — per-case pixel-diff threshold override).
 // ---------------------------------------------------------------------------

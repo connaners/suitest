@@ -52,6 +52,7 @@ from suitest_api.deps.scope import TenantContext, require_workspace_membership
 from suitest_api.deps.tier import require_autonomy, require_tier
 from suitest_api.routers._pagination import decode_cursor_or_400, encode_next
 from suitest_api.routers._tier import resolve_workspace_tier
+from suitest_api.schemas.run import CaseArtifactPublic, CaseRunPublic
 from suitest_api.schemas.self_heal import (
     SelectorRepairApplied,
     SelectorRepairApplyRequest,
@@ -475,6 +476,36 @@ async def get_test_case(
         or (suite.default_testing_approach if suite is not None else None)
         or TestingApproach.BLACK_BOX
     )
+    last_run_id = case.last_run_id
+    last_run_result = case.last_run_result
+    last_run_at = case.last_run_at
+    last_duration_ms = case.last_duration_ms
+
+    if not last_run_id:
+        from sqlalchemy import select
+        from suitest_db.models.run import Run, RunStep
+
+        latest_run_stmt = (
+            select(Run.id, Run.status, Run.completed_at, Run.duration_ms)
+            .join(RunStep, RunStep.run_id == Run.id)
+            .where(RunStep.case_id == case.id)
+            .order_by(Run.created_at.desc())
+            .limit(1)
+        )
+        latest_row = (await session.execute(latest_run_stmt)).first()
+        if latest_row is not None:
+            last_run_id = str(latest_row[0])
+            status_obj = latest_row[1]
+            last_run_result = (
+                status_obj.value
+                if hasattr(status_obj, "value")
+                else str(status_obj)
+                if status_obj is not None
+                else None
+            )
+            last_run_at = latest_row[2]
+            last_duration_ms = latest_row[3]
+
     return TestCaseDetail(
         id=case.id,
         suite_id=case.suite_id,
@@ -499,10 +530,10 @@ async def get_test_case(
         tags=tags,
         automation_file_path=case.automation_file_path,
         automation_code=case.automation_code,
-        last_run_id=case.last_run_id,
-        last_run_result=case.last_run_result,
-        last_run_at=case.last_run_at,
-        last_duration_ms=case.last_duration_ms,
+        last_run_id=last_run_id,
+        last_run_result=last_run_result,
+        last_run_at=last_run_at,
+        last_duration_ms=last_duration_ms,
     )
 
 
@@ -1148,3 +1179,164 @@ async def export_test_case_code(
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get(
+    "/test-cases/{case_id}/artifacts",
+    response_model=list[CaseArtifactPublic],
+)
+async def list_case_artifacts(
+    case_id: str,
+    ctx: Annotated[TenantContext, Depends(require_workspace_membership)],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> list[CaseArtifactPublic]:
+    """Return historical artifacts created by all test runs that executed this test case."""
+    internal_id = await _resolve_case_internal_id(session, ctx.workspace_id, case_id)
+    if internal_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="test case not found")
+
+    repo = TestCaseRepo(session)
+    case = await repo.get_by_id(internal_id)
+    if (
+        case is None
+        or case.deleted_at is not None
+        or not await _suite_in_scope(session, case.suite_id, ctx.workspace_id)
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="test case not found")
+
+    from sqlalchemy import func, select
+    from suitest_db.models.case import TestStep
+    from suitest_db.models.run import Artifact, Run, RunStep
+
+    stmt = (
+        select(
+            Artifact,
+            Run.id.label("run_id"),
+            Run.public_id.label("run_public_id"),
+            Run.status.label("run_status"),
+            Run.created_at.label("run_date"),
+            func.dense_rank()
+            .over(partition_by=RunStep.run_id, order_by=RunStep.step_order.asc())
+            .label("case_step_order"),
+            RunStep.state_snapshot.label("state_snapshot"),
+        )
+        .join(RunStep, RunStep.id == Artifact.run_step_id)
+        .join(Run, Run.id == RunStep.run_id)
+        .where(RunStep.case_id == internal_id)
+        .order_by(Run.created_at.desc(), RunStep.step_order.asc(), Artifact.created_at.desc())
+    )
+    rows = (await session.execute(stmt)).all()
+
+    tc_steps_stmt = select(TestStep.order, TestStep.action).where(TestStep.case_id == internal_id)
+    tc_steps_map: dict[int, str] = {
+        int(r[0]): str(r[1]) for r in (await session.execute(tc_steps_stmt)).all()
+    }
+
+    return [
+        CaseArtifactPublic(
+            id=artifact.id,
+            run_id=run_id,
+            run_public_id=run_public_id,
+            run_status=run_status,
+            run_date=run_date,
+            run_step_id=artifact.run_step_id,
+            step_order=int(case_step_order),
+            step_title=(
+                str(
+                    (snap := state_snapshot if isinstance(state_snapshot, dict) else {}).get(
+                        "action"
+                    )
+                    or snap.get("description")
+                    or snap.get("title")
+                    or ""
+                ).strip()
+                or tc_steps_map.get(int(case_step_order))
+                or None
+            ),
+            kind=artifact.kind,
+            size_bytes=artifact.size_bytes,
+            mime_type=artifact.mime_type,
+            created_at=artifact.created_at,
+        )
+        for (
+            artifact,
+            run_id,
+            run_public_id,
+            run_status,
+            run_date,
+            case_step_order,
+            state_snapshot,
+        ) in rows
+    ]
+
+
+@router.get(
+    "/test-cases/{case_id}/runs",
+    response_model=list[CaseRunPublic],
+    summary="List historical runs for a test case",
+)
+async def list_case_runs(
+    case_id: str,
+    ctx: Annotated[TenantContext, Depends(require_workspace_membership)],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> list[CaseRunPublic]:
+    """Return historical runs that executed this test case."""
+    internal_id = await _resolve_case_internal_id(session, ctx.workspace_id, case_id)
+    if internal_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="test case not found")
+
+    repo = TestCaseRepo(session)
+    case = await repo.get_by_id(internal_id)
+    if (
+        case is None
+        or case.deleted_at is not None
+        or not await _suite_in_scope(session, case.suite_id, ctx.workspace_id)
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="test case not found")
+
+    from sqlalchemy import select
+    from suitest_db.models.run import Run, RunStep
+
+    from suitest_api.schemas.run import PlaywrightConfig
+
+    stmt = (
+        select(
+            Run.id,
+            Run.public_id,
+            Run.status,
+            Run.created_at,
+            Run.started_at,
+            Run.completed_at,
+            Run.metadata_json.label("run_metadata"),
+        )
+        .outerjoin(RunStep, RunStep.run_id == Run.id)
+        .where((RunStep.case_id == internal_id) | (Run.id == case.last_run_id))
+        .group_by(Run.id)
+        .order_by(Run.created_at.desc())
+    )
+    rows = (await session.execute(stmt)).all()
+
+    items: list[CaseRunPublic] = []
+    for r in rows:
+        metadata_dict = r.run_metadata if isinstance(r.run_metadata, dict) else {}
+        pw_cfg: PlaywrightConfig | None = None
+        if "playwright_config" in metadata_dict and isinstance(
+            metadata_dict["playwright_config"], dict
+        ):
+            try:
+                pw_cfg = PlaywrightConfig.model_validate(metadata_dict["playwright_config"])
+            except Exception:
+                pw_cfg = None
+
+        items.append(
+            CaseRunPublic(
+                id=r.id,
+                public_id=r.public_id,
+                status=r.status,
+                created_at=r.created_at,
+                started_at=r.started_at,
+                completed_at=r.completed_at,
+                playwright_config=pw_cfg,
+            )
+        )
+    return items

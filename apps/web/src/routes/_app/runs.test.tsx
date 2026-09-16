@@ -216,4 +216,41 @@ describe("Test Runs screen", () => {
     const counters = screen.getAllByTestId("runs-counter");
     expect(counters.length).toBe(6);
   });
+
+  it("filters runs list by search query and supports clear", async () => {
+    const user = userEvent.setup();
+    renderRuns();
+    await screen.findByTestId("runs-summary", undefined, { timeout: 3000 });
+    const searchInput = screen.getByTestId("runs-search-input");
+    expect(searchInput).toBeInTheDocument();
+
+    const initialRows = screen.getAllByTestId("runs-row");
+    expect(initialRows.length).toBeGreaterThan(0);
+
+    // Filter with no match
+    await user.type(searchInput, "nonexistent-query-xyz");
+    expect(screen.queryAllByTestId("runs-row")).toHaveLength(0);
+    expect(screen.getByTestId("runs-list-no-search-results")).toHaveTextContent(
+      /No runs matching .nonexistent-query-xyz. found./,
+    );
+
+    // Clear search
+    const clearBtn = screen.getByTestId("runs-search-clear");
+    await user.click(clearBtn);
+    expect(screen.getAllByTestId("runs-row").length).toBe(initialRows.length);
+  });
+
+  it("renders step outcome counts on each run row in the list", async () => {
+    renderRuns();
+    await screen.findByTestId("runs-summary", undefined, { timeout: 3000 });
+    const rowCounts = await screen.findAllByTestId("runs-row-counts", undefined, { timeout: 3000 });
+    expect(rowCounts.length).toBeGreaterThan(0);
+    // Verified that each row displays step counts (e.g. "2 steps · 2 passed")
+    expect(rowCounts[0]).toHaveTextContent(/steps/);
+
+    const runsCount = screen.getByTestId("runs-count");
+    expect(runsCount).toBeInTheDocument();
+    expect(runsCount).toHaveTextContent(/Showing/);
+  });
 });
+

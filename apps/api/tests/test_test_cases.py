@@ -249,3 +249,183 @@ async def test_list_test_cases_pagination_cursor_stable(api_db: ApiDb) -> None:
         ).json()
     assert len(page2["items"]) == 1
     assert page1["items"][0]["id"] != page2["items"][0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_list_test_case_artifacts(api_db: ApiDb) -> None:
+    from suitest_db.models.run import Artifact, Run, RunStep
+    from suitest_shared.domain.enums import ArtifactKind, RunStatus, RunTrigger, StepOutcome
+
+    user = await api_db.seed_user(email="tc-art@example.com")
+    ws = await api_db.member_workspace(user, slug="tc-art-ws")
+    suite = await _suite(api_db, ws.id)
+    case = TestCase(
+        suite_id=suite.id, public_id="TC-ART-1", name="art-case", source=CaseSource.MANUAL
+    )
+    await api_db.add_all([case])
+
+    run = Run(
+        workspace_id=ws.id,
+        project_id=suite.project_id,
+        public_id="R-9999",
+        name="Test Run",
+        trigger=RunTrigger.MANUAL,
+        status=RunStatus.PASS,
+        tier_at_runtime=Tier.LOCAL,
+    )
+    await api_db.add_all([run])
+
+    step = RunStep(
+        run_id=run.id,
+        case_id=case.id,
+        step_order=1,
+        outcome=StepOutcome.PASS,
+    )
+    await api_db.add_all([step])
+
+    artifact = Artifact(
+        run_step_id=step.id,
+        kind=ArtifactKind.SCREENSHOT,
+        url="file:///tmp/shot1.png",
+        size_bytes=2048,
+        mime_type="image/png",
+    )
+    await api_db.add_all([artifact])
+
+    async with api_db.client(user) as c:
+        resp = await c.get(
+            f"/api/v1/test-cases/{case.id}/artifacts", headers={"X-Workspace-Id": ws.id}
+        )
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) == 1
+    assert items[0]["id"] == artifact.id
+    assert items[0]["runPublicId"] == "R-9999"
+    assert items[0]["runStatus"] == "PASS"
+    assert items[0]["kind"] == "SCREENSHOT"
+    assert items[0]["stepOrder"] == 1
+    assert items[0]["sizeBytes"] == 2048
+
+
+@pytest.mark.asyncio
+async def test_list_test_case_runs_includes_runs_without_artifacts(api_db: ApiDb) -> None:
+    from suitest_db.models.run import Run, RunStep
+    from suitest_shared.domain.enums import RunStatus, RunTrigger, StepOutcome
+
+    user = await api_db.seed_user(email="tc-runs@example.com")
+    ws = await api_db.member_workspace(user, slug="tc-runs-ws")
+    suite = await _suite(api_db, ws.id)
+    case = TestCase(
+        suite_id=suite.id, public_id="TC-RUNS-1", name="runs-case", source=CaseSource.MANUAL
+    )
+    await api_db.add_all([case])
+
+    # Run 1: with media disabled
+    run1 = Run(
+        workspace_id=ws.id,
+        project_id=suite.project_id,
+        public_id="R-1001",
+        name="Nomedia Run",
+        trigger=RunTrigger.MANUAL,
+        status=RunStatus.PASS,
+        tier_at_runtime=Tier.LOCAL,
+        metadata_={
+            "playwright_config": {
+                "headless": True,
+                "screenshot": "off",
+                "video": "off",
+                "highlight_steps": False,
+            }
+        },
+    )
+    # Run 2: with screenshot enabled
+    run2 = Run(
+        workspace_id=ws.id,
+        project_id=suite.project_id,
+        public_id="R-1002",
+        name="Media Run",
+        trigger=RunTrigger.MANUAL,
+        status=RunStatus.PASS,
+        tier_at_runtime=Tier.LOCAL,
+        metadata_={
+            "playwright_config": {
+                "headless": True,
+                "screenshot": "on",
+                "video": "off",
+                "highlight_steps": True,
+            }
+        },
+    )
+    await api_db.add_all([run1, run2])
+
+    step1 = RunStep(
+        run_id=run1.id,
+        case_id=case.id,
+        step_order=1,
+        outcome=StepOutcome.PASS,
+    )
+    step2 = RunStep(
+        run_id=run2.id,
+        case_id=case.id,
+        step_order=1,
+        outcome=StepOutcome.PASS,
+    )
+    await api_db.add_all([step1, step2])
+
+    async with api_db.client(user) as c:
+        resp = await c.get(f"/api/v1/test-cases/{case.id}/runs", headers={"X-Workspace-Id": ws.id})
+    assert resp.status_code == 200
+    runs = resp.json()
+    assert len(runs) == 2
+    public_ids = [r["publicId"] for r in runs]
+    assert "R-1001" in public_ids
+    assert "R-1002" in public_ids
+
+    nomedia_run = next(r for r in runs if r["publicId"] == "R-1001")
+    assert nomedia_run["playwrightConfig"] is not None
+    assert nomedia_run["playwrightConfig"]["screenshot"] == "off"
+    assert nomedia_run["playwrightConfig"]["highlightSteps"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_test_case_falls_back_to_latest_run(api_db: ApiDb) -> None:
+    from suitest_db.models.run import Run, RunStep
+    from suitest_shared.domain.enums import RunStatus, RunTrigger, StepOutcome
+
+    user = await api_db.seed_user(email="tc-fb@example.com")
+    ws = await api_db.member_workspace(user, slug="tc-fb-ws")
+    suite = await _suite(api_db, ws.id)
+    case = TestCase(
+        suite_id=suite.id,
+        public_id="TC-FB-1",
+        name="fallback-case",
+        source=CaseSource.MANUAL,
+        last_run_id=None,
+    )
+    await api_db.add_all([case])
+
+    run = Run(
+        workspace_id=ws.id,
+        project_id=suite.project_id,
+        public_id="R-FALLBACK",
+        name="Fallback Run",
+        trigger=RunTrigger.MANUAL,
+        status=RunStatus.PASS,
+        tier_at_runtime=Tier.LOCAL,
+    )
+    await api_db.add_all([run])
+
+    step = RunStep(
+        run_id=run.id,
+        case_id=case.id,
+        step_order=1,
+        outcome=StepOutcome.PASS,
+    )
+    await api_db.add_all([step])
+
+    async with api_db.client(user) as c:
+        resp = await c.get(f"/api/v1/test-cases/{case.id}", headers={"X-Workspace-Id": ws.id})
+    assert resp.status_code == 200
+    detail = resp.json()
+    assert detail["last_run_id"] == run.id
+    assert detail["last_run_result"] == "PASS"

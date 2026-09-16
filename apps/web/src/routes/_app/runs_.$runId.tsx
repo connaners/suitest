@@ -8,7 +8,7 @@ import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
 import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunSummaryCard } from "@/components/runs/RunSummaryCard";
 import { Button } from "@/components/ui/button";
-import { useCancelRun, useRerunRun } from "@/hooks/use-runs";
+import { useCancelRun, useRerunRun, type PlaywrightConfigInput } from "@/hooks/use-runs";
 import { ApiError, fetchRun } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
@@ -56,7 +56,7 @@ export function RunDetailPage(): React.ReactElement {
 
   // Same guard as the /runs side panel: a live run cannot be re-queued.
   const isLive = run?.status === "RUNNING" || run?.status === "QUEUED";
-  const cancelDisabled = !isLive || cancelMutation.isPending;
+  const cancelDisabled = run === undefined || !isLive || cancelMutation.isPending;
   const rerunDisabled = run === undefined || isLive || rerunMutation.isPending;
 
   const dialogGroups = explorerGroups.length > 0 ? explorerGroups : fallbackGroups;
@@ -72,10 +72,10 @@ export function RunDetailPage(): React.ReactElement {
     cancelMutation.mutate(run.id);
   };
 
-  const handleConfirmRerun = (selectedCaseIds: string[]): void => {
+  const handleConfirmRerun = (selectedCaseIds: string[], config?: PlaywrightConfigInput): void => {
     if (run === undefined) return;
     rerunMutation.mutate(
-      { runId: run.id, caseIds: selectedCaseIds },
+      { runId: run.id, caseIds: selectedCaseIds, playwrightConfig: config },
       {
         onSuccess: (data) => {
           setRerunDialogOpen(false);
@@ -93,8 +93,13 @@ export function RunDetailPage(): React.ReactElement {
 
   const handleRerunCase = (caseId: string): void => {
     if (run === undefined) return;
+    const runConfig =
+      (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
+        .playwright_config ??
+      (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
+        .playwrightConfig;
     rerunMutation.mutate(
-      { runId: run.id, caseIds: [caseId] },
+      { runId: run.id, caseIds: [caseId], playwrightConfig: runConfig },
       {
         onSuccess: (data) => {
           const targetId = data.publicId || data.public_id || data.id;
@@ -194,6 +199,13 @@ export function RunDetailPage(): React.ReactElement {
         runId={runId}
         status={run?.status}
         plannedCases={run?.cases}
+        playwrightConfig={
+          (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput } | undefined)
+            ?.playwright_config ??
+          (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput } | undefined)
+            ?.playwrightConfig ??
+          null
+        }
         onSelectCasePublicId={setSelectedCasePublicId}
         onGroupsChange={setExplorerGroups}
         onRerunCase={handleRerunCase}
@@ -208,6 +220,13 @@ export function RunDetailPage(): React.ReactElement {
           groups={dialogGroups}
           onConfirm={handleConfirmRerun}
           isPending={rerunMutation.isPending}
+          initialSettings={
+            (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
+              .playwright_config ??
+            (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
+              .playwrightConfig ??
+            null
+          }
         />
       ) : null}
     </section>

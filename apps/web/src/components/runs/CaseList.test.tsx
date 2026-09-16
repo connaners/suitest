@@ -119,4 +119,125 @@ describe("<CaseList>", () => {
     expect(screen.getByText("Run B Case 1")).toBeInTheDocument();
     expect(screen.getByText("Run B Case 2")).toBeInTheDocument();
   });
+
+  it("filters test cases in real-time by search query (id and name) and supports clearing", async () => {
+    const user = userEvent.setup();
+    const groups: CaseGroup[] = [
+      makeGroup({ caseId: "tc_1", casePublicId: "TC-1001", caseName: "Login Authentication" }),
+      makeGroup({ caseId: "tc_2", casePublicId: "TC-1002", caseName: "File Upload Flow" }),
+      makeGroup({ caseId: "tc_3", casePublicId: "TC-2001", caseName: "Checkout Payment" }),
+    ];
+
+    render(<CaseList groups={groups} selectedCaseId="tc_1" onSelectCase={vi.fn()} />);
+
+    const searchInput = screen.getByTestId("case-list-search-input");
+    expect(searchInput).toBeInTheDocument();
+    expect(screen.getAllByTestId("case-row")).toHaveLength(3);
+
+    // Search by public ID
+    await user.type(searchInput, "2001");
+    expect(screen.getAllByTestId("case-row")).toHaveLength(1);
+    expect(screen.getByText("Checkout Payment")).toBeInTheDocument();
+    expect(screen.queryByText("Login Authentication")).not.toBeInTheDocument();
+
+    // Clear search using clear button
+    const clearBtn = screen.getByTestId("case-list-search-clear");
+    await user.click(clearBtn);
+    expect(screen.getAllByTestId("case-row")).toHaveLength(3);
+
+    // Search by case name
+    await user.type(searchInput, "upload");
+    expect(screen.getAllByTestId("case-row")).toHaveLength(1);
+    expect(screen.getByText("File Upload Flow")).toBeInTheDocument();
+
+    // Search with no matching results
+    await user.clear(searchInput);
+    await user.type(searchInput, "nonexistent-xyz");
+    expect(screen.queryAllByTestId("case-row")).toHaveLength(0);
+    expect(screen.getByTestId("case-list-no-search-results")).toHaveTextContent(
+      /No test cases matching .nonexistent-xyz./,
+    );
+  });
+
+  it("renders active step as 'running' and remaining unexecuted steps as 'queued' during live runs", () => {
+    const runningGroups: CaseGroup[] = [
+      makeGroup({
+        caseId: "tc_live",
+        casePublicId: "TC-201",
+        caseName: "Live In-Progress Case",
+        total: 4,
+        passed: 1,
+        failed: 0,
+        rollup: "running",
+      }),
+    ];
+
+    render(
+      <CaseList
+        groups={runningGroups}
+        selectedCaseId="tc_live"
+        onSelectCase={vi.fn()}
+        runStatus="RUNNING"
+      />,
+    );
+
+    const counts = screen.getByTestId("case-row-counts");
+    expect(counts).toHaveTextContent("4 steps · 1 passed · 1 running · 2 queued");
+    expect(counts).not.toHaveTextContent("skipped");
+  });
+
+  it("renders running case with 0 passed steps as '1 running · N queued'", () => {
+    const startingGroups: CaseGroup[] = [
+      makeGroup({
+        caseId: "tc_starting",
+        casePublicId: "TC-203",
+        caseName: "Starting Case",
+        total: 3,
+        passed: 0,
+        failed: 0,
+        rollup: "running",
+      }),
+    ];
+
+    render(
+      <CaseList
+        groups={startingGroups}
+        selectedCaseId="tc_starting"
+        onSelectCase={vi.fn()}
+        runStatus="RUNNING"
+      />,
+    );
+
+    const counts = screen.getByTestId("case-row-counts");
+    expect(counts).toHaveTextContent("3 steps · 1 running · 2 queued");
+    expect(counts).not.toHaveTextContent("skipped");
+  });
+
+  it("renders pending cases with 0 executed steps as 'Queued' during live runs", () => {
+    const queuedGroups: CaseGroup[] = [
+      makeGroup({
+        caseId: "tc_queued",
+        casePublicId: "TC-202",
+        caseName: "Queued Waiting Case",
+        total: 5,
+        passed: 0,
+        failed: 0,
+        rollup: "queued",
+      }),
+    ];
+
+    render(
+      <CaseList
+        groups={queuedGroups}
+        selectedCaseId="tc_queued"
+        onSelectCase={vi.fn()}
+        runStatus="RUNNING"
+      />,
+    );
+
+    const counts = screen.getByTestId("case-row-counts");
+    expect(counts).toHaveTextContent("5 steps · Queued");
+    expect(counts).not.toHaveTextContent("skipped");
+  });
 });
+
