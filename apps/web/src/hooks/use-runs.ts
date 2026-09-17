@@ -42,6 +42,15 @@ export interface RunPublicResponse {
  * supports multi-case runs — the M1d "Run now" shortcut on a case detail
  * just sends a one-item selection.
  */
+export interface PlaywrightConfigInput {
+  headless?: boolean | undefined;
+  screenshot?: ("off" | "only-on-failure" | "on") | undefined;
+  video?: ("off" | "retain-on-failure" | "on") | undefined;
+  videoQuality?: ("360p" | "480p" | "720p" | "1080p") | undefined;
+  highlightSteps?: boolean | undefined;
+  cleanSessionBetweenCases?: boolean | undefined;
+}
+
 export interface CreateRunInput {
   projectId: string;
   name: string;
@@ -50,6 +59,7 @@ export interface CreateRunInput {
   commitSha?: string;
   env?: string;
   trigger?: components["schemas"]["RunTrigger"];
+  playwrightConfig?: PlaywrightConfigInput;
 }
 
 export interface RunsSummary {
@@ -241,6 +251,7 @@ export function useCreateRun(): UseMutationResult<RunPublicResponse, Error, Crea
         commitSha: input.commitSha ?? null,
         env: input.env ?? "staging",
         trigger: input.trigger ?? "MANUAL",
+        ...(input.playwrightConfig ? { playwrightConfig: input.playwrightConfig } : {}),
       });
       return res.data;
     },
@@ -290,12 +301,14 @@ export interface RerunRunInput {
   runId: string;
   caseIds?: string[] | undefined;
   failedOnly?: boolean | undefined;
+  playwrightConfig?: PlaywrightConfigInput | undefined;
 }
 
 /**
  * ``POST /runs/:id/rerun`` — clone a run's selection into a new QUEUED row.
  *
- * Supports full rerun, selective rerun by caseIds, or failedOnly rerun.
+ * Supports full rerun, selective rerun by caseIds, or failedOnly rerun, with optional
+ * execution settings overrides (inherits source run configuration when omitted).
  * Returns the new run on 202 so the caller can navigate to it. Invalidates
  * the runs list so the new row shows up at the top.
  */
@@ -310,12 +323,20 @@ export function useRerunRun(): UseMutationResult<
       const runId = typeof input === "string" ? input : input.runId;
       const caseIds = typeof input === "string" ? undefined : input.caseIds;
       const failedOnly = typeof input === "string" ? false : Boolean(input.failedOnly);
+      const playwrightConfig = typeof input === "string" ? undefined : input.playwrightConfig;
 
       const url = `/runs/${runId}/rerun${failedOnly ? "?failedOnly=true" : ""}`;
-      const body =
-        caseIds && caseIds.length > 0
-          ? { case_ids: caseIds, caseIds, failed_only: failedOnly, failedOnly }
-          : undefined;
+      const hasPayload = (caseIds && caseIds.length > 0) || Boolean(playwrightConfig);
+      const body = hasPayload
+        ? {
+            case_ids: caseIds,
+            caseIds,
+            failed_only: failedOnly,
+            failedOnly,
+            playwright_config: playwrightConfig,
+            playwrightConfig,
+          }
+        : undefined;
       const res = await api.post<RunPublicResponse>(url, body);
       return res.data;
     },

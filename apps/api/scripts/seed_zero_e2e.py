@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 
@@ -157,11 +158,38 @@ async def _seed_runnable_workspaces(session: AsyncSession, *, user: User) -> Non
     )
 
 
+async def _ensure_db_exists(url: str) -> None:
+    """Ensure the target PostgreSQL database exists before seeding."""
+    if "postgresql" not in url:
+        return
+    from urllib.parse import urlparse
+
+    import asyncpg  # type: ignore[import-untyped]
+
+    clean_url = url.replace("postgresql+asyncpg://", "http://").replace("postgresql://", "http://")
+    parsed = urlparse(clean_url)
+    target_db = parsed.path.lstrip("/")
+    if not target_db:
+        return
+    maint_url = f"postgresql://{parsed.username or 'suitest'}:{parsed.password or 'suitest'}@{parsed.hostname or 'localhost'}:{parsed.port or 5432}/postgres"
+    try:
+        conn = await asyncpg.connect(maint_url)
+        try:
+            exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", target_db)
+            if not exists:
+                await conn.execute(f'CREATE DATABASE "{target_db}"')
+        finally:
+            await conn.close()
+    except Exception as exc:
+        logging.getLogger("suitest.seed_zero_e2e").debug("Database creation check skipped: %s", exc)
+
+
 async def seed() -> str:
     """Upsert the user + empty workspace; return the workspace id."""
-    url = os.environ.get("SUITEST_DATABASE_URL")
-    if not url:
-        raise SystemExit("SUITEST_DATABASE_URL is not set (load .env or `make` target)")
+    url = os.environ.get(
+        "SUITEST_DATABASE_URL", "postgresql+asyncpg://suitest:suitest@localhost:5432/suitest"
+    )
+    await _ensure_db_exists(url)
 
     engine = create_async_engine(url)
     maker = async_sessionmaker(engine, expire_on_commit=False)

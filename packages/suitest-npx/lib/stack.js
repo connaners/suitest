@@ -147,16 +147,18 @@ async function up(cwd, { webDist, python, port: preferred }) {
     if (isAlive(prev.api) && (await isHealthy(`http://127.0.0.1:${prev.port}`))) {
       if (prev.version && prev.version !== pkg.version) {
         console.log(
-          `Already running: http://127.0.0.1:${prev.port}\n` +
-            `But it's version ${prev.version} and you invoked ${pkg.version} — ` +
-            `run "suitest down" then "suitest up" to switch.`,
+          `Detected version bump (${prev.version} -> ${pkg.version}). Recycling running stack...`,
         );
+        down(cwd);
+        await new Promise((resolve) => setTimeout(resolve, 500));
       } else {
         console.log(`Already running: http://127.0.0.1:${prev.port}`);
+        return prev;
       }
-      return prev;
     }
-    fs.rmSync(dirs.pids);
+    if (fs.existsSync(dirs.pids)) {
+      fs.rmSync(dirs.pids, { force: true });
+    }
   }
 
   // Priority: explicit --port > port this project used before > 4000.

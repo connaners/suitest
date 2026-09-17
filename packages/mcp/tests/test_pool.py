@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from suitest_mcp.errors import McpPoolExhausted
+from suitest_mcp.errors import McpPoolExhausted, McpToolFailed
 from suitest_mcp.models import McpProviderConfig, McpTransport
 from suitest_mcp.pool import McpPool
 
@@ -82,6 +82,22 @@ async def test_pool_recycles_session_on_exception(mock_mcp_server: MockMcpServer
         # Session was destroyed — next acquire spawns fresh.
         async with pool.acquire(cfg) as s2:
             assert s2.invocations == 0
+    finally:
+        await pool.shutdown()
+
+
+async def test_pool_preserves_session_on_mcp_tool_failed(mock_mcp_server: MockMcpServer) -> None:
+    pool = McpPool()
+    cfg = _cfg(mock_mcp_server.command, max_sessions=1)
+    try:
+        with pytest.raises(McpToolFailed):
+            async with pool.acquire(cfg) as s1:
+                await s1.call_tool("echo", {"i": 1}, timeout_seconds=10.0)
+                invocations_first = s1.invocations
+                raise McpToolFailed("element not found")
+        # Session was NOT destroyed — next acquire reuses the same session.
+        async with pool.acquire(cfg) as s2:
+            assert s2.invocations == invocations_first
     finally:
         await pool.shutdown()
 

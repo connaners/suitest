@@ -18,8 +18,11 @@ import os
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
+
+if TYPE_CHECKING:
+    from suitest_mcp.registry import McpRegistry
 
 import pytest
 import pytest_asyncio
@@ -137,6 +140,11 @@ class _FakeSession:
     def add(self, _instance: object) -> None:
         return None
 
+    async def execute(self, _stmt: object) -> MagicMock:
+        res = MagicMock()
+        res.all.return_value = []
+        return res
+
 
 def _session_factory(project: MagicMock) -> Any:
     """Return a callable that yields a fresh session-context per call."""
@@ -216,6 +224,11 @@ class _FakeRegistry:
     async def load_for_workspace(self, _session: object, _workspace_id: str) -> None:
         return None
 
+    def register_provider(self, workspace_id: str, provider: object) -> None:
+        if workspace_id not in self._by_workspace:
+            self._by_workspace[workspace_id] = {}
+        self._by_workspace[workspace_id][getattr(provider, "name", str(provider))] = provider
+
 
 def _make_invoker(outcomes: list[str]) -> MagicMock:
     """Build an invoker that returns ok / raises FAIL by step order.
@@ -237,6 +250,8 @@ def _make_invoker(outcomes: list[str]) -> MagicMock:
         arguments: dict[str, object],
         ctx: object,
     ) -> McpToolResult:
+        if tool in ("browser_evaluate", "browser_take_screenshot"):
+            return McpToolResult(ok=True, output={}, stdout="{}", duration_ms=10)
         idx = state["i"]
         state["i"] += 1
         outcome = outcomes[idx] if idx < len(outcomes) else "PASS"
@@ -248,17 +263,17 @@ def _make_invoker(outcomes: list[str]) -> MagicMock:
     return inv
 
 
-def _make_registry_instance() -> MagicMock:
+def _make_registry_instance(workspace_id: str = "ws-1") -> McpRegistry:
     """Build a registry pre-seeded with the fixture workspace.
 
-    ``MagicMock(spec=McpRegistry)`` satisfies the orchestrator's ``isinstance``
-    guard; we then override ``_by_workspace`` so the lazy-load branch is
+    ``McpRegistry`` satisfies the orchestrator's ``isinstance``
+    guard; we pre-seed ``_by_workspace`` so the lazy-load branch is
     short-circuited.
     """
     from suitest_mcp.registry import McpRegistry
 
-    reg = MagicMock(spec=McpRegistry)
-    reg._by_workspace = {"ws-1": {}}
+    reg = McpRegistry()
+    reg._by_workspace = {workspace_id: {}}
     return reg
 
 

@@ -1,4 +1,4 @@
-import { formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 
 /**
  * Safely parses an ISO date-time string, Date object, or timestamp into a JavaScript Date.
@@ -55,6 +55,21 @@ export function formatTimestamp(
     return fallback;
   }
   return d.toLocaleString();
+}
+
+/**
+ * Formats a timestamp into a clean, standardized format: "MMM d, yyyy · HH:mm:ss" (e.g. "Sep 15, 2026 · 13:30:25").
+ * Returns fallback (default "—") if value is null, undefined, or unparseable.
+ */
+export function formatFriendlyTimestamp(
+  value: string | Date | null | undefined,
+  fallback = "—",
+): string {
+  const d = parseUtcDate(value);
+  if (!d) {
+    return fallback;
+  }
+  return format(d, "MMM d, yyyy · HH:mm:ss");
 }
 
 /**

@@ -57,3 +57,52 @@ async def test_drain_once_run_error_continues_remaining(monkeypatch: pytest.Monk
     await local_supervisor.drain_once(ctx)
 
     assert executed == ["run-b"]
+
+
+def test_supervisor_lock_mutual_exclusion(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pathlib import Path
+
+    assert isinstance(tmp_path, Path)
+    monkeypatch.chdir(tmp_path)
+    lock1 = local_supervisor._acquire_supervisor_lock()
+    assert lock1 is not None
+
+    # Second attempt while lock1 is held should return None
+    lock2 = local_supervisor._acquire_supervisor_lock()
+    assert lock2 is None
+
+    # After closing lock1, lock can be acquired again
+    lock1.close()
+    lock3 = local_supervisor._acquire_supervisor_lock()
+    assert lock3 is not None
+    lock3.close()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_zombie_runs() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from suitest_shared.domain.enums import RunStatus
+
+    zombie = MagicMock()
+    zombie.id = "run-zombie"
+    zombie.status = RunStatus.RUNNING
+    zombie.metadata_json = {}
+
+    session = AsyncMock()
+    session.execute.return_value = MagicMock(
+        scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[zombie])))
+    )
+
+    factory = MagicMock()
+    factory.return_value.__aenter__.return_value = session
+
+    await local_supervisor._reconcile_zombie_runs(factory)
+
+    assert zombie.status == RunStatus.ERROR
+    assert (
+        zombie.metadata_json["reconciliation"] == "Supervisor restarted while run was in progress"
+    )
+    session.commit.assert_awaited_once()

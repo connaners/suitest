@@ -15,6 +15,8 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from suitest_shared.domain.enums import RunStatus, RunTrigger, Tier
 
+from suitest_api.schemas.run import PlaywrightConfig as PlaywrightConfig
+
 
 class RunSelectionItem(BaseModel):
     """One ``{caseId, selectedStepIds?}`` entry in the create-run selection.
@@ -43,6 +45,7 @@ class CreateRunBody(BaseModel):
     env: str = "staging"
     trigger: RunTrigger = RunTrigger.MANUAL
     mcp_routing_override: dict[str, str] | None = Field(default=None, alias="mcpRoutingOverride")
+    playwright_config: PlaywrightConfig | None = Field(default=None, alias="playwrightConfig")
 
 
 class CreateSuiteRunBody(BaseModel):
@@ -62,6 +65,7 @@ class CreateSuiteRunBody(BaseModel):
     env: str = "staging"
     trigger: RunTrigger = RunTrigger.MANUAL
     mcp_routing_override: dict[str, str] | None = Field(default=None, alias="mcpRoutingOverride")
+    playwright_config: PlaywrightConfig | None = Field(default=None, alias="playwrightConfig")
 
 
 class RerunRunBody(BaseModel):
@@ -71,6 +75,7 @@ class RerunRunBody(BaseModel):
 
     case_ids: list[str] | None = Field(default=None, alias="caseIds")
     failed_only: bool = Field(default=False, alias="failedOnly")
+    playwright_config: PlaywrightConfig | None = Field(default=None, alias="playwrightConfig")
 
 
 class RunPublic(BaseModel):

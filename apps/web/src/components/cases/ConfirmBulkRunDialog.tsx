@@ -1,6 +1,15 @@
 import { AlertTriangle, Loader2, Play } from "lucide-react";
-import type * as React from "react";
+import * as React from "react";
+import { useState } from "react";
 
+import { ExecutionSettingsPanel } from "@/components/runs/ExecutionSettingsPanel";
+import {
+  extractExecutionConfig,
+  loadSavedExecutionSettings,
+  normalizeExecutionSettings,
+  saveExecutionSettings,
+  type ExecutionSettings,
+} from "@/components/runs/execution-settings";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,22 +19,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { PlaywrightConfigInput } from "@/hooks/use-runs";
 
 export interface ConfirmBulkRunDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   count: number;
   caseTitle?: string | undefined;
-  onConfirm: () => void;
+  onConfirm: (config?: PlaywrightConfigInput) => void;
   isPending: boolean;
+  initialSettings?: (PlaywrightConfigInput & { highlight_steps?: boolean }) | null;
 }
 
 /**
  * Confirmation dialog for running a selected batch of test cases from BulkActionBar.
  *
- * Running multiple test cases launches browser automation which can be resource-intensive
- * on the local machine. This dialog confirms the user's intent, clarifies that cases run
- * sequentially, and warns about local resource utilization.
+ * Confirms the user's intent, clarifies sequential execution, and provides non-intrusive
+ * Execution Settings (headless mode, screenshot capture, and step element highlighting)
+ * which are collapsed by default for zero friction.
  */
 export function ConfirmBulkRunDialog({
   open,
@@ -34,7 +45,19 @@ export function ConfirmBulkRunDialog({
   caseTitle,
   onConfirm,
   isPending,
+  initialSettings,
 }: ConfirmBulkRunDialogProps): React.ReactElement {
+  const [executionSettings, setExecutionSettings] = useState<ExecutionSettings>(() =>
+    initialSettings ? normalizeExecutionSettings(initialSettings) : loadSavedExecutionSettings(),
+  );
+
+  const handleSubmit = (): void => {
+    saveExecutionSettings(executionSettings);
+    onConfirm(extractExecutionConfig(executionSettings));
+  };
+
+
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="bulk-run-confirm-dialog" className="sm:max-w-md">
@@ -77,6 +100,12 @@ export function ConfirmBulkRunDialog({
               {count === 1 && caseTitle ? caseTitle : count}
             </span>
           </div>
+
+          {/* Collapsible Execution Settings */}
+          <ExecutionSettingsPanel
+            value={executionSettings}
+            onChange={setExecutionSettings}
+          />
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
@@ -93,7 +122,7 @@ export function ConfirmBulkRunDialog({
           <Button
             type="button"
             size="sm"
-            onClick={onConfirm}
+            onClick={handleSubmit}
             disabled={isPending}
             data-testid="bulk-run-confirm-submit"
             className="gap-1.5"

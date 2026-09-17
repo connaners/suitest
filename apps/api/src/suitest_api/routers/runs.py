@@ -33,6 +33,7 @@ from suitest_api.routers._pagination import decode_cursor_or_400, encode_next
 from suitest_api.schemas.run import (
     ArtifactPublic,
     ArtifactSignedUrl,
+    PlaywrightConfig,
     RunCaseSummary,
     RunDetail,
     RunListItem,
@@ -46,7 +47,12 @@ from suitest_api.schemas.run import (
     RunSummary,
     StateChangePublic,
 )
-from suitest_api.schemas.runs import CreateRunBody, CreateSuiteRunBody, RerunRunBody, RunPublic
+from suitest_api.schemas.runs import (
+    CreateRunBody,
+    CreateSuiteRunBody,
+    RerunRunBody,
+    RunPublic,
+)
 from suitest_api.services.file_storage import presign_s3_get
 from suitest_api.services.junit_report_service import render_junit
 from suitest_api.services.replay_service import StateChange, compute_state_delta
@@ -253,6 +259,10 @@ async def get_run(
         ),
         coverage_summary=coverage if isinstance(coverage, dict) else None,
         cases=planned_cases,
+        playwright_config=PlaywrightConfig.model_validate(metadata_dict["playwright_config"])
+        if "playwright_config" in metadata_dict
+        and isinstance(metadata_dict["playwright_config"], dict)
+        else None,
     )
 
 
@@ -279,9 +289,40 @@ async def get_run_steps(
     """Return a run's steps (ordered) with outcomes + case public ids; 404 if cross-ws."""
     run_id = await _run_in_scope_or_404(session, run_id, ctx.workspace_id)
     rows = await RunRepo(session).get_steps_with_case_public_id(run_id)
+
+    # Check if any step lacks an action title in its state_snapshot
+    missing_action_case_ids: set[str] = set()
+    for step, _pub_id, _name, _title in rows:
+        snap = step.state_snapshot if isinstance(step.state_snapshot, dict) else {}
+        if not (snap.get("action") or snap.get("description") or snap.get("title")):
+            missing_action_case_ids.add(step.case_id)
+
+    fallback_actions_by_case: dict[str, list[str]] = {}
+    if missing_action_case_ids:
+        tc_steps_stmt = (
+            select(TestStep.case_id, TestStep.action)
+            .where(TestStep.case_id.in_(missing_action_case_ids))
+            .order_by(TestStep.case_id, TestStep.order.asc())
+        )
+        tc_steps_rows = (await session.execute(tc_steps_stmt)).all()
+        for cid, action in tc_steps_rows:
+            fallback_actions_by_case.setdefault(cid, []).append(action)
+
+    case_step_indices: dict[str, int] = {}
     out: list[RunStepPublic] = []
     for step, public_id, name, case_title in rows:
         snap = step.state_snapshot if isinstance(step.state_snapshot, dict) else {}
+        idx_in_case = case_step_indices.get(step.case_id, 0)
+        case_step_indices[step.case_id] = idx_in_case + 1
+
+        action_title = str(
+            snap.get("action") or snap.get("description") or snap.get("title") or ""
+        ).strip()
+        if not action_title and step.case_id in fallback_actions_by_case:
+            actions_list = fallback_actions_by_case[step.case_id]
+            if idx_in_case < len(actions_list):
+                action_title = actions_list[idx_in_case]
+
         out.append(
             RunStepPublic(
                 id=step.id,
@@ -292,7 +333,7 @@ async def get_run_steps(
                 case_title=case_title or "",
                 step_order=step.step_order,
                 outcome=step.outcome,
-                title=str(snap.get("description") or ""),
+                title=action_title,
                 type=str(snap.get("type") or "action"),
                 started_at=step.started_at,
                 completed_at=step.completed_at,
@@ -325,7 +366,9 @@ async def get_run_junit_report(
     if not await _project_in_scope(session, run.project_id, ctx.workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     steps = await repo.get_steps_with_case_public_id(run.id)
-    xml = render_junit(run.name, [(step, public_id) for step, public_id, _name, _title in steps])
+    xml = render_junit(
+        run.name, [(step, public_id) for step, public_id, _name, _title, *_ in steps]
+    )
     return Response(content=xml, media_type="application/xml")
 
 
@@ -345,7 +388,7 @@ async def get_run_replay(
     pairs = await RunRepo(session).get_steps_with_case_public_id(run_id)
     replay_steps: list[RunReplayStep] = []
     prev_snapshot: dict[str, object] | None = None
-    for step, public_id, _case_name, _case_title in pairs:
+    for step, public_id, _case_name, _case_title, *_ in pairs:
         snapshot = step.state_snapshot
         delta = compute_state_delta(prev_snapshot, snapshot)
         replay_steps.append(
@@ -532,6 +575,11 @@ async def create_run(
     on resume) can rehydrate it without re-deriving suite ordering.
     """
     svc = _build_run_service(session, ctx)
+    playwright_cfg = (
+        body.playwright_config.model_dump(by_alias=False)
+        if body.playwright_config is not None
+        else None
+    )
     try:
         run = await svc.create_run(
             project_id=body.project_id,
@@ -543,6 +591,7 @@ async def create_run(
             trigger=body.trigger,
             user_id=ctx.user_id,
             mcp_routing_override=body.mcp_routing_override,
+            playwright_config=playwright_cfg,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -575,6 +624,11 @@ async def create_suite_run(
     cross-workspace ("suite not found") or empty ("suite has no active cases").
     """
     svc = _build_run_service(session, ctx)
+    playwright_cfg = (
+        body.playwright_config.model_dump(by_alias=False)
+        if body.playwright_config is not None
+        else None
+    )
     try:
         run = await svc.create_run_for_suite(
             suite_id=suite_id,
@@ -585,6 +639,7 @@ async def create_suite_run(
             trigger=body.trigger,
             user_id=ctx.user_id,
             mcp_routing_override=body.mcp_routing_override,
+            playwright_config=playwright_cfg,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -662,6 +717,11 @@ async def rerun_run(
 
     is_failed_only = failed_only or (body.failed_only if body else False)
     target_case_ids = body.case_ids if (body and body.case_ids is not None) else None
+    target_pw_config = (
+        body.playwright_config.model_dump(by_alias=False)
+        if (body and body.playwright_config is not None)
+        else None
+    )
 
     try:
         new_run = await svc.clone_for_rerun(
@@ -669,6 +729,7 @@ async def rerun_run(
             user_id=ctx.user_id,
             failed_only=is_failed_only,
             case_ids=target_case_ids,
+            playwright_config=target_pw_config,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

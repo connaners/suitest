@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { formatRelativeTime } from "@/lib/date";
+import { formatFriendlyTimestamp, formatRelativeTime } from "@/lib/date";
 import {
   AlertTriangle,
+  ArrowUp,
+  CameraOff,
   ChevronDown,
   Code2,
+  Download,
   FileDown,
   FileText,
   FolderTree,
@@ -12,12 +15,21 @@ import {
   Paperclip,
   Play,
   ScrollText,
+  Search,
+  Settings2,
   Trash2,
+  Video,
+  X,
+  ZoomIn,
 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ConfirmBulkRunDialog } from "@/components/cases/ConfirmBulkRunDialog";
+import { ImageLightboxModal, type LightboxImage } from "@/components/runs/ImageLightboxModal";
+import { VideoPlayerModal } from "@/components/runs/VideoPlayerModal";
+import { loadSavedExecutionSettings } from "@/components/runs/execution-settings";
+import { useActiveWorkspace } from "@/stores/use-active-workspace";
 import { CreateCaseDialog } from "@/components/cases/CreateCaseDialog";
 import { CreateSuiteDialog } from "@/components/cases/CreateSuiteDialog";
 import { ExportUatDialog } from "@/components/cases/ExportUatDialog";
@@ -51,10 +63,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  fetchCaseArtifacts,
+  fetchCaseRuns,
+  fetchRun,
   fetchRunArtifacts,
   fetchRunLogs,
   fetchRunSignedUrl,
   fetchRunSteps,
+  type CaseArtifactPublic,
 } from "@/lib/api-client";
 import {
   caseTypeLabel,
@@ -67,7 +83,7 @@ import {
 import { useFeatureEnabled } from "@/hooks/use-feature-enabled";
 import { useProject, useSetGatingSuite } from "@/hooks/use-projects";
 import { useActiveProject } from "@/stores/use-active-project";
-import { useCreateRun } from "@/hooks/use-runs";
+import { useCreateRun, type PlaywrightConfigInput } from "@/hooks/use-runs";
 import {
   useBulkUpdate,
   useDeleteTestCase,
@@ -79,6 +95,7 @@ import {
 } from "@/hooks/use-test-cases";
 import { useRunArtifactUrl } from "@/hooks/use-run-artifact-url";
 import type { components } from "@/lib/api-types";
+import { runToBadge } from "@/lib/badge-maps";
 import { caseSourceToPill } from "@/lib/test-case-format";
 import { undoToast } from "@/lib/undo-toast";
 import { cn } from "@/lib/utils";
@@ -88,8 +105,8 @@ type Suite = components["schemas"]["SuitePublic"];
 type Priority = components["schemas"]["Priority"];
 type CaseDetail = components["schemas"]["TestCaseDetail"];
 type RunStepPublic = components["schemas"]["RunStepPublic"];
+type RunStatus = components["schemas"]["RunStatus"];
 type StepOutcome = components["schemas"]["StepOutcome"];
-type ArtifactPublic = components["schemas"]["ArtifactPublic"];
 type TestingApproach = components["schemas"]["TestingApproach"];
 type TestLevel = components["schemas"]["TestLevel"];
 
@@ -300,18 +317,20 @@ function BulkActionBar({
   const singleCase = count === 1 ? cases.find((c) => c.id === ids[0]) : undefined;
   const singleCaseTitle = singleCase ? singleCase.title || singleCase.name : undefined;
 
-  const handleConfirmRun = (): void => {
+  const handleConfirmRun = (config?: PlaywrightConfigInput): void => {
     if (!resolvedProjectId || overLimit || count === 0) return;
     const runName = singleCaseTitle
       ? `Ad-hoc: ${singleCaseTitle}`
       : `Ad-hoc: ${count} selected case${count === 1 ? "" : "s"}`;
 
+    const effectiveConfig = config ?? loadSavedExecutionSettings();
     createRun.mutate(
       {
         projectId: resolvedProjectId,
         name: runName,
         selection: ids.map((id) => ({ caseId: id })),
         trigger: "MANUAL",
+        playwrightConfig: effectiveConfig,
       },
       {
         onSuccess: (run) => {
@@ -712,6 +731,7 @@ function CaseDetailPanel({
   const deleteCase = useDeleteTestCase();
   const restoreCase = useRestoreTestCase();
   const updateTesting = useUpdateTestingMetadata(publicId ?? "");
+  const [optionsModalOpen, setOptionsModalOpen] = useState(false);
 
   // Local draft state for the step editor — seeded from the server response
   // and kept in sync when the server data refreshes (via key on detail?.id).
@@ -817,6 +837,7 @@ function CaseDetailPanel({
     );
   }
 
+
   const sourcePill = caseSourceToPill(detail.source);
   // The API now sends the human ``title`` (backend derives it — DATA_MODEL
   // §3.4); the client-side humanizer only remains as a legacy fallback.
@@ -828,14 +849,16 @@ function CaseDetailPanel({
   const projectId = suites.find((s) => s.id === detail.suite_id)?.project_id ?? null;
   const runPending = createRun.isPending;
   const canRun = projectId !== null && !runPending;
-  const handleRun = (): void => {
+  const handleRun = (config?: PlaywrightConfigInput): void => {
     if (projectId === null) return;
+    const effectiveConfig = config ?? loadSavedExecutionSettings();
     createRun.mutate(
       {
         projectId,
         name: `Ad-hoc: ${detail.title || detail.name}`,
         selection: [{ caseId: detail.id }],
         trigger: "MANUAL",
+        playwrightConfig: effectiveConfig,
       },
       {
         onSuccess: (run) => {
@@ -956,9 +979,21 @@ function CaseDetailPanel({
           <Button
             type="button"
             size="sm"
+            variant="outline"
+            data-testid="case-run-options-btn"
+            disabled={!canRun}
+            onClick={() => setOptionsModalOpen(true)}
+            aria-label="Configure and run case"
+            title="Configure execution settings & run"
+          >
+            <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            size="sm"
             data-testid="case-run-now"
             disabled={!canRun}
-            onClick={handleRun}
+            onClick={() => handleRun()}
           >
             {runPending ? "Queuing…" : "Run now"}
           </Button>
@@ -1045,9 +1080,21 @@ function CaseDetailPanel({
         </TabsContent>
 
         <TabsContent value="artifacts">
-          <CaseArtifactsTab lastRunId={lastRunId} />
+          <CaseArtifactsTab caseId={detail.id} lastRunId={lastRunId} />
         </TabsContent>
       </Tabs>
+
+      <ConfirmBulkRunDialog
+        open={optionsModalOpen}
+        onOpenChange={setOptionsModalOpen}
+        count={1}
+        caseTitle={caseTitle}
+        onConfirm={(config) => {
+          setOptionsModalOpen(false);
+          handleRun(config);
+        }}
+        isPending={createRun.isPending}
+      />
     </div>
   );
 }
@@ -1175,6 +1222,11 @@ function EvidencePreview({
     queryFn: () => (lastRunId ? fetchRunArtifacts(lastRunId) : Promise.resolve({ items: [] })),
     enabled: Boolean(lastRunId),
   });
+  const { data: lastRunData } = useQuery({
+    queryKey: ["run-summary-case-artifact", lastRunId] as const,
+    queryFn: () => (lastRunId ? fetchRun(lastRunId) : null),
+    enabled: Boolean(lastRunId),
+  });
 
   const runSteps = useMemo<RunStepPublic[]>(
     () =>
@@ -1270,6 +1322,7 @@ function EvidencePreview({
           code={detail.automation_code ?? null}
           stepScreenshotUrl={stepShotUrl}
           stepLabel={selectedStepLabel}
+          playwrightConfig={lastRunData?.playwrightConfig ?? null}
           onClearStep={() => {
             setSelectedOrder(null);
           }}
@@ -1344,62 +1397,717 @@ function CaseLogsTab({ lastRunId }: { lastRunId: string | null }): React.ReactEl
   );
 }
 
-function CaseArtifactsTab({ lastRunId }: { lastRunId: string | null }): React.ReactElement {
+type ArtifactFilterKind = "ALL" | "SCREENSHOT" | "VIDEO" | "TRACE" | "LOG";
+
+interface RunArtifactGroup {
+  runId: string;
+  runPublicId: string;
+  runStatus?: RunStatus | null;
+  runDate: string;
+  items: CaseArtifactPublic[];
+  playwrightConfig?: PlaywrightConfigInput | null | undefined;
+}
+
+interface RunArtifactGroupSectionProps {
+  group: RunArtifactGroup;
+  getRawUrl: (item: CaseArtifactPublic) => string;
+  onZoom: (params: { images: LightboxImage[]; currentIndex: number }) => void;
+  onPlayVideo?: (params: { src: string; title: string; subtitle?: string | null | undefined }) => void;
+}
+
+function RunArtifactGroupSection({
+  group,
+  getRawUrl,
+  onZoom,
+  onPlayVideo,
+}: RunArtifactGroupSectionProps): React.ReactElement {
+  const screenshots = useMemo(
+    () => group.items.filter((item) => item.kind === "SCREENSHOT"),
+    [group.items],
+  );
+
+  const galleryImages = useMemo<LightboxImage[]>(() => {
+    return screenshots.map((shot) => {
+      const shotUrl = getRawUrl(shot);
+      const shotLabel = shot.stepTitle
+        ? `Step ${shot.stepOrder}: ${shot.stepTitle}`
+        : `Step ${shot.stepOrder} Screenshot`;
+      const shotSize = shot.sizeBytes
+        ? `${Math.max(1, Math.round(shot.sizeBytes / 1024)).toString()} KB`
+        : "—";
+      return {
+        src: shotUrl,
+        title: `${group.runPublicId} - ${shotLabel}`,
+        subtitle: `${formatFriendlyTimestamp(group.runDate)} • ${shotSize}`,
+      };
+    });
+  }, [screenshots, getRawUrl, group.runPublicId, group.runDate]);
+
+  const handleOpenScreenshot = (shotId: string): void => {
+    const idx = screenshots.findIndex((s) => s.id === shotId);
+    onZoom({ images: galleryImages, currentIndex: Math.max(0, idx) });
+  };
+
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-md border border-border bg-bg-elev-1 p-3"
+      data-testid={`artifact-group-${group.runPublicId}`}
+    >
+      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[12px] font-semibold text-fg-1">
+            Run {group.runPublicId}
+          </span>
+          {group.runStatus && (
+            <StatusBadge
+              status={runToBadge(group.runStatus).status}
+              label={runToBadge(group.runStatus).label ?? group.runStatus}
+            />
+          )}
+          <span className="text-[11.5px] text-fg-4">•</span>
+          <span className="text-[11.5px] text-fg-3">
+            {formatFriendlyTimestamp(group.runDate)}
+          </span>
+          <span className="text-[10.5px] text-fg-5 font-mono">
+            ({formatRelativeTime(group.runDate)})
+          </span>
+        </div>
+        <span className="rounded bg-bg-elev-2 px-1.5 py-0.5 font-mono text-[10.5px] text-fg-4">
+          {group.items.length} {group.items.length === 1 ? "artifact" : "artifacts"}
+        </span>
+      </div>
+
+      {group.items.length === 0 ? (
+        <div
+          className="flex flex-col items-center justify-center rounded-md border border-dashed border-border/80 bg-bg-root/40 p-6 text-center"
+          data-testid="empty-run-artifacts"
+        >
+          <CameraOff className="mb-2 h-6 w-6 text-fg-4/70" />
+          <p className="font-medium text-[12.5px] text-fg-2">
+            No media artifacts captured for this run
+          </p>
+          <p className="text-[11px] text-fg-4 mt-1 max-w-md">
+            {group.playwrightConfig &&
+            (group.playwrightConfig.screenshot === "off" ||
+              group.playwrightConfig.video === "off")
+              ? "Screenshot capture and video recording were disabled in Execution Settings when this run was executed."
+              : "No screenshots or video recordings were captured during this test run."}
+          </p>
+          {group.playwrightConfig ? (
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 font-mono text-[10.5px]">
+              <span className="rounded bg-bg-elev-2 px-2 py-0.5 text-fg-3 border border-border">
+                Headless: {group.playwrightConfig.headless !== false ? "On" : "Off"}
+              </span>
+              <span className="rounded bg-bg-elev-2 px-2 py-0.5 text-fg-3 border border-border">
+                Screenshots:{" "}
+                {group.playwrightConfig.screenshot === "on"
+                  ? "Every step"
+                  : group.playwrightConfig.screenshot === "only-on-failure"
+                    ? "On fail only"
+                    : "Off"}
+              </span>
+              <span className="rounded bg-bg-elev-2 px-2 py-0.5 text-fg-3 border border-border">
+                Video:{" "}
+                {group.playwrightConfig.video === "on"
+                  ? "On"
+                  : group.playwrightConfig.video === "retain-on-failure"
+                    ? "On fail only"
+                    : "Off"}
+              </span>
+              {group.playwrightConfig.highlightSteps ||
+              (group.playwrightConfig as { highlight_steps?: boolean }).highlight_steps ? (
+                <span className="rounded bg-bg-elev-2 px-2 py-0.5 text-accent border border-accent/30">
+                  Highlight: Enabled
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          <p className="text-[11px] text-fg-5 mt-2">
+            To capture screenshots or video, enable them in Execution Settings before running.
+          </p>
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {group.items.map((item) => {
+            const rawUrl = getRawUrl(item);
+            const isScreenshot = item.kind === "SCREENSHOT";
+            const isVideo = item.kind === "VIDEO";
+            const label = isScreenshot
+              ? item.stepTitle
+                ? `Step ${item.stepOrder}: ${item.stepTitle}`
+                : `Step ${item.stepOrder} Screenshot`
+              : isVideo
+                ? "Run Video Recording"
+                : `${item.kind} (Step ${item.stepOrder})`;
+
+            const formattedSize = item.sizeBytes
+              ? `${Math.max(1, Math.round(item.sizeBytes / 1024)).toString()} KB`
+              : "—";
+
+            return (
+              <li
+                key={item.id}
+                className="flex items-center gap-3 rounded border border-border/70 bg-bg-root/50 p-2 text-[12px] hover:border-border transition-colors"
+                data-testid={`case-artifact-item-${item.id}`}
+              >
+                {/* Thumbnail or Icon */}
+                {isScreenshot ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenScreenshot(item.id)}
+                    className="group relative flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden rounded border border-border bg-bg-code cursor-zoom-in"
+                    data-testid="case-artifact-thumbnail"
+                    title="Click to zoom screenshot (Gallery navigation enabled)"
+                  >
+                    <img
+                      src={rawUrl}
+                      alt={label}
+                      className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center bg-bg-root/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <ZoomIn className="h-4 w-4 text-fg-1" />
+                    </div>
+                  </button>
+                ) : isVideo ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onPlayVideo?.({
+                        src: rawUrl,
+                        title: `${group.runPublicId} - Run Video Recording`,
+                        subtitle: `${formatFriendlyTimestamp(group.runDate)} • ${item.mimeType} • ${formattedSize}`,
+                      })
+                    }
+                    className="group relative flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden rounded border border-border bg-bg-elev-2 text-accent cursor-pointer hover:border-accent/60 transition-colors focus:outline-none"
+                    data-testid="case-artifact-video-thumbnail"
+                    title="Click to play video recording in dialog"
+                  >
+                    <Video className="h-5 w-5 transition-transform group-hover:scale-110" />
+                    <div className="absolute inset-0 flex items-center justify-center bg-bg-root/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Play className="h-4 w-4 fill-current text-fg-1" />
+                    </div>
+                  </button>
+                ) : (
+                  <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded border border-border bg-bg-elev-2 text-fg-4 font-mono text-[10px] uppercase">
+                    {item.kind}
+                  </div>
+                )}
+
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-fg-1 truncate">{label}</span>
+                    <span className="rounded-sm bg-bg-elev-2 px-1.5 py-0.2 font-mono text-[10px] uppercase tracking-wide text-fg-3">
+                      {item.kind}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-fg-4 font-mono">
+                    <span>{item.mimeType}</span>
+                    <span>•</span>
+                    <span className="tabular-nums">{formattedSize}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isScreenshot ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleOpenScreenshot(item.id)}
+                      className="h-7 gap-1 text-[11.5px]"
+                      data-testid="case-artifact-zoom-btn"
+                    >
+                      <ZoomIn className="h-3 w-3" />
+                      Zoom
+                    </Button>
+                  ) : null}
+
+                  {isVideo ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        onPlayVideo?.({
+                          src: rawUrl,
+                          title: `${group.runPublicId} - Run Video Recording`,
+                          subtitle: `${formatFriendlyTimestamp(group.runDate)} • ${item.mimeType} • ${formattedSize}`,
+                        })
+                      }
+                      className="h-7 gap-1 text-[11.5px]"
+                      data-testid="case-artifact-play-btn"
+                    >
+                      <Play className="h-3 w-3 fill-current" />
+                      Play
+                    </Button>
+                  ) : null}
+
+                  <a
+                    href={rawUrl}
+                    download={`${group.runPublicId}-${item.kind.toLowerCase()}-${item.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-bg-elev-1 px-2 text-[11.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
+                    data-testid="case-artifact-download-btn"
+                    title="Download artifact"
+                  >
+                    <Download className="h-3 w-3" />
+                    Download
+                  </a>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+const CASE_ARTIFACTS_RUNS_PAGE_SIZE = 3;
+
+function CaseArtifactsTab({
+  caseId,
+  lastRunId,
+}: {
+  caseId: string;
+  lastRunId?: string | null;
+}): React.ReactElement {
+  const [selectedFilter, setSelectedFilter] = useState<ArtifactFilterKind>("ALL");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [displayedRunCount, setDisplayedRunCount] = useState<number>(CASE_ARTIFACTS_RUNS_PAGE_SIZE);
+  const [lightboxState, setLightboxState] = useState<{
+    open: boolean;
+    images: LightboxImage[];
+    currentIndex: number;
+  }>({ open: false, images: [], currentIndex: 0 });
+
+  const [videoModalState, setVideoModalState] = useState<{
+    open: boolean;
+    src: string;
+    title: string;
+    subtitle?: string | null | undefined;
+  }>({ open: false, src: "", title: "" });
+
+  const activeWorkspaceId = useActiveWorkspace((s) => s.workspaceId);
+
+  // Reset pagination when switching test cases, filters, or search query
+  useEffect(() => {
+    setDisplayedRunCount(CASE_ARTIFACTS_RUNS_PAGE_SIZE);
+  }, [caseId, selectedFilter, searchQuery]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["case-result-artifacts", lastRunId] as const,
-    queryFn: () => (lastRunId ? fetchRunArtifacts(lastRunId) : Promise.resolve({ items: [] })),
+    queryKey: ["case-artifacts", caseId] as const,
+    queryFn: () => fetchCaseArtifacts(caseId),
+    enabled: Boolean(caseId),
+  });
+
+  const { data: caseRunsData } = useQuery({
+    queryKey: ["case-runs", caseId] as const,
+    queryFn: () => fetchCaseRuns(caseId),
+    enabled: Boolean(caseId),
+  });
+
+  const { data: lastRunData } = useQuery({
+    queryKey: ["run-summary-case-artifact", lastRunId] as const,
+    queryFn: () => (lastRunId ? fetchRun(lastRunId) : null),
     enabled: Boolean(lastRunId),
   });
 
-  if (!lastRunId) {
+  const allItems = useMemo(() => data?.items ?? [], [data?.items]);
+  const caseRuns = useMemo(() => caseRunsData?.items ?? [], [caseRunsData?.items]);
+
+  // Filter items based on active search query across run ID, kind, mime type, and step info
+  const searchMatchedItems = useMemo(() => {
+    const q = searchQuery.trim();
+    if (!q) return allItems;
+    const pattern = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    return allItems.filter((item) => {
+      const haystack = `${item.runPublicId ?? ""} ${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`;
+      return pattern.test(haystack);
+    });
+  }, [allItems, searchQuery]);
+
+  // Filter items based on selected tab
+  const filteredItems = useMemo(() => {
+    if (selectedFilter === "ALL") return searchMatchedItems;
+    if (selectedFilter === "LOG") {
+      return searchMatchedItems.filter(
+        (item) =>
+          (item.kind as string) === "LOG" ||
+          item.kind === "CONSOLE_LOG" ||
+          item.kind === "DOM_SNAPSHOT" ||
+          item.kind === "HAR",
+      );
+    }
+    return searchMatchedItems.filter((item) => item.kind === selectedFilter);
+  }, [searchMatchedItems, selectedFilter]);
+
+  // Group all filtered items by run
+  const allRunGroups = useMemo<RunArtifactGroup[]>(() => {
+    const q = searchQuery.trim();
+    const pattern = q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
+    const groupsMap = new Map<string, RunArtifactGroup>();
+
+    // Index all items by runId
+    const itemsByRunId = new Map<string, CaseArtifactPublic[]>();
+    for (const item of filteredItems) {
+      const list = itemsByRunId.get(item.runId) ?? [];
+      list.push(item);
+      itemsByRunId.set(item.runId, list);
+    }
+
+    // 1. Populate from all known caseRuns (maintains reverse-chronological order of runs)
+    for (const run of caseRuns) {
+      const runItems = itemsByRunId.get(run.id) ?? [];
+
+      // When a specific filter tab (SCREENSHOT, VIDEO, LOG) is chosen,
+      // hide runs that have 0 matching items for that tab.
+      // In the "ALL" tab, show the run even if 0 artifacts were produced (audit state).
+      if (selectedFilter !== "ALL" && runItems.length === 0) {
+        continue;
+      }
+
+      const matchesSearch =
+        !pattern ||
+        pattern.test(`${run.publicId} ${run.id}`) ||
+        runItems.some((item) => {
+          const itemHaystack = `${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`;
+          return pattern.test(itemHaystack);
+        });
+
+      if (!matchesSearch) {
+        continue;
+      }
+
+      groupsMap.set(run.id, {
+        runId: run.id,
+        runPublicId: run.publicId || "Run",
+        runStatus: run.status ?? null,
+        runDate: run.startedAt || run.createdAt,
+        items: runItems,
+        playwrightConfig: (run.playwrightConfig as PlaywrightConfigInput | null | undefined) ?? (run.id === lastRunData?.id ? (lastRunData.playwrightConfig ?? null) : null),
+      });
+    }
+
+    // 2. Also incorporate any runs from filteredItems not in caseRuns (e.g. mock runs or legacy)
+    for (const item of filteredItems) {
+      if (!groupsMap.has(item.runId)) {
+        const runId = item.runId;
+        const runPublicId = item.runPublicId || "Run";
+        const runStatus = item.runStatus ?? null;
+        const runDate = item.runDate || item.createdAt;
+
+        const matchesSearch =
+          !pattern ||
+          pattern.test(
+            `${runPublicId} ${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`,
+          );
+
+        if (!matchesSearch) continue;
+
+        groupsMap.set(runId, {
+          runId,
+          runPublicId,
+          runStatus,
+          runDate,
+          items: itemsByRunId.get(runId) ?? [item],
+          playwrightConfig: runId === lastRunData?.id ? (lastRunData.playwrightConfig ?? null) : undefined,
+        });
+      }
+    }
+
+    // 3. Fallback: If lastRunId executed this case without artifacts and wasn't in caseRuns/items
+    const lastRunMatches = !pattern || Boolean(lastRunData && pattern.test(lastRunData.public_id));
+    if (selectedFilter === "ALL" && lastRunData && !groupsMap.has(lastRunData.id) && lastRunMatches) {
+      groupsMap.set(lastRunData.id, {
+        runId: lastRunData.id,
+        runPublicId: lastRunData.public_id,
+        runStatus: lastRunData.status,
+        runDate: lastRunData.started_at || lastRunData.created_at,
+        items: [],
+        playwrightConfig: lastRunData.playwrightConfig ?? null,
+      });
+    }
+
+    return Array.from(groupsMap.values());
+  }, [filteredItems, caseRuns, searchQuery, selectedFilter, lastRunData]);
+
+  // Slice run groups progressively (3 runs per chunk)
+  const displayedRunGroups = useMemo<RunArtifactGroup[]>(
+    () => allRunGroups.slice(0, displayedRunCount),
+    [allRunGroups, displayedRunCount],
+  );
+
+  const counts = useMemo(() => {
+    const res: Record<ArtifactFilterKind, number> = {
+      ALL: searchMatchedItems.length,
+      SCREENSHOT: 0,
+      VIDEO: 0,
+      TRACE: 0,
+      LOG: 0,
+    };
+    for (const item of searchMatchedItems) {
+      if (item.kind === "SCREENSHOT") res.SCREENSHOT += 1;
+      else if (item.kind === "VIDEO") res.VIDEO += 1;
+      else if (item.kind === "TRACE") res.TRACE += 1;
+      else if (
+        (item.kind as string) === "LOG" ||
+        item.kind === "CONSOLE_LOG" ||
+        item.kind === "DOM_SNAPSHOT" ||
+        item.kind === "HAR"
+      ) {
+        res.LOG += 1;
+      }
+    }
+    return res;
+  }, [searchMatchedItems]);
+
+  if (isLoading) return <CasesSkeleton />;
+
+  if (allItems.length === 0 && allRunGroups.length === 0) {
+    if (lastRunId) {
+      const cfg = lastRunData?.playwrightConfig;
+      return (
+        <div
+          className="flex flex-col items-center justify-center rounded-md border border-dashed border-border/80 bg-bg-root/40 p-8 text-center"
+          data-testid="case-artifacts-empty"
+        >
+          <CameraOff className="mb-2 h-7 w-7 text-fg-4/70" />
+          <p className="font-medium text-[13px] text-fg-2">
+            No media artifacts captured for this test case
+          </p>
+          <p className="text-[11.5px] text-fg-4 mt-1 max-w-md">
+            {cfg && (cfg.screenshot === "off" || cfg.video === "off")
+              ? `Screenshot capture and video recording were disabled in Execution Settings when run ${lastRunData?.public_id ?? lastRunId} was executed.`
+              : `The latest run (${lastRunData?.public_id ?? lastRunId}) completed without capturing media artifacts.`}
+          </p>
+          {cfg ? (
+            <div className="mt-3.5 flex flex-wrap items-center justify-center gap-1.5 font-mono text-[11px]">
+              <span className="rounded bg-bg-elev-2 px-2.5 py-0.5 text-fg-3 border border-border">
+                Headless: {cfg.headless !== false ? "On" : "Off"}
+              </span>
+              <span className="rounded bg-bg-elev-2 px-2.5 py-0.5 text-fg-3 border border-border">
+                Screenshots:{" "}
+                {cfg.screenshot === "on"
+                  ? "Every step"
+                  : cfg.screenshot === "only-on-failure"
+                    ? "On fail only"
+                    : "Off"}
+              </span>
+              <span className="rounded bg-bg-elev-2 px-2.5 py-0.5 text-fg-3 border border-border">
+                Video:{" "}
+                {cfg.video === "on"
+                  ? "On"
+                  : cfg.video === "retain-on-failure"
+                    ? "On fail only"
+                    : "Off"}
+              </span>
+              {cfg.highlightSteps ||
+              (cfg as { highlight_steps?: boolean }).highlight_steps ? (
+                <span className="rounded bg-bg-elev-2 px-2.5 py-0.5 text-accent border border-accent/30">
+                  Highlight: Enabled
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          <p className="text-[11px] text-fg-5 mt-2.5">
+            To capture screenshots or video recordings, enable them in Execution Settings before running.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <EmptyState
         icon={Paperclip}
         title="No artifacts yet"
-        subtitle="Run this case to capture video, screenshots, traces, and logs."
-      />
-    );
-  }
-  if (isLoading) return <CasesSkeleton />;
-  const items: ArtifactPublic[] = data?.items ?? [];
-  if (items.length === 0) {
-    return (
-      <EmptyState
-        icon={Paperclip}
-        title="No artifacts"
-        subtitle="The last run produced no downloadable artifacts."
+        subtitle="This test case has not been executed yet. Run this case to capture video, screenshots, traces, and logs across runs."
       />
     );
   }
 
-  const open = (artifactId: string): void => {
-    void fetchRunSignedUrl(lastRunId, artifactId).then((signed) => {
-      window.open(signed.url, "_blank", "noopener,noreferrer");
-    });
+  const getRawUrl = (item: CaseArtifactPublic): string => {
+    const wsParam = activeWorkspaceId ? `?workspaceId=${encodeURIComponent(activeWorkspaceId)}` : "";
+    return `/api/v1/runs/${item.runId}/artifacts/${item.id}/raw${wsParam}`;
   };
 
   return (
-    <ul className="flex flex-col gap-1.5" data-testid="case-artifacts-view">
-      {items.map((a) => (
-        <li
-          key={a.id}
-          className="flex items-center gap-3 rounded-md border border-border bg-bg-elev-1 px-3 py-2 text-[12px]"
+    <div className="flex flex-col gap-3" data-testid="case-artifacts-view">
+      {/* Curation Kind Filters & Search */}
+      <div className="flex flex-col gap-2 border-b border-border/60 pb-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          className="flex flex-wrap items-center gap-1.5"
+          data-testid="artifact-filters"
         >
-          <span className="rounded-sm bg-bg-elev-2 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-fg-3">
-            {a.kind}
+          {(
+            [
+              { id: "ALL", label: "All" },
+              { id: "SCREENSHOT", label: "Screenshots" },
+              { id: "VIDEO", label: "Videos" },
+              { id: "TRACE", label: "Traces" },
+              { id: "LOG", label: "Logs" },
+            ] as const
+          ).map((filter) => {
+            const count = counts[filter.id] ?? 0;
+            const isActive = selectedFilter === filter.id;
+            return (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => setSelectedFilter(filter.id)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded px-2.5 py-1 text-[11.5px] font-medium transition-colors",
+                  isActive
+                    ? "bg-accent/15 text-accent font-semibold ring-1 ring-accent/30"
+                    : "bg-bg-elev-2 text-fg-3 hover:bg-bg-elev-3 hover:text-fg-1",
+                )}
+                data-testid={`artifact-filter-${filter.id.toLowerCase()}`}
+              >
+                <span>{filter.label}</span>
+                <span className="rounded-full bg-bg-root/80 px-1.5 py-0.2 text-[10px] tabular-nums text-fg-4">
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Search Artifacts */}
+        <div className="relative flex items-center min-w-[200px] sm:w-64">
+          <Search className="absolute left-2.5 h-3.5 w-3.5 text-fg-4 pointer-events-none" aria-hidden="true" />
+          <Input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search artifacts or runs..."
+            className="h-7 pl-8 pr-7 text-xs bg-bg-elev-1 border-border/80 rounded-md focus-visible:ring-1 focus-visible:ring-accent"
+            data-testid="case-artifacts-search-input"
+          />
+          {searchQuery ? (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 p-0.5 text-fg-4 hover:text-fg-2"
+              aria-label="Clear artifact search"
+              data-testid="case-artifacts-search-clear"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Progressive Run Pagination Count Indicator */}
+      {allRunGroups.length > 0 ? (
+        <div className="flex items-center justify-between text-[11px] font-mono text-fg-4 px-0.5">
+          <span data-testid="case-artifacts-count">
+            Showing {Math.min(displayedRunCount, allRunGroups.length)} of {allRunGroups.length} runs ({displayedRunGroups.reduce((acc, g) => acc + g.items.length, 0)} of {filteredItems.length} artifacts)
           </span>
-          <span className="font-mono text-[11px] text-fg-4">{a.mime_type}</span>
-          <span className="ml-auto font-mono text-[11px] text-fg-5 tabular-nums">
-            {Math.max(1, Math.round(a.size_bytes / 1024)).toString()} KB
-          </span>
-          <Button type="button" size="sm" variant="outline" onClick={() => open(a.id)}>
-            Open
-          </Button>
-        </li>
-      ))}
-    </ul>
+        </div>
+      ) : null}
+
+      {/* Grouped by Run Date list */}
+      {displayedRunGroups.length === 0 ? (
+        <div
+          className="flex flex-col items-center justify-center rounded-md border border-dashed border-border/80 bg-bg-root/40 p-6 text-center"
+          data-testid="case-artifacts-empty-filter"
+        >
+          <CameraOff className="mb-1.5 h-5 w-5 text-fg-4/60" />
+          <p className="font-medium text-[12px] text-fg-3">
+            {searchQuery
+              ? `No artifacts matching "${searchQuery}" found.`
+              : `No ${selectedFilter.toLowerCase()} artifacts recorded for this test case.`}
+          </p>
+          {lastRunData?.playwrightConfig &&
+          ((selectedFilter === "SCREENSHOT" && lastRunData.playwrightConfig.screenshot === "off") ||
+            (selectedFilter === "VIDEO" && lastRunData.playwrightConfig.video === "off")) ? (
+            <p className="text-[11px] text-fg-5 mt-1 max-w-sm">
+              {selectedFilter === "SCREENSHOT" ? "Screenshots" : "Video recording"} were turned off in Execution Settings during the last run.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {displayedRunGroups.map((group) => (
+            <RunArtifactGroupSection
+              key={group.runId}
+              group={group}
+              getRawUrl={getRawUrl}
+              onZoom={({ images, currentIndex }) =>
+                setLightboxState({ open: true, images, currentIndex })
+              }
+              onPlayVideo={(params) =>
+                setVideoModalState({
+                  open: true,
+                  src: params.src,
+                  title: params.title,
+                  subtitle: params.subtitle,
+                })
+              }
+            />
+          ))}
+
+          {/* Progressive Load More Button for Runs */}
+          {displayedRunCount < allRunGroups.length ? (
+            <div className="flex justify-center pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setDisplayedRunCount((prev) => prev + CASE_ARTIFACTS_RUNS_PAGE_SIZE)}
+                data-testid="case-artifacts-load-more"
+                className="h-7 text-xs font-normal text-fg-3 hover:text-fg-1"
+              >
+                Load more runs ({allRunGroups.length - displayedRunCount} remaining)
+              </Button>
+            </div>
+          ) : null}
+
+          {displayedRunGroups.length > 2 || displayedRunCount > CASE_ARTIFACTS_RUNS_PAGE_SIZE ? (
+            <div className="flex justify-center pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const view = document.querySelector('[data-testid="case-artifacts-view"]');
+                  if (view) {
+                    view.scrollIntoView({ behavior: "smooth", block: "start" });
+                  } else {
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }
+                }}
+                data-testid="case-artifacts-scroll-top"
+                className="inline-flex items-center gap-1 text-[11px] font-mono text-fg-5 hover:text-fg-2 transition-colors"
+              >
+                <ArrowUp className="h-3 w-3" aria-hidden="true" />
+                Scroll to top
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* Lightbox for zooming screenshots in case artifacts with gallery cycling */}
+      <ImageLightboxModal
+        open={lightboxState.open}
+        onOpenChange={(open) => setLightboxState((prev) => ({ ...prev, open }))}
+        images={lightboxState.images}
+        currentIndex={lightboxState.currentIndex}
+        onNavigate={(currentIndex) => setLightboxState((prev) => ({ ...prev, currentIndex }))}
+      />
+
+      {/* Video Player Modal for playing video recordings directly in a dialog */}
+      <VideoPlayerModal
+        open={videoModalState.open}
+        onOpenChange={(open) => setVideoModalState((prev) => ({ ...prev, open }))}
+        src={videoModalState.src}
+        title={videoModalState.title}
+        subtitle={videoModalState.subtitle}
+      />
+    </div>
   );
 }
+
 
 function Meta({
   label,
@@ -1489,6 +2197,20 @@ function CasesBody(): React.ReactElement {
   // Selection state: Set of internal case IDs (case.id, not public_id).
   // The bulk endpoint expects internal UUIDs.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const prevProjectRef = useRef(projectId);
+
+  // Clear case selection, search filters, and bulk selection when switching project
+  useEffect(() => {
+    if (prevProjectRef.current !== projectId) {
+      prevProjectRef.current = projectId;
+      setSelectedIds(new Set());
+      setQuery("");
+      setApproachFilter("");
+      if (search.case) {
+        void navigate({ search: {} });
+      }
+    }
+  }, [projectId, search.case, navigate]);
 
   const counts = useMemo<Record<Tab, number>>(() => {
     const all = cases.items.length;
