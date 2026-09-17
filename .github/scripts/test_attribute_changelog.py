@@ -10,6 +10,7 @@ AUTHORS = {
     "ccc": ("mulhamna", "Mulham", "mulham@example.com"),
     "ddd": (None, "Anon Person", "anon@example.com"),
     "eee": ("ekacahya21", "Eka Cahya", "eka@example.com"),
+    "fff": (None, "Mulham", "mulhamna@gmail.com"),
 }
 
 ROOT = """# Changelog
@@ -111,6 +112,28 @@ def test_maintainer_only_release_gets_no_sections():
     out = attribute(root, resolve=_resolve, history=lambda t: set())
     assert out == root
     assert "### Thanks" not in out
+
+
+def test_handles_bullet_with_closes_suffix():
+    root = ROOT.replace(
+        "* **api:** fix a thing ([bbb](https://github.com/suiflex/suitest/commit/bbbbbb))",
+        "* **api:** fix a thing ([bbb](https://github.com/suiflex/suitest/commit/bbbbbb)), closes [#181](https://github.com/suiflex/suitest/issues/181)",
+    )
+    out = attribute(root, resolve=_resolve, history=lambda t: {"eka@example.com"})
+    assert (
+        "* **api:** fix a thing (@wahyuakbarwibowo) ([bbb](https://github.com/suiflex/suitest/commit/bbbbbb)), closes [#181](https://github.com/suiflex/suitest/issues/181)"
+        in out
+    )
+
+
+def test_maintainer_email_without_login_is_excluded():
+    root = ROOT.replace(
+        "* **ci:** a maintainer chore ([ccc](https://github.com/suiflex/suitest/commit/cccccc))",
+        "* **ci:** maintainer by email ([fff](https://github.com/suiflex/suitest/commit/ffffff))",
+    )
+    out = attribute(root, resolve=_resolve, history=lambda t: set())
+    assert "@mulhamna" not in out
+    assert "Mulham" not in out
 
 
 if __name__ == "__main__":
