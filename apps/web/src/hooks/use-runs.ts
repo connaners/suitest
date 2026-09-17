@@ -16,7 +16,10 @@ import type { components } from "@/lib/api-types";
 import { useActiveProject } from "@/stores/use-active-project";
 
 type RunsPage = components["schemas"]["Page_RunListItem_"];
-type RunDetail = components["schemas"]["RunDetail"];
+export type RunDetail = components["schemas"]["RunDetail"] & {
+  errorMessage?: string | null;
+  error_message?: string | null;
+};
 type Steps = { items: components["schemas"]["RunStepPublic"][] };
 type Logs = components["schemas"]["RunLogPage"];
 type Artifacts = { items: components["schemas"]["ArtifactPublic"][] };

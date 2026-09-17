@@ -306,6 +306,8 @@ function RunsList({
                           <span className="text-fg-4">Queued</span>
                         ) : r.status === "RUNNING" ? (
                           <span className="text-fg-3">Running</span>
+                        ) : r.status === "ERROR" ? (
+                          <span className="text-red">Error / Interrupted</span>
                         ) : (
                           <span className="text-fg-5">0 steps</span>
                         )
@@ -441,7 +443,8 @@ function RunDetailPanel({
   const failedCasesCount = dialogGroups.filter(
     (g) => g.rollup === "fail" || g.rollup === "aborted",
   ).length;
-  const hasFailures = failedSteps > 0 || failedCasesCount > 0;
+  const hasFailures =
+    failedSteps > 0 || failedCasesCount > 0 || run.status === "FAIL" || run.status === "ERROR";
   const failedCount = failedCasesCount > 0 ? failedCasesCount : failedSteps;
 
   const handleCancel = (): void => {
@@ -451,7 +454,11 @@ function RunDetailPanel({
   const handleConfirmRerun = (selectedCaseIds: string[], config?: PlaywrightConfigInput): void => {
     const runConfig = config ?? run.playwrightConfig ?? undefined;
     rerunMutation.mutate(
-      { runId: run.id, caseIds: selectedCaseIds, playwrightConfig: runConfig },
+      {
+        runId: run.id,
+        caseIds: selectedCaseIds.length > 0 ? selectedCaseIds : undefined,
+        playwrightConfig: runConfig,
+      },
       {
         onSuccess: (data) => {
           setRerunDialogOpen(false);
@@ -526,7 +533,7 @@ function RunDetailPanel({
             />
             {rerunMutation.isPending
               ? "Queuing…"
-              : hasFailures
+              : failedCount > 0
                 ? `Re-run (${failedCount} failed)`
                 : "Re-run"}
           </Button>
@@ -560,6 +567,24 @@ function RunDetailPanel({
           className="rounded-md border border-red/30 bg-red/10 px-3 py-2 text-[12px] text-red"
         >
           Cancelling runs requires QA access. Ask an admin to grant it.
+        </div>
+      ) : null}
+
+      {run.status === "ERROR" || run.errorMessage || run.error_message ? (
+        <div
+          role="alert"
+          data-testid="run-interrupted-banner"
+          className="flex items-start gap-2.5 rounded-md border border-red/30 bg-red/10 px-3 py-2.5 text-[12px] text-red"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red" aria-hidden="true" />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-semibold">Run was interrupted or failed</span>
+            <span className="font-mono text-[11px] text-red/90">
+              {run.errorMessage ||
+                run.error_message ||
+                "The run worker was interrupted or lost connection during processing. You can re-run the test cases above."}
+            </span>
+          </div>
         </div>
       ) : null}
 

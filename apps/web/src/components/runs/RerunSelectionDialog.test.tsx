@@ -226,4 +226,32 @@ describe("<RerunSelectionDialog>", () => {
     await user.click(screen.getByTestId("preset-select-all"));
     expect(deletedCheckbox).not.toBeChecked();
   });
+
+  it("allows rerun full suite when groups is empty", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+
+    render(
+      <RerunSelectionDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        runPublicId="RUN-1003"
+        groups={[]}
+        onConfirm={onConfirm}
+        isPending={false}
+      />,
+    );
+
+    expect(screen.getByTestId("rerun-no-cases")).toHaveTextContent(
+      /No individual test cases recorded for this run/i,
+    );
+    expect(screen.queryByTestId("rerun-presets")).not.toBeInTheDocument();
+
+    const submitBtn = screen.getByTestId("rerun-dialog-submit");
+    expect(submitBtn).not.toBeDisabled();
+    expect(submitBtn).toHaveTextContent(/Re-run full suite/i);
+
+    await user.click(submitBtn);
+    expect(onConfirm).toHaveBeenCalledWith([], expect.any(Object));
+  });
 });
