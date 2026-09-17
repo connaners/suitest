@@ -386,6 +386,13 @@ async def test_list_test_case_runs_includes_runs_without_artifacts(api_db: ApiDb
     assert nomedia_run["playwrightConfig"]["screenshot"] == "off"
     assert nomedia_run["playwrightConfig"]["highlightSteps"] is False
 
+    async with api_db.client(user) as c:
+        resp_limited = await c.get(
+            f"/api/v1/test-cases/{case.id}/runs?limit=1", headers={"X-Workspace-Id": ws.id}
+        )
+    assert resp_limited.status_code == 200
+    assert len(resp_limited.json()) == 1
+
 
 @pytest.mark.asyncio
 async def test_get_test_case_falls_back_to_latest_run(api_db: ApiDb) -> None:

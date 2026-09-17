@@ -12838,7 +12838,9 @@ export interface operations {
     };
     list_case_artifacts_api_v1_test_cases__case_id__artifacts_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+            };
             header?: {
                 "X-Workspace-Id"?: string | null;
             };
@@ -13001,7 +13003,9 @@ export interface operations {
     };
     list_case_runs_api_v1_test_cases__case_id__runs_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+            };
             header?: {
                 "X-Workspace-Id"?: string | null;
             };

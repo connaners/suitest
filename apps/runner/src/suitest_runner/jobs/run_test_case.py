@@ -578,6 +578,8 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
         active_video_case_id: str | None = None
         last_run_step_by_case: dict[str, tuple[str, int]] = {}
         case_has_failure: dict[str, bool] = {}
+        case_duration_ms: dict[str, int] = {}
+        case_outcome: dict[str, str] = {}
 
         async def _stop_video_recording(case_id: str) -> None:
             nonlocal video_recording_active, active_video_case_id
@@ -944,18 +946,28 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                     except Exception as clear_err:
                         log.debug("runner.highlight.clear_failed", error=str(clear_err))
 
+            case_duration_ms[case_id] = case_duration_ms.get(case_id, 0) + int(
+                result.duration_ms or 0
+            )
             if result.outcome == StepOutcome.PASS:
                 summary["passed"] += 1
+                if case_id not in case_outcome:
+                    case_outcome[case_id] = "PASS"
             elif result.outcome == StepOutcome.FAIL:
                 summary["failed"] += 1
                 failed_case_ids.add(case_id)
                 case_has_failure[case_id] = True
+                case_outcome[case_id] = "FAIL"
             elif result.outcome == StepOutcome.ERROR:
                 summary["errored"] += 1
                 failed_case_ids.add(case_id)
                 case_has_failure[case_id] = True
+                if case_outcome.get(case_id) != "FAIL":
+                    case_outcome[case_id] = "ERROR"
             elif result.outcome == StepOutcome.SKIP:
                 summary["skipped"] += 1
+                if case_id not in case_outcome:
+                    case_outcome[case_id] = "SKIP"
 
             async with factory() as session:
                 run_step_repo = RunStepRepo(session)
@@ -1126,19 +1138,28 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             )
             executed_case_ids = {c_id for c_id, _, _ in selection if c_id}
             if executed_case_ids:
-                res_val = (
-                    final_status.value if hasattr(final_status, "value") else str(final_status)
-                )
-                await session.execute(
-                    update(TestCase)
-                    .where(TestCase.id.in_(executed_case_ids))
-                    .values(
-                        last_run_id=run_id,
-                        last_run_result=res_val,
-                        last_run_at=completed_time,
-                        last_duration_ms=duration_ms,
+                for c_id in executed_case_ids:
+                    c_status = case_outcome.get(
+                        c_id,
+                        "FAIL" if case_has_failure.get(c_id, False) else "PASS",
                     )
-                )
+                    if (
+                        cancelled
+                        and c_id == current_case_id
+                        and not case_has_failure.get(c_id, False)
+                    ):
+                        c_status = "CANCELLED"
+                    c_dur = case_duration_ms.get(c_id, 0)
+                    await session.execute(
+                        update(TestCase)
+                        .where(TestCase.id == c_id)
+                        .values(
+                            last_run_id=run_id,
+                            last_run_result=c_status,
+                            last_run_at=completed_time,
+                            last_duration_ms=c_dur,
+                        )
+                    )
             await session.commit()
 
         await _publish(

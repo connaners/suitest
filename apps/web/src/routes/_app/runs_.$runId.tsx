@@ -93,11 +93,7 @@ export function RunDetailPage(): React.ReactElement {
 
   const handleRerunCase = (caseId: string): void => {
     if (run === undefined) return;
-    const runConfig =
-      (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-        .playwright_config ??
-      (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-        .playwrightConfig;
+    const runConfig = run.playwrightConfig ?? undefined;
     rerunMutation.mutate(
       { runId: run.id, caseIds: [caseId], playwrightConfig: runConfig },
       {
@@ -199,13 +195,7 @@ export function RunDetailPage(): React.ReactElement {
         runId={runId}
         status={run?.status}
         plannedCases={run?.cases}
-        playwrightConfig={
-          (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput } | undefined)
-            ?.playwright_config ??
-          (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput } | undefined)
-            ?.playwrightConfig ??
-          null
-        }
+        playwrightConfig={run?.playwrightConfig ?? null}
         onSelectCasePublicId={setSelectedCasePublicId}
         onGroupsChange={setExplorerGroups}
         onRerunCase={handleRerunCase}
@@ -220,13 +210,7 @@ export function RunDetailPage(): React.ReactElement {
           groups={dialogGroups}
           onConfirm={handleConfirmRerun}
           isPending={rerunMutation.isPending}
-          initialSettings={
-            (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-              .playwright_config ??
-            (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-              .playwrightConfig ??
-            null
-          }
+          initialSettings={run.playwrightConfig ?? null}
         />
       ) : null}
     </section>

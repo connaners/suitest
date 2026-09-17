@@ -507,10 +507,10 @@ describe("RunDetailPage", () => {
           completed_at: "2026-05-27T10:00:30Z",
           duration_ms: 30000,
           summary: { total_steps: 1, passed_steps: 1, failed_steps: 0, duration_ms: 30000 },
-          playwright_config: {
+          playwrightConfig: {
             headless: false,
             screenshot: "on",
-            highlight_steps: true,
+            highlightSteps: true,
           },
           cases: [
             { case_id: "case_01", case_public_id: "TC-101", case_title: "Checkout test" },

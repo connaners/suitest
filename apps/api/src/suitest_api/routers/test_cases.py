@@ -1189,6 +1189,7 @@ async def list_case_artifacts(
     case_id: str,
     ctx: Annotated[TenantContext, Depends(require_workspace_membership)],
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    limit: int = Query(default=100, ge=1, le=500),
 ) -> list[CaseArtifactPublic]:
     """Return historical artifacts created by all test runs that executed this test case."""
     internal_id = await _resolve_case_internal_id(session, ctx.workspace_id, case_id)
@@ -1224,6 +1225,7 @@ async def list_case_artifacts(
         .join(Run, Run.id == RunStep.run_id)
         .where(RunStep.case_id == internal_id)
         .order_by(Run.created_at.desc(), RunStep.step_order.asc(), Artifact.created_at.desc())
+        .limit(limit)
     )
     rows = (await session.execute(stmt)).all()
 
@@ -1279,6 +1281,7 @@ async def list_case_runs(
     case_id: str,
     ctx: Annotated[TenantContext, Depends(require_workspace_membership)],
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> list[CaseRunPublic]:
     """Return historical runs that executed this test case."""
     internal_id = await _resolve_case_internal_id(session, ctx.workspace_id, case_id)
@@ -1313,6 +1316,7 @@ async def list_case_runs(
         .where((RunStep.case_id == internal_id) | (Run.id == case.last_run_id))
         .group_by(Run.id)
         .order_by(Run.created_at.desc())
+        .limit(limit)
     )
     rows = (await session.execute(stmt)).all()
 

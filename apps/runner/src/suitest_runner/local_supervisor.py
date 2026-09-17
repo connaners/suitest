@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-import importlib
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,7 +27,6 @@ from suitest_runner.local_ctx import build_local_ctx
 
 if TYPE_CHECKING:
     import io
-    from collections.abc import Callable, Coroutine
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -85,26 +83,6 @@ async def _next_queued_run_ids(session_factory: async_sessionmaker[AsyncSession]
         return [str(r) for r in rows.scalars().all()]
 
 
-def _load_run_test_case() -> Callable[
-    [dict[str, object], str], Coroutine[object, object, dict[str, object]]
-]:
-    """Safely reload and return the run_test_case job function.
-
-    If run_test_case has been monkeypatched (e.g. in test suites), the patched
-    callable is preserved.
-    """
-    import suitest_runner.jobs.run_test_case as rtc_mod
-
-    if run_test_case != rtc_mod.run_test_case:
-        return run_test_case
-    try:
-        importlib.reload(rtc_mod)
-        return rtc_mod.run_test_case
-    except Exception as reload_err:
-        log.warning("supervisor.module_reload_failed", error=str(reload_err))
-        return run_test_case
-
-
 async def drain_once(ctx: dict[str, object]) -> None:
     """Run every currently-QUEUED run once, sequentially. Never propagates."""
     factory: async_sessionmaker[AsyncSession] = ctx["session_factory"]  # type: ignore[assignment]
@@ -114,9 +92,8 @@ async def drain_once(ctx: dict[str, object]) -> None:
         log.warning("supervisor.poll_error", exc_info=True)
         return
     for run_id in run_ids:
-        runner_fn = _load_run_test_case()
         try:
-            await runner_fn(ctx, run_id)
+            await run_test_case(ctx, run_id)
         except Exception:
             log.error("supervisor.run_error", run_id=run_id, exc_info=True)
 

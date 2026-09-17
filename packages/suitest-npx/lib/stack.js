@@ -28,7 +28,7 @@ function isFree(port) {
 
 // No silent fallback to preferred+1: the IDE MCP config and the user's muscle
 // memory both point at ONE port — booting somewhere else just hides the problem.
-async function pickPort(preferred = 4002) {
+async function pickPort(preferred = 4000) {
   if (await isFree(preferred)) return preferred;
   throw new Error(
     `Port ${preferred} is already in use.\n` +

@@ -86,7 +86,7 @@ async function resolvePort(dirs, opts) {
   if (opts.port) return opts.port;
   if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
   const { loadConfig } = require("./project.js");
-  const current = loadConfig(dirs.config).port || 4002;
+  const current = loadConfig(dirs.config).port || 4000;
   const readline = require("node:readline/promises");
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {

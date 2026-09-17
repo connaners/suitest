@@ -187,7 +187,7 @@ async def _ensure_db_exists(url: str) -> None:
 async def seed() -> str:
     """Upsert the user + empty workspace; return the workspace id."""
     url = os.environ.get(
-        "SUITEST_DATABASE_URL", "postgresql+asyncpg://suitest:suitest@localhost:5432/suitest_e2e"
+        "SUITEST_DATABASE_URL", "postgresql+asyncpg://suitest:suitest@localhost:5432/suitest"
     )
     await _ensure_db_exists(url)
 
