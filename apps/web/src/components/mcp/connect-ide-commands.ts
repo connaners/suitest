@@ -18,7 +18,7 @@ export type IdeTab = keyof typeof IDE_CLIENTS;
 
 export function apiUrl(): string {
   if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
-  return "http://localhost:4002";
+  return "http://localhost:4000";
 }
 
 /** One-command install: the npx installer writes the IDE's MCP config for you. */

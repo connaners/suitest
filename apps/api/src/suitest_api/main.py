@@ -272,21 +272,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # OPTIONS preflights then short-circuit before SlowAPIMiddleware sees them —
     # otherwise every preflight would burn one slot in the anonymous IP bucket
     # (Issue I2).
-    cors_origins = [resolved.web_url]
-    if "localhost" in resolved.web_url or "127.0.0.1" in resolved.web_url:
-        cors_origins.extend(
-            [
-                "http://localhost:3000",
-                "http://localhost:3001",
-                "http://localhost:3002",
-                "http://127.0.0.1:3000",
-                "http://127.0.0.1:3001",
-                "http://127.0.0.1:3002",
-            ]
-        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=list(dict.fromkeys(cors_origins)),
+        allow_origins=[resolved.web_url],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

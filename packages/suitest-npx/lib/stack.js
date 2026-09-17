@@ -157,12 +157,12 @@ async function up(cwd, { webDist, python, port: preferred }) {
       }
     }
     if (fs.existsSync(dirs.pids)) {
-      fs.rmSync(dirs.pids);
+      fs.rmSync(dirs.pids, { force: true });
     }
   }
 
   // Priority: explicit --port > port this project used before > 4000.
-  const port = await pickPort(preferred || config.port || 4002);
+  const port = await pickPort(preferred || config.port || 4000);
   const creds = loadOrCreateCredentials(dirs.credentials);
   const env = buildEnv(cwd, { port, webDist, creds });
   const base = `http://127.0.0.1:${port}`;

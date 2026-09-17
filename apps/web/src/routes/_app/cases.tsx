@@ -837,6 +837,7 @@ function CaseDetailPanel({
     );
   }
 
+
   const sourcePill = caseSourceToPill(detail.source);
   // The API now sends the human ``title`` (backend derives it — DATA_MODEL
   // §3.4); the client-side humanizer only remains as a legacy fallback.
@@ -2196,6 +2197,20 @@ function CasesBody(): React.ReactElement {
   // Selection state: Set of internal case IDs (case.id, not public_id).
   // The bulk endpoint expects internal UUIDs.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const prevProjectRef = useRef(projectId);
+
+  // Clear case selection, search filters, and bulk selection when switching project
+  useEffect(() => {
+    if (prevProjectRef.current !== projectId) {
+      prevProjectRef.current = projectId;
+      setSelectedIds(new Set());
+      setQuery("");
+      setApproachFilter("");
+      if (search.case) {
+        void navigate({ search: {} });
+      }
+    }
+  }, [projectId, search.case, navigate]);
 
   const counts = useMemo<Record<Tab, number>>(() => {
     const all = cases.items.length;

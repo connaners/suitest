@@ -12,7 +12,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Gated } from "@/components/gating/Gated";
@@ -45,6 +45,7 @@ import { ApiError } from "@/lib/api-client";
 import { buildRunSegments, runToBadge } from "@/lib/badge-maps";
 import { formatDuration } from "@/lib/test-case-format";
 import { cn } from "@/lib/utils";
+import { useActiveProject } from "@/stores/use-active-project";
 interface SearchSchema {
   run?: string;
 }
@@ -145,10 +146,16 @@ function RunsList({
   selectedId: string | null;
   onSelect: (publicId: string) => void;
 }): React.ReactElement {
+  const activeProjectId = useActiveProject((s) => s.projectId);
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useRunsInfiniteList(10);
   const { data: summaryData } = useRunsSummary();
   const runs = useMemo(() => data.pages.flatMap((page) => page.items), [data]);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Reset search filter when switching project
+  useEffect(() => {
+    setSearchQuery("");
+  }, [activeProjectId]);
 
   const totalWorkspaceRuns = summaryData
     ? summaryData.passed + summaryData.failed + summaryData.activeNow + summaryData.queue
@@ -166,8 +173,15 @@ function RunsList({
   }, [runs, searchQuery]);
 
   // Auto-select the first run on load when no URL param is present.
+  // If the active project has 0 runs and a run is selected in URL, clear it.
   useEffect(() => {
-    if (!selectedId && runs.length > 0 && runs[0]) {
+    if (runs.length === 0) {
+      if (selectedId) {
+        onSelect("");
+      }
+      return;
+    }
+    if (!selectedId && runs[0]) {
       onSelect(runs[0].public_id);
     }
   }, [selectedId, runs, onSelect]);
@@ -367,6 +381,7 @@ function RunDetailPanel({
   runId: string | null;
   onNavigateToRun: (publicId: string) => void;
 }): React.ReactElement {
+  const activeProjectId = useActiveProject((s) => s.projectId);
   const { data: run, isLoading, isError } = useRun(runId ?? undefined);
   const cancelMutation = useCancelRun();
   const rerunMutation = useRerunRun();
@@ -402,6 +417,18 @@ function RunDetailPanel({
   if (isLoading || !run) return <RunsSkeleton />;
   if (isError) {
     return <EmptyState icon={AlertTriangle} title="Couldn't load run" />;
+  }
+
+  // Guard against cross-project data leakage: if the loaded run belongs to another project
+  // (e.g. from previous project selection before route search cleared), do not render it.
+  if (activeProjectId && run.project_id && run.project_id !== activeProjectId) {
+    return (
+      <EmptyState
+        icon={ListChecks}
+        title="Select a run"
+        subtitle="Pick a run from the list to view logs, steps, and artifacts."
+      />
+    );
   }
 
   const isLive = run.status === "RUNNING" || run.status === "QUEUED";
@@ -459,7 +486,7 @@ function RunDetailPanel({
   const targetCasePublicId = selectedCasePublicId ?? run.cases?.[0]?.case_public_id;
 
   return (
-    <div className="flex min-w-0 flex-col gap-4" data-testid="run-detail">
+    <div key={run.id} className="flex min-w-0 flex-col gap-4" data-testid="run-detail">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {(() => {
@@ -589,7 +616,20 @@ function RunDetailPanel({
 function RunsBody(): React.ReactElement {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
+  const activeProjectId = useActiveProject((s) => s.projectId);
   const selected = search.run ?? null;
+  const prevProjectRef = useRef(activeProjectId);
+
+  // Clear URL run selection when switching to a different project so stale run data
+  // from the previous project does not leak into the right pane.
+  useEffect(() => {
+    if (prevProjectRef.current !== activeProjectId) {
+      prevProjectRef.current = activeProjectId;
+      if (selected) {
+        void navigate({ search: {} });
+      }
+    }
+  }, [activeProjectId, selected, navigate]);
 
   return (
     <>
@@ -602,7 +642,7 @@ function RunsBody(): React.ReactElement {
           <RunsList
             selectedId={selected}
             onSelect={(publicId) => {
-              void navigate({ search: { run: publicId } });
+              void navigate({ search: publicId ? { run: publicId } : {} });
             }}
           />
         </aside>
@@ -613,7 +653,7 @@ function RunsBody(): React.ReactElement {
           <RunDetailPanel
             runId={selected}
             onNavigateToRun={(publicId) => {
-              void navigate({ search: { run: publicId } });
+              void navigate({ search: publicId ? { run: publicId } : {} });
             }}
           />
         </section>
