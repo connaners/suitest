@@ -8,7 +8,8 @@ import {
   createRouter,
 } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { Sidebar, type SidebarProps } from "@/components/shell/Sidebar";
 
@@ -76,6 +77,9 @@ async function renderSidebar(
 }
 
 describe("<Sidebar>", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
   it("renders all primary nav items", async () => {
     await renderSidebar("/dashboard");
     const expected = [
@@ -162,5 +166,59 @@ describe("<Sidebar>", () => {
     await renderSidebar("/dashboard", { isSuperuser: true });
     const adminNav = screen.getByTestId("nav-admin");
     expect(adminNav.getAttribute("href")).toBe("/admin");
+  });
+
+  it("collapses the rail on toggle and persists to localStorage", async () => {
+    const user = userEvent.setup();
+    const { container } = await renderSidebar("/dashboard");
+    const aside = container.querySelector("[data-testid='sidebar']");
+    expect(aside).not.toBeNull();
+    if (!aside) throw new Error("sidebar missing");
+    expect(aside.className).toContain("w-[224px]");
+
+    const toggle = screen.getByTestId("sidebar-collapse-toggle");
+    await user.click(toggle);
+    // Preference persists immediately. The rail stays visually open while the
+    // cursor is over it or while the toggle keeps focus (both hover-expand and
+    // focus-expand), so move pointer and focus out before asserting the width.
+    expect(localStorage.getItem("suitest.sidebarCollapsed")).toBe("1");
+    await user.tab();
+    await user.hover(document.body);
+    expect(aside.className).toContain("md:w-[64px]");
+    // The label is hidden from the a11y tree when collapsed — the accessible
+    // name comes from aria-label on the link.
+    expect(screen.getByTestId("nav-dashboard")).toHaveAttribute("aria-label", "Dashboard");
+
+    await user.click(toggle);
+    expect(localStorage.getItem("suitest.sidebarCollapsed")).toBe("0");
+    expect(aside.className).not.toContain("md:w-[64px]");
+  });
+
+  it("restores the collapsed preference from localStorage on mount", async () => {
+    localStorage.setItem("suitest.sidebarCollapsed", "1");
+    const { container } = await renderSidebar("/dashboard");
+    const aside = container.querySelector("[data-testid='sidebar']");
+    expect(aside?.className).toContain("md:w-[64px]");
+  });
+
+  it("temporarily expands the collapsed rail while focus is inside it", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("suitest.sidebarCollapsed", "1");
+    const { container } = await renderSidebar("/dashboard");
+    const aside = container.querySelector("[data-testid='sidebar']");
+    expect(aside?.className).toContain("md:w-[64px]");
+
+    // Tabbing into the rail (first focusable is inside <aside>) expands it.
+    await user.tab();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(aside?.className).not.toContain("md:w-[64px]");
+
+    // Tabbing past the last focusable leaves the rail → it collapses again.
+    let guard = 0;
+    while (document.activeElement !== document.body && guard < 40) {
+      await user.tab();
+      guard += 1;
+    }
+    expect(aside?.className).toContain("md:w-[64px]");
   });
 });

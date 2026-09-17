@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { RotateCw, Square } from "lucide-react";
+import { Minimize2, RotateCw, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
@@ -115,6 +115,16 @@ export function RunDetailPage(): React.ReactElement {
     <section className="flex flex-col gap-4" data-testid="run-detail-page">
       <div className="flex justify-end">
         <div className="flex flex-wrap items-center gap-1.5">
+          <Link
+            to="/runs"
+            search={{ run: run?.public_id ?? runId }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-bg-elev-1 px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
+            aria-label="Minimize to runs list"
+            data-testid="run-minimize"
+          >
+            <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
+            Minimize
+          </Link>
           {isLive ? (
             <Button
               type="button"
