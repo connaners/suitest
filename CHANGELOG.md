@@ -20,6 +20,40 @@ in the git tags (`launcher-v*`, `mcp-v*`, `lifecycle-v*`, `tssdk-v*`,
 stood in those tags' trees. The milestone tags that predate package-level
 versioning:
 
+## [0.13.0](https://github.com/suiflex/suitest/compare/v0.12.0...v0.13.0) (2026-09-17)
+
+
+### Features
+
+* **cases,web:** test case historical runs endpoint and artifacts audit consistency ([0357d30](https://github.com/suiflex/suitest/commit/0357d30da864f477ed881692a8f30da11395a8e5))
+* **db:** add reconciliation methods for interrupted and stale runs ([f161241](https://github.com/suiflex/suitest/commit/f161241b252f1af52c99b526b1eb599a261577d1))
+* **platform:** replace capability tiers with LLM readiness ([f72e1cc](https://github.com/suiflex/suitest/commit/f72e1cc48d63ac1670a5d2d17f752ba0faf14728))
+* **runner,mcp:** highlight cleanup, supervisor lock, and session recycling ([fd2098a](https://github.com/suiflex/suitest/commit/fd2098a488813a4abcd6d86feed81f3e876e63ff))
+* **runner,repo:** isolate local dev data directory and install local git guard hooks ([9a1e971](https://github.com/suiflex/suitest/commit/9a1e971f4882e81f3bce1ed21910980651a377c8))
+* **runs:** configurable execution settings, video recording, and browser preview ([6a3a57d](https://github.com/suiflex/suitest/commit/6a3a57d79f98e4ab8e135df225981382a6c73218))
+* **web:** add new project and rename actions to project picker with role hardening ([2c4fc09](https://github.com/suiflex/suitest/commit/2c4fc095f8154cf4f34096c76adeff67564155e0))
+* **web:** collapsible rail polish, logout fix, run-view minimize ([4ed73c6](https://github.com/suiflex/suitest/commit/4ed73c6d65aec5b338ab5e7f24b5f9e2a160e09e))
+* **web:** collapsible rail polish, logout fix, run-view minimize ([19d87fa](https://github.com/suiflex/suitest/commit/19d87fa8c7e36efac40a242e436b56e907f09557))
+* **web:** multi-screenshot lightbox gallery and inline video player modal ([25c193a](https://github.com/suiflex/suitest/commit/25c193aa6d9504777e168ee706ef01975ec3c0f0))
+
+
+### Bug Fixes
+
+* **api:** remove run reconciliation on API startup to preserve in-flight status ([0985a86](https://github.com/suiflex/suitest/commit/0985a86f1756282c4605c57717800472422c4da5))
+* **ci:** address CI failures and bot complexity warnings ([47d92d4](https://github.com/suiflex/suitest/commit/47d92d477a2549a481239b0a23fabd792b431b82))
+* **ci:** pass llm_ready=False to strategy test and soft-fail lighthouse ([02b2aa0](https://github.com/suiflex/suitest/commit/02b2aa07f5cf93b52bd3d97a319826119e6b8206))
+* improve exception handling and extract reusable banner ([cbfecad](https://github.com/suiflex/suitest/commit/cbfecad77523df57b663937d5a7e298e9e8a5863))
+* **platform:** address PR review comments on deterministic execution and DI ([c490825](https://github.com/suiflex/suitest/commit/c490825973f4ec85d5ef373ca4b1865755e04fad))
+* **platform:** reconcile interrupted runs and capture errors on execution failure ([7d82e19](https://github.com/suiflex/suitest/commit/7d82e19225d967b5fdf24cbb651855219125c951))
+* **pre-commit:** add pypdf to mypy hook deps for api_http bundled server ([50b0f66](https://github.com/suiflex/suitest/commit/50b0f66d8b2fbda51d5e1a9118afc6dd4ffaf611))
+* **runner,api,web:** address maintainer review feedback on PR [#200](https://github.com/suiflex/suitest/issues/200) ([902e432](https://github.com/suiflex/suitest/commit/902e43245a2efa634e82ca24046b45ed2e749289))
+* **runner,web:** resolve FG-DB-001 bulk query and FG-ALG-002 search lookups ([d932542](https://github.com/suiflex/suitest/commit/d93254275d6e32cfa5e699fa9e6a658d3b46742d))
+* **runner:** move defect hook after commit, fix mypy annotation, and update adhoc run test ([a8a19cd](https://github.com/suiflex/suitest/commit/a8a19cd803a3ccb1ff3f94e24b3133835c4107e8))
+* **runs:** handle interrupted runs gracefully and allow rerun ([58ab68f](https://github.com/suiflex/suitest/commit/58ab68ff06ff29baad2b5e4222e193a903cc5ab0))
+* **web,runner:** clear runs right pane on project switch and address review feedback ([f482f52](https://github.com/suiflex/suitest/commit/f482f52a135c284596c50a1b0016ed7775b035a0))
+* **web:** address rail-polish review — project picker state, a11y names, minimize public id ([e7fe045](https://github.com/suiflex/suitest/commit/e7fe04551b619c2b9467532c055ea782e15e18af))
+* **web:** display graceful error state and enable rerun for interrupted runs ([4949a7a](https://github.com/suiflex/suitest/commit/4949a7aef30791e381716ece5617a2e1fd5e7c02))
+
 ## [0.12.0](https://github.com/suiflex/suitest/compare/v0.11.1...v0.12.0) (2026-09-14)
 
 
