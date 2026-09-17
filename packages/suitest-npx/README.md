@@ -1,5 +1,7 @@
 # @suiflex/suitest
 
+[![M8ven Live Monitored](https://m8ven.ai/badge/mcp/suiflex-suitest-1du7t4)](https://m8ven.ai/mcp/suiflex-suitest-1du7t4)
+
 One command runs the self-hosted Suitest stack locally — web dashboard + SQLite
 + MCP — without Docker. Configure and validate your own LLM in Settings before
 MCP execution or test runs; provider secrets remain in Suitest.
