@@ -156,15 +156,12 @@ function RunsList({
   const totalKnown = Math.max(runs.length, totalWorkspaceRuns);
 
   const filteredRuns = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
     if (!q) return runs;
+    const pattern = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     return runs.filter((r) => {
-      const idMatch = r.public_id.toLowerCase().includes(q);
-      const nameMatch = r.name.toLowerCase().includes(q);
-      const branchMatch = (r.branch ?? "").toLowerCase().includes(q);
-      const commitMatch = (r.commit_sha ?? "").toLowerCase().includes(q);
-      const statusMatch = r.status.toLowerCase().includes(q);
-      return idMatch || nameMatch || branchMatch || commitMatch || statusMatch;
+      const haystack = `${r.public_id} ${r.name} ${r.branch ?? ""} ${r.commit_sha ?? ""} ${r.status}`;
+      return pattern.test(haystack);
     });
   }, [runs, searchQuery]);
 
@@ -425,12 +422,7 @@ function RunDetailPanel({
   };
 
   const handleConfirmRerun = (selectedCaseIds: string[], config?: PlaywrightConfigInput): void => {
-    const runConfig =
-      config ??
-      (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-        .playwright_config ??
-      (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-        .playwrightConfig;
+    const runConfig = config ?? run.playwrightConfig ?? undefined;
     rerunMutation.mutate(
       { runId: run.id, caseIds: selectedCaseIds, playwrightConfig: runConfig },
       {
@@ -565,13 +557,7 @@ function RunDetailPanel({
         runId={run.id}
         status={run.status}
         plannedCases={run.cases}
-        playwrightConfig={
-          (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-            .playwright_config ??
-          (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-            .playwrightConfig ??
-          null
-        }
+        playwrightConfig={run.playwrightConfig ?? null}
         onSelectCasePublicId={setSelectedCasePublicId}
         onGroupsChange={setExplorerGroups}
         onRerunCase={handleRerunCase}
@@ -585,13 +571,7 @@ function RunDetailPanel({
         groups={dialogGroups}
         onConfirm={handleConfirmRerun}
         isPending={rerunMutation.isPending}
-        initialSettings={
-          (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-            .playwright_config ??
-          (run as { playwright_config?: PlaywrightConfigInput; playwrightConfig?: PlaywrightConfigInput })
-            .playwrightConfig ??
-          null
-        }
+        initialSettings={run.playwrightConfig ?? null}
       />
 
       <footer className="flex justify-end" data-testid="run-cost-footer">

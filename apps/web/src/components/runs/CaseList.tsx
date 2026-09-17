@@ -52,11 +52,10 @@ export function CaseList({
   }, [groups, filter]);
 
   const displayedGroups = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
     if (!q) return filteredByStatus;
-    return filteredByStatus.filter((g) =>
-      `${g.casePublicId} ${g.caseName}`.toLowerCase().includes(q),
-    );
+    const pattern = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    return filteredByStatus.filter((g) => pattern.test(`${g.casePublicId} ${g.caseName}`));
   }, [filteredByStatus, searchQuery]);
 
   if (groups.length === 0) {

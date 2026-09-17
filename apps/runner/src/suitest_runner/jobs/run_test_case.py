@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import httpx
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from suitest_agent.generators.selector_repair import is_selector_changed_failure
 from suitest_agent.graphs.execution import translate_single_step
 from suitest_agent.providers.litellm_router import get_provider
@@ -1138,6 +1138,8 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             )
             executed_case_ids = {c_id for c_id, _, _ in selection if c_id}
             if executed_case_ids:
+                status_whens = []
+                dur_whens = []
                 for c_id in executed_case_ids:
                     c_status = case_outcome.get(
                         c_id,
@@ -1150,16 +1152,25 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                     ):
                         c_status = "CANCELLED"
                     c_dur = case_duration_ms.get(c_id, 0)
-                    await session.execute(
-                        update(TestCase)
-                        .where(TestCase.id == c_id)
-                        .values(
-                            last_run_id=run_id,
-                            last_run_result=c_status,
-                            last_run_at=completed_time,
-                            last_duration_ms=c_dur,
-                        )
+                    status_whens.append((TestCase.id == c_id, c_status))
+                    dur_whens.append((TestCase.id == c_id, c_dur))
+
+                await session.execute(
+                    update(TestCase)
+                    .where(TestCase.id.in_(executed_case_ids))
+                    .values(
+                        last_run_id=run_id,
+                        last_run_at=completed_time,
+                        last_run_result=case(
+                            *status_whens,
+                            else_=TestCase.last_run_result,
+                        ),
+                        last_duration_ms=case(
+                            *dur_whens,
+                            else_=TestCase.last_duration_ms,
+                        ),
                     )
+                )
             await session.commit()
 
         await _publish(

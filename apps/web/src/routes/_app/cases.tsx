@@ -1718,11 +1718,12 @@ function CaseArtifactsTab({
 
   // Filter items based on active search query across run ID, kind, mime type, and step info
   const searchMatchedItems = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
     if (!q) return allItems;
+    const pattern = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     return allItems.filter((item) => {
-      const haystack = `${item.runPublicId ?? ""} ${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`.toLowerCase();
-      return haystack.includes(q);
+      const haystack = `${item.runPublicId ?? ""} ${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`;
+      return pattern.test(haystack);
     });
   }, [allItems, searchQuery]);
 
@@ -1743,7 +1744,8 @@ function CaseArtifactsTab({
 
   // Group all filtered items by run
   const allRunGroups = useMemo<RunArtifactGroup[]>(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
+    const pattern = q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
     const groupsMap = new Map<string, RunArtifactGroup>();
 
     // Index all items by runId
@@ -1766,11 +1768,11 @@ function CaseArtifactsTab({
       }
 
       const matchesSearch =
-        !q ||
-        `${run.publicId} ${run.id}`.toLowerCase().includes(q) ||
+        !pattern ||
+        pattern.test(`${run.publicId} ${run.id}`) ||
         runItems.some((item) => {
-          const itemHaystack = `${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`.toLowerCase();
-          return itemHaystack.includes(q);
+          const itemHaystack = `${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`;
+          return pattern.test(itemHaystack);
         });
 
       if (!matchesSearch) {
@@ -1796,10 +1798,10 @@ function CaseArtifactsTab({
         const runDate = item.runDate || item.createdAt;
 
         const matchesSearch =
-          !q ||
-          `${runPublicId} ${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`
-            .toLowerCase()
-            .includes(q);
+          !pattern ||
+          pattern.test(
+            `${runPublicId} ${item.kind ?? ""} ${item.mimeType ?? ""} ${item.stepTitle ?? ""} step ${item.stepOrder ?? ""} ${item.id}`,
+          );
 
         if (!matchesSearch) continue;
 
@@ -1815,7 +1817,7 @@ function CaseArtifactsTab({
     }
 
     // 3. Fallback: If lastRunId executed this case without artifacts and wasn't in caseRuns/items
-    const lastRunMatches = !q || Boolean(lastRunData && lastRunData.public_id.toLowerCase().includes(q));
+    const lastRunMatches = !pattern || Boolean(lastRunData && pattern.test(lastRunData.public_id));
     if (selectedFilter === "ALL" && lastRunData && !groupsMap.has(lastRunData.id) && lastRunMatches) {
       groupsMap.set(lastRunData.id, {
         runId: lastRunData.id,
