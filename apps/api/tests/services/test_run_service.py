@@ -115,3 +115,24 @@ async def test_signed_url_404_when_cross_workspace() -> None:
     svc = RunArtifactSignedUrlService(_ctx("ws_1"), repo, project_repo)
 
     assert await svc.signed_url("run_1", "art_1") is None
+
+
+def test_run_detail_error_message_mapping() -> None:
+    from suitest_api.schemas.run import RunDetail, RunSummary
+
+    r = _run()
+    r.metadata_json = {"error": "Run timed out: no heartbeat or progress update received"}
+    detail = RunDetail(
+        id=r.id,
+        public_id=r.public_id,
+        project_id=r.project_id,
+        name=r.name,
+        env=r.env,
+        trigger=r.trigger,
+        status=r.status,
+        created_at=r.created_at,
+        updated_at=r.updated_at,
+        summary=RunSummary(total_steps=0, passed_steps=0, failed_steps=0),
+        error_message=r.metadata_json["error"],
+    )
+    assert detail.error_message == "Run timed out: no heartbeat or progress update received"

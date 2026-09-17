@@ -106,7 +106,10 @@ export type Paths = paths;
 // these directly. Each helper returns the OpenAPI-generated body shape.
 // ---------------------------------------------------------------------------
 
-type RunDetail = components["schemas"]["RunDetail"];
+export type RunDetail = components["schemas"]["RunDetail"] & {
+  errorMessage?: string | null;
+  error_message?: string | null;
+};
 type RunStepPublic = components["schemas"]["RunStepPublic"];
 type ArtifactPublic = components["schemas"]["ArtifactPublic"];
 type ArtifactSignedUrl = components["schemas"]["ArtifactSignedUrl"];

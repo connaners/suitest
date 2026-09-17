@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { Gated } from "@/components/gating/Gated";
 import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
 import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
+import { RunInterruptedBanner } from "@/components/runs/RunInterruptedBanner";
 import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunsSkeleton } from "@/components/runs/skeleton";
 import { CostChip } from "@/components/shared/CostChip";
@@ -306,6 +307,8 @@ function RunsList({
                           <span className="text-fg-4">Queued</span>
                         ) : r.status === "RUNNING" ? (
                           <span className="text-fg-3">Running</span>
+                        ) : r.status === "ERROR" ? (
+                          <span className="text-red">Error / Interrupted</span>
                         ) : (
                           <span className="text-fg-5">0 steps</span>
                         )
@@ -441,7 +444,8 @@ function RunDetailPanel({
   const failedCasesCount = dialogGroups.filter(
     (g) => g.rollup === "fail" || g.rollup === "aborted",
   ).length;
-  const hasFailures = failedSteps > 0 || failedCasesCount > 0;
+  const hasFailures =
+    failedSteps > 0 || failedCasesCount > 0 || run.status === "FAIL" || run.status === "ERROR";
   const failedCount = failedCasesCount > 0 ? failedCasesCount : failedSteps;
 
   const handleCancel = (): void => {
@@ -451,7 +455,11 @@ function RunDetailPanel({
   const handleConfirmRerun = (selectedCaseIds: string[], config?: PlaywrightConfigInput): void => {
     const runConfig = config ?? run.playwrightConfig ?? undefined;
     rerunMutation.mutate(
-      { runId: run.id, caseIds: selectedCaseIds, playwrightConfig: runConfig },
+      {
+        runId: run.id,
+        caseIds: selectedCaseIds.length > 0 ? selectedCaseIds : undefined,
+        playwrightConfig: runConfig,
+      },
       {
         onSuccess: (data) => {
           setRerunDialogOpen(false);
@@ -526,7 +534,7 @@ function RunDetailPanel({
             />
             {rerunMutation.isPending
               ? "Queuing…"
-              : hasFailures
+              : failedCount > 0
                 ? `Re-run (${failedCount} failed)`
                 : "Re-run"}
           </Button>
@@ -562,6 +570,11 @@ function RunDetailPanel({
           Cancelling runs requires QA access. Ask an admin to grant it.
         </div>
       ) : null}
+
+      <RunInterruptedBanner
+        status={run.status}
+        errorMessage={run.errorMessage || run.error_message}
+      />
 
       <div className="flex flex-col gap-1.5">
         <h3 className="break-words text-[18px] font-semibold leading-tight tracking-[-.01em] text-fg-1">

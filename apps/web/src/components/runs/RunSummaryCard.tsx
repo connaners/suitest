@@ -1,11 +1,10 @@
 import { ProgressBar } from "@/components/shared/ProgressBar";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import type { components } from "@/lib/api-types";
 import { buildRunSegments, runToBadge } from "@/lib/badge-maps";
 import { formatTimestamp } from "@/lib/date";
 import { formatDuration } from "@/lib/test-case-format";
 
-type RunDetail = components["schemas"]["RunDetail"];
+import type { RunDetail } from "@/hooks/use-runs";
 
 interface RunSummaryCardProps {
   run: RunDetail | undefined;
@@ -87,6 +86,11 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
               <span className="flex items-center gap-1.5 text-red">
                 <span className="inline-block h-2 w-2 rounded-full bg-red" />
                 Run aborted (No steps executed)
+              </span>
+            ) : run.status === "ERROR" ? (
+              <span className="flex items-center gap-1.5 text-red">
+                <span className="inline-block h-2 w-2 rounded-full bg-red" />
+                Run interrupted or errored
               </span>
             ) : (
               <span className="flex items-center gap-1.5 text-amber">

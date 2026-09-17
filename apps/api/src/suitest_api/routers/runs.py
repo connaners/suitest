@@ -9,6 +9,7 @@ aioboto3 (object store) or a placeholder for ``file://`` artifacts.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from arq.connections import ArqRedis
@@ -18,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_db.audit import write_audit
 from suitest_db.models.case import TestCase, TestStep
-from suitest_db.models.run import RunStep
+from suitest_db.models.run import Run, RunStep
 from suitest_db.repositories.projects import ProjectRepo
 from suitest_db.repositories.run_step_logs import RunStepLogRepo
 from suitest_db.repositories.runs import RunRepo
@@ -152,6 +153,29 @@ async def get_runs_summary(
     )
 
 
+async def _reconcile_stale_run_if_needed(
+    run: Run,
+    metadata_dict: dict[str, object],
+    session: AsyncSession,
+) -> dict[str, object]:
+    """Auto-transition in-flight run to ERROR if heartbeat timed out (>1800s)."""
+    if run.status != RunStatus.RUNNING:
+        return metadata_dict
+    now = datetime.now(UTC)
+    last_activity = run.updated_at or run.started_at or run.created_at
+    if last_activity and (now - last_activity).total_seconds() > 1800:
+        run.status = RunStatus.ERROR
+        run.completed_at = now
+        updated_meta = dict(metadata_dict)
+        updated_meta["error"] = "Run timed out: no heartbeat or progress update received"
+        updated_meta["interrupted"] = True
+        run.metadata_json = updated_meta
+        await session.commit()
+        await session.refresh(run)
+        return updated_meta
+    return metadata_dict
+
+
 @router.get("/runs/{run_id}", response_model=RunDetail)
 async def get_run(
     run_id: str,
@@ -172,10 +196,12 @@ async def get_run(
     if not await _project_in_scope(session, run.project_id, ctx.workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     metadata = run.metadata_json or {}
-    coverage = metadata.get("coverageSummary") if isinstance(metadata, dict) else None
-    raw_selection = metadata.get("selection") if isinstance(metadata, dict) else None
-    planned_cases: list[RunCaseSummary] = []
     metadata_dict = metadata if isinstance(metadata, dict) else {}
+    metadata_dict = await _reconcile_stale_run_if_needed(run, metadata_dict, session)
+
+    coverage = metadata_dict.get("coverageSummary")
+    raw_selection = metadata_dict.get("selection")
+    planned_cases: list[RunCaseSummary] = []
     snapshot_cases = metadata_dict.get("planned_cases")
     if isinstance(snapshot_cases, list) and snapshot_cases:
         for item in snapshot_cases:
@@ -262,6 +288,13 @@ async def get_run(
         if "playwright_config" in metadata_dict
         and isinstance(metadata_dict["playwright_config"], dict)
         else None,
+        error_message=str(
+            metadata_dict.get("error")
+            or metadata_dict.get("error_message")
+            or metadata_dict.get("interrupted_reason")
+            or ""
+        ).strip()
+        or None,
     )
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -349,6 +349,56 @@ class RunRepo(AsyncRepository[Run, RunCreate, RunUpdate]):
             run.failed_steps = failed_steps
         await self.session.flush()
         return run
+
+    async def reconcile_interrupted_runs(
+        self,
+        *,
+        reason: str = "Run interrupted: process terminated or restarted unexpectedly",
+    ) -> list[Run]:
+        """Mark any in-flight RUNNING runs as ERROR on process/server boot."""
+        stmt = select(Run).where(Run.status == RunStatus.RUNNING)
+        running_runs = (await self.session.scalars(stmt)).all()
+        now = datetime.now(UTC)
+        reconciled: list[Run] = []
+        for r in running_runs:
+            r.status = RunStatus.ERROR
+            r.completed_at = now
+            metadata = dict(r.metadata_json) if r.metadata_json else {}
+            metadata["error"] = reason
+            metadata["interrupted"] = True
+            r.metadata_json = metadata
+            reconciled.append(r)
+        if reconciled:
+            await self.session.flush()
+        return reconciled
+
+    async def reconcile_stale_runs(
+        self,
+        *,
+        timeout_seconds: int = 1800,
+        now: datetime | None = None,
+        reason: str = "Run timed out: no heartbeat or progress update received",
+    ) -> list[Run]:
+        """Find runs stuck in RUNNING state past the timeout threshold and transition them to ERROR."""
+        ts = now or datetime.now(UTC)
+        cutoff = ts - timedelta(seconds=timeout_seconds)
+        stmt = select(Run).where(
+            Run.status == RunStatus.RUNNING,
+            (Run.updated_at < cutoff) | (Run.updated_at.is_(None) & (Run.created_at < cutoff)),
+        )
+        stale_runs = (await self.session.scalars(stmt)).all()
+        reconciled: list[Run] = []
+        for r in stale_runs:
+            r.status = RunStatus.ERROR
+            r.completed_at = ts
+            metadata = dict(r.metadata_json) if r.metadata_json else {}
+            metadata["error"] = reason
+            metadata["interrupted"] = True
+            r.metadata_json = metadata
+            reconciled.append(r)
+        if reconciled:
+            await self.session.flush()
+        return reconciled
 
 
 class RunStepCreate(BaseModel):

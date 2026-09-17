@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
 import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
+import { RunInterruptedBanner } from "@/components/runs/RunInterruptedBanner";
 import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunSummaryCard } from "@/components/runs/RunSummaryCard";
 import { Button } from "@/components/ui/button";
@@ -64,7 +65,8 @@ export function RunDetailPage(): React.ReactElement {
   const failedCasesCount = dialogGroups.filter(
     (g) => g.rollup === "fail" || g.rollup === "aborted",
   ).length;
-  const hasFailures = failedSteps > 0 || failedCasesCount > 0;
+  const hasFailures =
+    failedSteps > 0 || failedCasesCount > 0 || run?.status === "FAIL" || run?.status === "ERROR";
   const failedCount = failedCasesCount > 0 ? failedCasesCount : failedSteps;
 
   const handleCancel = (): void => {
@@ -75,7 +77,11 @@ export function RunDetailPage(): React.ReactElement {
   const handleConfirmRerun = (selectedCaseIds: string[], config?: PlaywrightConfigInput): void => {
     if (run === undefined) return;
     rerunMutation.mutate(
-      { runId: run.id, caseIds: selectedCaseIds, playwrightConfig: config },
+      {
+        runId: run.id,
+        caseIds: selectedCaseIds.length > 0 ? selectedCaseIds : undefined,
+        playwrightConfig: config,
+      },
       {
         onSuccess: (data) => {
           setRerunDialogOpen(false);
@@ -155,7 +161,7 @@ export function RunDetailPage(): React.ReactElement {
             />
             {rerunMutation.isPending
               ? "Queuing…"
-              : hasFailures
+              : failedCount > 0
                 ? `Re-run (${failedCount} failed)`
                 : "Re-run"}
           </Button>
@@ -187,6 +193,11 @@ export function RunDetailPage(): React.ReactElement {
           Re-running this run requires QA access. Ask an admin to grant it.
         </div>
       ) : null}
+
+      <RunInterruptedBanner
+        status={run?.status}
+        errorMessage={run?.errorMessage || run?.error_message}
+      />
 
       <RunSummaryCard run={run} />
 

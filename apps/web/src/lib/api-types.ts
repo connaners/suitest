@@ -6884,6 +6884,8 @@ export interface components {
             duration_ms?: number | null;
             /** Env */
             env: string;
+            /** Errormessage */
+            errorMessage?: string | null;
             /** Id */
             id: string;
             /** Name */

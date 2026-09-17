@@ -270,6 +270,81 @@ describe("M1d-33: run cancel/re-run rewire", () => {
     );
   });
 
+  it("interrupted_run_renders_error_banner_and_allows_rerun_full_suite", async () => {
+    let rerunCalls = 0;
+    let receivedBody: unknown = null;
+    server.use(
+      summaryHandler,
+      http.get("*/api/v1/runs/:runId", () =>
+        HttpResponse.json({
+          id: "run_RUN-9999",
+          public_id: "RUN-9999",
+          project_id: "prj_demo",
+          name: "Interrupted checkout run",
+          branch: "main",
+          commit_sha: "abcd123",
+          env: "staging",
+          status: "ERROR",
+          trigger: "MANUAL",
+          started_at: "2026-05-27T10:00:00Z",
+          completed_at: "2026-05-27T10:01:14Z",
+          duration_ms: 12000,
+          summary: { total_steps: 0, passed_steps: 0, failed_steps: 0, duration_ms: 12000 },
+          created_at: "2026-05-27T10:00:00Z",
+          updated_at: "2026-05-27T10:01:14Z",
+          errorMessage: "Runner process was interrupted unexpectedly",
+          cases: [],
+        }),
+      ),
+      http.get("*/api/v1/runs/:runId/steps", () => HttpResponse.json([])),
+      http.get("*/api/v1/runs/:runId/artifacts", () => HttpResponse.json([])),
+      http.post("*/api/v1/runs/:runId/rerun", async ({ request }) => {
+        rerunCalls += 1;
+        receivedBody = await request.json().catch(() => null);
+        return HttpResponse.json(runDetail("RUN-505", "QUEUED"), { status: 201 });
+      }),
+    );
+
+    const user = userEvent.setup();
+    const router = renderRuns("/runs?run=RUN-9999");
+
+    // Interrupted banner is displayed with the error message
+    const banner = await screen.findByTestId("run-interrupted-banner", undefined, {
+      timeout: 3000,
+    });
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/Runner process was interrupted unexpectedly/i);
+
+    // Empty state in explorer indicates interrupted / errored run
+    expect(
+      await screen.findByText(/Run interrupted or errored/i, undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+
+    // Re-run button is enabled
+    const rerunBtn = screen.getByTestId("run-rerun-button");
+    expect(rerunBtn).not.toBeDisabled();
+    await user.click(rerunBtn);
+
+    // Dialog opens with empty cases notice and full suite rerun enabled
+    const dialog = await screen.findByTestId("rerun-selection-dialog", undefined, {
+      timeout: 3000,
+    });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByTestId("rerun-no-cases")).toBeInTheDocument();
+
+    const submitBtn = screen.getByTestId("rerun-dialog-submit");
+    expect(submitBtn).not.toBeDisabled();
+    expect(submitBtn).toHaveTextContent(/Re-run full suite/i);
+
+    await user.click(submitBtn);
+
+    await waitFor(() => expect(rerunCalls).toBe(1));
+    expect((receivedBody as { case_ids?: string[] } | null)?.case_ids).toBeUndefined();
+    await waitFor(() =>
+      expect((router.state.location.search as { run?: string }).run).toBe("RUN-505"),
+    );
+  });
+
   it("defects_page_no_longer_shows_ships_in_M1c_tooltip", async () => {
     renderRuns("/defects");
     // Wait for the defects screen to settle, then assert the stale copy is gone.

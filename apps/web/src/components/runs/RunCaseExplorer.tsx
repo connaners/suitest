@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ListChecks } from "lucide-react";
+import { AlertTriangle, ListChecks } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CaseDetailPanel } from "@/components/runs/CaseDetailPanel";
@@ -172,6 +172,15 @@ export function RunCaseExplorer({
           icon={ListChecks}
           title="Running"
           subtitle="Test cases appear here as their steps complete."
+        />
+      );
+    }
+    if (status === "ERROR") {
+      return (
+        <EmptyState
+          icon={AlertTriangle}
+          title="Run interrupted or errored"
+          subtitle="This run encountered an error or was interrupted before test cases completed."
         />
       );
     }

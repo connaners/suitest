@@ -1254,7 +1254,7 @@ async def _is_run_cancelled(factory: Any, run_id: str) -> bool:
         return r_check is not None and r_check.status == RunStatus.CANCELLED
 
 
-async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object]:
+async def _run_test_case_body(ctx: dict[str, object], run_id: str) -> dict[str, object]:
     """Execute one test run."""
     factory = ctx.get("session_factory")
     redis_client = ctx.get("redis")
@@ -1472,6 +1472,64 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             t0=t0,
             cancelled=cancelled,
         )
+
+
+async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object]:
+    """Execute one test run."""
+    import re
+
+    if not isinstance(run_id, str) or not re.match(r"^[A-Za-z0-9_-]+$", run_id):
+        return {"error": "INVALID_RUN_ID", "run_id": str(run_id)}
+    factory = ctx.get("session_factory")
+    tracer = get_tracer()
+    try:
+        with tracer.start_as_current_span(
+            "runner.run_test_case",
+            attributes={"job.queue": "suitest:runs", "run.id": run_id},
+        ):
+            return await _run_test_case_body(ctx=ctx, run_id=run_id)
+    except asyncio.CancelledError:
+        log.warning("runner.job.cancelled_or_interrupted", run_id=run_id)
+        if callable(factory):
+            async with factory() as session:
+                repo = RunRepo(session)
+                r = await repo.get_by_id(run_id)
+                if r is not None and r.status not in (
+                    RunStatus.PASS,
+                    RunStatus.FAIL,
+                    RunStatus.ERROR,
+                    RunStatus.CANCELLED,
+                ):
+                    now = datetime.now(UTC)
+                    r.status = RunStatus.CANCELLED
+                    r.completed_at = now
+                    meta = dict(r.metadata_json) if r.metadata_json else {}
+                    meta["error"] = "Run execution was cancelled or interrupted"
+                    meta["interrupted"] = True
+                    r.metadata_json = meta
+                    await session.commit()
+        raise
+    except Exception as exc:
+        log.error("runner.job.unhandled_exception", run_id=run_id, error=str(exc))
+        if callable(factory):
+            async with factory() as session:
+                repo = RunRepo(session)
+                r = await repo.get_by_id(run_id)
+                if r is not None and r.status not in (
+                    RunStatus.PASS,
+                    RunStatus.FAIL,
+                    RunStatus.ERROR,
+                    RunStatus.CANCELLED,
+                ):
+                    now = datetime.now(UTC)
+                    r.status = RunStatus.ERROR
+                    r.completed_at = now
+                    meta = dict(r.metadata_json) if r.metadata_json else {}
+                    meta["error"] = f"Run failed with unexpected error: {exc}"
+                    meta["interrupted"] = True
+                    r.metadata_json = meta
+                    await session.commit()
+        return {"error": "UNHANDLED_EXCEPTION", "detail": str(exc), "run_id": run_id}
 
 
 async def _publish(

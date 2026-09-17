@@ -112,6 +112,17 @@ async def startup(ctx: dict[str, object]) -> None:
     ctx["invoker"] = invoker
     ctx["arq_pool"] = arq_pool
     ctx["defect_auto_filer"] = auto_filer
+    # Reconcile any orphaned in-flight runs left from a prior worker process
+    try:
+        from suitest_db.repositories.runs import RunRepo
+
+        async with session_factory() as session:
+            reconciled = await RunRepo(session).reconcile_interrupted_runs()
+            if reconciled:
+                await session.commit()
+    except Exception as exc:
+        log.warning("runner.startup.reconcile_failed", error=str(exc))
+
     log.info(
         "runner.started",
         concurrency=settings.max_jobs_concurrent,
