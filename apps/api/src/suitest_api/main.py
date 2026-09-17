@@ -70,8 +70,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reconciled = await RunRepo(session).reconcile_interrupted_runs()
             if reconciled:
                 await session.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Failed to reconcile interrupted runs on startup: %s", exc
+        )
 
     # Issue-tracker adapter registry (M1d-11). The singleton is constructed at
     # import time; lifespan only stashes it on ``app.state`` so request handlers

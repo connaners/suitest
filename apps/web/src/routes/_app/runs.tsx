@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { Gated } from "@/components/gating/Gated";
 import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
 import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
+import { RunInterruptedBanner } from "@/components/runs/RunInterruptedBanner";
 import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunsSkeleton } from "@/components/runs/skeleton";
 import { CostChip } from "@/components/shared/CostChip";
@@ -570,23 +571,10 @@ function RunDetailPanel({
         </div>
       ) : null}
 
-      {run.status === "ERROR" || run.errorMessage || run.error_message ? (
-        <div
-          role="alert"
-          data-testid="run-interrupted-banner"
-          className="flex items-start gap-2.5 rounded-md border border-red/30 bg-red/10 px-3 py-2.5 text-[12px] text-red"
-        >
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red" aria-hidden="true" />
-          <div className="flex flex-col gap-0.5">
-            <span className="font-semibold">Run was interrupted or failed</span>
-            <span className="font-mono text-[11px] text-red/90">
-              {run.errorMessage ||
-                run.error_message ||
-                "The run worker was interrupted or lost connection during processing. You can re-run the test cases above."}
-            </span>
-          </div>
-        </div>
-      ) : null}
+      <RunInterruptedBanner
+        status={run.status}
+        errorMessage={run.errorMessage || run.error_message}
+      />
 
       <div className="flex flex-col gap-1.5">
         <h3 className="break-words text-[18px] font-semibold leading-tight tracking-[-.01em] text-fg-1">

@@ -1254,7 +1254,7 @@ async def _is_run_cancelled(factory: Any, run_id: str) -> bool:
         return r_check is not None and r_check.status == RunStatus.CANCELLED
 
 
-async def _execute_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object]:
+async def _run_test_case_body(ctx: dict[str, object], run_id: str) -> dict[str, object]:
     """Execute one test run."""
     factory = ctx.get("session_factory")
     redis_client = ctx.get("redis")
@@ -1476,6 +1476,10 @@ async def _execute_test_case(ctx: dict[str, object], run_id: str) -> dict[str, o
 
 async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object]:
     """Execute one test run."""
+    import re
+
+    if not isinstance(run_id, str) or not re.match(r"^[A-Za-z0-9_-]+$", run_id):
+        return {"error": "INVALID_RUN_ID", "run_id": str(run_id)}
     factory = ctx.get("session_factory")
     tracer = get_tracer()
     try:
@@ -1483,7 +1487,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
             "runner.run_test_case",
             attributes={"job.queue": "suitest:runs", "run.id": run_id},
         ):
-            return await _execute_test_case(ctx=ctx, run_id=run_id)
+            return await _run_test_case_body(ctx=ctx, run_id=run_id)
     except asyncio.CancelledError:
         log.warning("runner.job.cancelled_or_interrupted", run_id=run_id)
         if callable(factory):

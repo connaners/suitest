@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_db.audit import write_audit
 from suitest_db.models.case import TestCase, TestStep
-from suitest_db.models.run import RunStep
+from suitest_db.models.run import Run, RunStep
 from suitest_db.repositories.projects import ProjectRepo
 from suitest_db.repositories.run_step_logs import RunStepLogRepo
 from suitest_db.repositories.runs import RunRepo
@@ -153,6 +153,29 @@ async def get_runs_summary(
     )
 
 
+async def _reconcile_stale_run_if_needed(
+    run: Run,
+    metadata_dict: dict[str, object],
+    session: AsyncSession,
+) -> dict[str, object]:
+    """Auto-transition in-flight run to ERROR if heartbeat timed out (>1800s)."""
+    if run.status != RunStatus.RUNNING:
+        return metadata_dict
+    now = datetime.now(UTC)
+    last_activity = run.updated_at or run.started_at or run.created_at
+    if last_activity and (now - last_activity).total_seconds() > 1800:
+        run.status = RunStatus.ERROR
+        run.completed_at = now
+        updated_meta = dict(metadata_dict)
+        updated_meta["error"] = "Run timed out: no heartbeat or progress update received"
+        updated_meta["interrupted"] = True
+        run.metadata_json = updated_meta
+        await session.commit()
+        await session.refresh(run)
+        return updated_meta
+    return metadata_dict
+
+
 @router.get("/runs/{run_id}", response_model=RunDetail)
 async def get_run(
     run_id: str,
@@ -174,20 +197,7 @@ async def get_run(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     metadata = run.metadata_json or {}
     metadata_dict = metadata if isinstance(metadata, dict) else {}
-
-    # Auto-transition stale in-flight runs that exceeded timeout without updates
-    if run.status == RunStatus.RUNNING:
-        now = datetime.now(UTC)
-        last_activity = run.updated_at or run.started_at or run.created_at
-        if last_activity and (now - last_activity).total_seconds() > 1800:
-            run.status = RunStatus.ERROR
-            run.completed_at = now
-            metadata_dict = dict(metadata_dict)
-            metadata_dict["error"] = "Run timed out: no heartbeat or progress update received"
-            metadata_dict["interrupted"] = True
-            run.metadata_json = metadata_dict
-            await session.commit()
-            await session.refresh(run)
+    metadata_dict = await _reconcile_stale_run_if_needed(run, metadata_dict, session)
 
     coverage = metadata_dict.get("coverageSummary")
     raw_selection = metadata_dict.get("selection")
