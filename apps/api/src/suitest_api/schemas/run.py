@@ -62,6 +62,7 @@ class RunDetail(RunListItem):
     coverage_summary: dict[str, object] | None = None
     cases: list[RunCaseSummary] = Field(default_factory=list)
     playwright_config: PlaywrightConfig | None = Field(default=None, alias="playwrightConfig")
+    error_message: str | None = Field(default=None, alias="errorMessage")
 
 
 class RunStepPublic(BaseModel):

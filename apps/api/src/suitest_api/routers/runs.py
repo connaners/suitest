@@ -9,6 +9,7 @@ aioboto3 (object store) or a placeholder for ``file://`` artifacts.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from arq.connections import ArqRedis
@@ -172,10 +173,25 @@ async def get_run(
     if not await _project_in_scope(session, run.project_id, ctx.workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     metadata = run.metadata_json or {}
-    coverage = metadata.get("coverageSummary") if isinstance(metadata, dict) else None
-    raw_selection = metadata.get("selection") if isinstance(metadata, dict) else None
-    planned_cases: list[RunCaseSummary] = []
     metadata_dict = metadata if isinstance(metadata, dict) else {}
+
+    # Auto-transition stale in-flight runs that exceeded timeout without updates
+    if run.status == RunStatus.RUNNING:
+        now = datetime.now(UTC)
+        last_activity = run.updated_at or run.started_at or run.created_at
+        if last_activity and (now - last_activity).total_seconds() > 1800:
+            run.status = RunStatus.ERROR
+            run.completed_at = now
+            metadata_dict = dict(metadata_dict)
+            metadata_dict["error"] = "Run timed out: no heartbeat or progress update received"
+            metadata_dict["interrupted"] = True
+            run.metadata_json = metadata_dict
+            await session.commit()
+            await session.refresh(run)
+
+    coverage = metadata_dict.get("coverageSummary")
+    raw_selection = metadata_dict.get("selection")
+    planned_cases: list[RunCaseSummary] = []
     snapshot_cases = metadata_dict.get("planned_cases")
     if isinstance(snapshot_cases, list) and snapshot_cases:
         for item in snapshot_cases:
@@ -262,6 +278,13 @@ async def get_run(
         if "playwright_config" in metadata_dict
         and isinstance(metadata_dict["playwright_config"], dict)
         else None,
+        error_message=str(
+            metadata_dict.get("error")
+            or metadata_dict.get("error_message")
+            or metadata_dict.get("interrupted_reason")
+            or ""
+        ).strip()
+        or None,
     )
 
 

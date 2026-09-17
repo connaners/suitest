@@ -60,6 +60,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if created:
                 await session.commit()
 
+    # Reconcile any orphaned in-flight runs left from a previous crash/restart
+    try:
+        from suitest_db.repositories.runs import RunRepo
+
+        from suitest_api.auth.db import async_session_maker
+
+        async with async_session_maker() as session:
+            reconciled = await RunRepo(session).reconcile_interrupted_runs()
+            if reconciled:
+                await session.commit()
+    except Exception:
+        pass
+
     # Issue-tracker adapter registry (M1d-11). The singleton is constructed at
     # import time; lifespan only stashes it on ``app.state`` so request handlers
     # can resolve it via ``request.app.state.adapter_registry`` (or the
