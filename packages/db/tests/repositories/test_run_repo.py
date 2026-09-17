@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from factories import (
     make_project,
@@ -143,3 +145,51 @@ async def test_get_with_selection_falls_back_to_project_wide(session: AsyncSessi
     _loaded, selection = await RunRepo(session).get_with_selection(run.id)
 
     assert sorted(case_id for case_id, _order, _step in selection) == sorted([case_a.id, case_b.id])
+
+
+@pytest.mark.asyncio
+async def test_reconcile_interrupted_runs(session: AsyncSession) -> None:
+    repo = RunRepo(session)
+    project = await _project(session)
+    running_run = await make_run(session, project=project, status=RunStatus.RUNNING)
+    queued_run = await make_run(session, project=project, status=RunStatus.QUEUED)
+    pass_run = await make_run(session, project=project, status=RunStatus.PASS)
+
+    reconciled = await repo.reconcile_interrupted_runs()
+    assert len(reconciled) == 1
+    assert reconciled[0].id == running_run.id
+    assert reconciled[0].status == RunStatus.ERROR
+    assert reconciled[0].completed_at is not None
+    assert reconciled[0].metadata_json is not None
+    assert reconciled[0].metadata_json.get("interrupted") is True
+
+    # Other runs untouched
+    q_check = await repo.get_by_id(queued_run.id)
+    p_check = await repo.get_by_id(pass_run.id)
+    assert q_check is not None and q_check.status == RunStatus.QUEUED
+    assert p_check is not None and p_check.status == RunStatus.PASS
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_runs(session: AsyncSession) -> None:
+    repo = RunRepo(session)
+    project = await _project(session)
+    now = datetime.now(UTC)
+
+    stale_run = await make_run(session, project=project, status=RunStatus.RUNNING)
+    stale_run.updated_at = now - timedelta(seconds=3600)
+    await session.flush()
+
+    fresh_run = await make_run(session, project=project, status=RunStatus.RUNNING)
+    fresh_run.updated_at = now - timedelta(seconds=60)
+    await session.flush()
+
+    reconciled = await repo.reconcile_stale_runs(timeout_seconds=1800, now=now)
+    assert len(reconciled) == 1
+    assert reconciled[0].id == stale_run.id
+    assert reconciled[0].status == RunStatus.ERROR
+    assert reconciled[0].metadata_json is not None
+    assert reconciled[0].metadata_json.get("interrupted") is True
+
+    f_check = await repo.get_by_id(fresh_run.id)
+    assert f_check is not None and f_check.status == RunStatus.RUNNING
