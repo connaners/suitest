@@ -1,5 +1,7 @@
 # mcp-relay — Streamable HTTP front for the Suitest MCP server
 
+[![M8ven Live Monitored](https://m8ven.ai/badge/mcp/suiflex-suitest-1du7t4)](https://m8ven.ai/mcp/suiflex-suitest-1du7t4)
+
 Suitest's own MCP server (`@suiflex/suitest-mcp`) speaks **stdio only**. This
 image wraps it behind [mcp-proxy](https://github.com/sparfenyuk/mcp-proxy),
 which exposes the same tools over the Streamable HTTP transport at `/mcp` —

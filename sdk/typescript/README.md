@@ -1,5 +1,7 @@
 # @suiflex/suitest-sdk (TypeScript)
 
+[![M8ven Live Monitored](https://m8ven.ai/badge/mcp/suiflex-suitest-1du7t4)](https://m8ven.ai/mcp/suiflex-suitest-1du7t4)
+
 Official TypeScript SDK for [Suitest](https://suitest.dev). Dependency-free,
 `fetch`-based, works in Node ≥18 and the browser.
 

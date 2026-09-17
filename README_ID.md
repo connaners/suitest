@@ -20,6 +20,7 @@
   <a href="https://github.com/suiflex/suitest/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/suiflex/suitest/ci.yml?branch=main&style=for-the-badge" alt="CI status"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-4ade80.svg?style=for-the-badge" alt="Apache-2.0 License"></a>
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-native-4ade80?style=for-the-badge" alt="MCP native"></a>
+  <a href="https://m8ven.ai/mcp/suiflex-suitest-1du7t4"><img src="https://m8ven.ai/badge/mcp/suiflex-suitest-1du7t4" alt="M8ven Live Monitored"></a>
 </p>
 
 <p align="center">

@@ -1,5 +1,7 @@
 # @suiflex/suitest-mcp
 
+[![M8ven Live Monitored](https://m8ven.ai/badge/mcp/suiflex-suitest-1du7t4)](https://m8ven.ai/mcp/suiflex-suitest-1du7t4)
+
 Run the [Suitest](https://github.com/suiflex/suitest) MCP server with a single command:
 
 ```bash
