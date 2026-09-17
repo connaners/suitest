@@ -41,7 +41,13 @@ def _acquire_supervisor_lock() -> io.TextIOWrapper | None:
     Returns the open file handle if acquired, or None if another supervisor is active.
     """
     try:
-        lock_dir = Path.cwd() / ".suitest"
+        data_dir = os.environ.get("SUITEST_DATA_DIR")
+        if data_dir:
+            lock_dir = Path(data_dir)
+        elif "SUITEST_ARTIFACTS_DIR" in os.environ:
+            lock_dir = Path(os.environ["SUITEST_ARTIFACTS_DIR"]).parent
+        else:
+            lock_dir = Path.cwd() / ".suitest"
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_file = lock_dir / "supervisor.lock"
         f = open(lock_file, "a+", encoding="utf-8")  # noqa: SIM115
