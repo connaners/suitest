@@ -25,9 +25,14 @@ import subprocess
 import sys
 
 MAINTAINERS = {"mulhamna", "badrus123"}
+MAINTAINER_EMAILS = {
+    "mulhamna@gmail.com",
+    "badrussholehaxel@gmail.com",
+    "97831705+mulhamna@users.noreply.github.com",
+}
 
 _PREVTAG_RE = re.compile(r"/compare/(.+?)\.\.\.")
-_BULLET_RE = re.compile(r"^(\* (?:\*\*[^:*]+:\*\* )?)(.*?)( \(\[[0-9a-f]+\]\([^)]*\)\))\s*$")
+_BULLET_RE = re.compile(r"^(\* (?:\*\*[^:*]+:\*\* )?)(.*?)( \(\[[0-9a-f]+\]\([^)]*\)\))(.*)$")
 _SHA_RE = re.compile(r"\[([0-9a-f]+)\]")
 
 
@@ -52,22 +57,29 @@ def gh_author(sha):
     commits; batch via the GraphQL API if that ever stops being true.
     """
     repo = os.environ.get("GITHUB_REPOSITORY", "suiflex/suitest")
+    env = dict(os.environ)
+    token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")
+    if token:
+        env["GH_TOKEN"] = token
     proc = subprocess.run(
         [
             "gh",
             "api",
             f"repos/{repo}/commits/{sha}",
             "--jq",
-            "[.author.login, .commit.author.name, .commit.author.email] | @tsv",
+            r"[(.author.login // \"\"), (.commit.author.name // \"\"), (.commit.author.email // \"\")] | @tsv",
         ],
         capture_output=True,
         text=True,
+        env=env,
         check=False,
     )
     if proc.returncode != 0:
         return (None, None, None)
-    login, name, email, *_ = (*proc.stdout.rstrip("\n").split("\t"), "", "", "")
-    return (login or None, name or None, email or None)
+    cols = proc.stdout.rstrip("\n").split("\t")
+    while len(cols) < 3:
+        cols.append("")
+    return (cols[0] or None, cols[1] or None, cols[2] or None)
 
 
 def prev_emails(prevtag):
@@ -118,19 +130,21 @@ def attribute(text, resolve=gh_author, history=prev_emails, product="Suitest"):
         if not m:
             out_lines.append(line)
             continue
-        prefix, subject, link = m.group(1), m.group(2), m.group(3)
+        prefix, subject, link, suffix = m.group(1), m.group(2), m.group(3), m.group(4)
         sha = _SHA_RE.search(link).group(1)
         if sha not in cache:
             cache[sha] = resolve(sha)
         login, name, email = cache[sha]
 
-        is_maintainer = bool(login) and login.lower() in MAINTAINERS
+        is_maintainer = (bool(login) and login.lower() in MAINTAINERS) or (
+            bool(email) and email.lower() in MAINTAINER_EMAILS
+        )
         if is_maintainer:
             out_lines.append(line)
             continue
 
         token = _token(login, name)
-        out_lines.append(f"{prefix}{subject} ({token}){link}")
+        out_lines.append(f"{prefix}{subject} ({token}){link}{suffix}")
         if token not in seen_tokens:
             seen_tokens.add(token)
             contributors.append(token)
