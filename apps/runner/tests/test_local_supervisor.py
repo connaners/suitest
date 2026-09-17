@@ -101,7 +101,7 @@ async def test_reconcile_zombie_runs() -> None:
 
     await local_supervisor._reconcile_zombie_runs(factory)
 
-    assert zombie.status == RunStatus.ERROR
+    assert zombie.status == RunStatus.INTERRUPTED
     assert (
         zombie.metadata_json["reconciliation"] == "Supervisor restarted while run was in progress"
     )

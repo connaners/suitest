@@ -56,7 +56,8 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
     run.status === "PASS" ||
     run.status === "FAIL" ||
     run.status === "ERROR" ||
-    run.status === "CANCELLED";
+    run.status === "CANCELLED" ||
+    run.status === "INTERRUPTED";
 
   return (
     <section
@@ -87,10 +88,15 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
                 <span className="inline-block h-2 w-2 rounded-full bg-red" />
                 Run aborted (No steps executed)
               </span>
+            ) : run.status === "INTERRUPTED" ? (
+              <span className="flex items-center gap-1.5 text-amber">
+                <span className="inline-block h-2 w-2 rounded-full bg-amber" />
+                Run interrupted (No steps executed)
+              </span>
             ) : run.status === "ERROR" ? (
               <span className="flex items-center gap-1.5 text-red">
                 <span className="inline-block h-2 w-2 rounded-full bg-red" />
-                Run interrupted or errored
+                Run errored (No steps executed)
               </span>
             ) : (
               <span className="flex items-center gap-1.5 text-amber">
@@ -122,6 +128,11 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
                   <span className="inline-block h-2 w-2 rounded-full bg-red" />
                   {skippedSteps > 0 ? `${skippedSteps} aborted` : "Run aborted"}
                 </span>
+              ) : run.status === "INTERRUPTED" ? (
+                <span className="flex items-center gap-1.5 text-amber">
+                  <span className="inline-block h-2 w-2 rounded-full bg-amber" />
+                  {skippedSteps > 0 ? `${skippedSteps} interrupted` : "Run interrupted"}
+                </span>
               ) : isTerminal && skippedSteps > 0 ? (
                 <span className="flex items-center gap-1.5 text-amber">
                   <span className="inline-block h-2 w-2 rounded-full bg-amber" />
@@ -150,8 +161,39 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
         <Stat
           label="Steps"
           value={`${effectiveSummary.passed_steps.toString()} / ${effectiveSummary.total_steps.toString()} passed`}
+          subtext={
+            run.status === "INTERRUPTED" && skippedSteps > 0 ? (
+              <span className="text-amber font-medium">{skippedSteps} interrupted</span>
+            ) : run.status === "CANCELLED" && skippedSteps > 0 ? (
+              <span className="text-red font-medium">{skippedSteps} aborted</span>
+            ) : failedSteps > 0 ? (
+              <span className="text-red font-medium">{failedSteps} failed</span>
+            ) : run.status === "PASS" && totalSteps > 0 ? (
+              <span className="text-accent font-medium">all passed</span>
+            ) : isRunning && totalSteps > passedSteps ? (
+              <span className="text-blue font-medium">{totalSteps - passedSteps} in progress</span>
+            ) : undefined
+          }
         />
-        <Stat label="Failed" value={run.summary.failed_steps.toString()} />
+        {run.status === "INTERRUPTED" && failedSteps === 0 ? (
+          <Stat
+            label="Incomplete"
+            value={skippedSteps.toString()}
+            valueClassName="text-amber font-semibold"
+          />
+        ) : run.status === "CANCELLED" && failedSteps === 0 ? (
+          <Stat
+            label="Aborted"
+            value={skippedSteps.toString()}
+            valueClassName="text-red font-semibold"
+          />
+        ) : (
+          <Stat
+            label="Failed"
+            value={failedSteps.toString()}
+            valueClassName={failedSteps > 0 ? "text-red font-semibold" : undefined}
+          />
+        )}
       </dl>
       {run.coverage_summary ? (
         <dl
@@ -166,11 +208,22 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }): React.ReactElement {
+function Stat({
+  label,
+  value,
+  subtext,
+  valueClassName,
+}: {
+  label: string;
+  value: React.ReactNode;
+  subtext?: React.ReactNode | undefined;
+  valueClassName?: string | undefined;
+}): React.ReactElement {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-0.5">
       <dt className="text-[10.5px] uppercase tracking-wide text-fg-5">{label}</dt>
-      <dd className="text-[13px] tabular-nums text-fg-1">{value}</dd>
+      <dd className={`text-[13px] tabular-nums text-fg-1 ${valueClassName ?? ""}`}>{value}</dd>
+      {subtext ? <div className="text-[11px] leading-none">{subtext}</div> : null}
     </div>
   );
 }

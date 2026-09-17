@@ -419,5 +419,53 @@ describe("Test Runs screen", () => {
       expect((router.state.location.search as { run?: string }).run).toBe("RUN-2001");
     });
   });
+
+  it("renders the INTERRUPTED warning banner and Resume Remaining button when run is interrupted", async () => {
+    useActiveProject.setState({ projectId: "prj_demo" });
+    server.use(
+      http.get("*/api/v1/runs/RUN-INTERRUPTED", () =>
+        HttpResponse.json({
+          id: "run_interrupted",
+          public_id: "RUN-INTERRUPTED",
+          project_id: "prj_demo",
+          name: "Interrupted Run (Sleep / Disconnect)",
+          branch: "main",
+          status: "INTERRUPTED",
+          trigger: "MANUAL",
+          tier_at_runtime: "ZERO",
+          summary: { total_steps: 3, passed_steps: 1, failed_steps: 0, duration_ms: 60000 },
+          cases: [
+            { case_id: "c1", case_public_id: "TC-01", case_title: "Login", total_steps: 1 },
+            { case_id: "c2", case_public_id: "TC-02", case_title: "Payment", total_steps: 2 },
+          ],
+          created_at: "2026-05-01T00:00:00Z",
+          updated_at: "2026-05-01T00:01:00Z",
+        }),
+      ),
+      http.get("*/api/v1/runs/RUN-INTERRUPTED/steps", () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "step_1",
+              run_id: "run_interrupted",
+              case_id: "c1",
+              case_public_id: "TC-01",
+              step_order: 0,
+              tool: "click",
+              outcome: "PASS",
+              duration_ms: 500,
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderRuns("/runs?run=RUN-INTERRUPTED");
+    expect(await screen.findByTestId("run-detail", undefined, { timeout: 3000 })).toBeInTheDocument();
+    const banner = await screen.findByTestId("run-interrupted-banner", undefined, { timeout: 3000 });
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/Run Interrupted/i);
+    expect(screen.getByRole("button", { name: /Resume Remaining/i })).toBeInTheDocument();
+  });
 });
 

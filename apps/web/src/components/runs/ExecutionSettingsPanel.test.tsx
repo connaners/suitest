@@ -127,6 +127,7 @@ describe("ExecutionSettingsPanel", () => {
       videoQuality: "720p",
       highlightSteps: true,
       cleanSessionBetweenCases: true,
+      preventSleep: true,
     };
     render(
       <ExecutionSettingsPanel

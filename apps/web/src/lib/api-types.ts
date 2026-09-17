@@ -6233,6 +6233,11 @@ export interface components {
              */
             highlightSteps: boolean;
             /**
+             * Preventsleep
+             * @default true
+             */
+            preventSleep: boolean;
+            /**
              * Screenshot
              * @default only-on-failure
              * @enum {string}
@@ -7146,7 +7151,7 @@ export interface components {
          * RunStatus
          * @enum {string}
          */
-        RunStatus: "QUEUED" | "RUNNING" | "PASS" | "FAIL" | "CANCELLED" | "ERROR";
+        RunStatus: "QUEUED" | "RUNNING" | "PASS" | "FAIL" | "CANCELLED" | "ERROR" | "INTERRUPTED";
         /**
          * RunStepPublic
          * @description One run step with its outcome + linked case public id (docs/API.md §3.5).

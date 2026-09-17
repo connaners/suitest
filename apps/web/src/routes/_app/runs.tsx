@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
+  AlertCircle,
   AlertTriangle,
   ArrowUp,
   HelpCircle,
@@ -14,11 +15,13 @@ import {
 } from "lucide-react";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 import { Gated } from "@/components/gating/Gated";
 import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
 import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
 import { RunInterruptedBanner } from "@/components/runs/RunInterruptedBanner";
+import { WakeLockIndicator } from "@/components/runs/WakeLockIndicator";
 import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunsSkeleton } from "@/components/runs/skeleton";
 import { CostChip } from "@/components/shared/CostChip";
@@ -417,9 +420,15 @@ function RunDetailPanel({
       />
     );
   }
-  if (isLoading || !run) return <RunsSkeleton />;
-  if (isError) {
-    return <EmptyState icon={AlertTriangle} title="Couldn't load run" />;
+  if (isLoading) return <RunsSkeleton />;
+  if (isError || !run) {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title="Couldn't load run"
+        subtitle="The requested run could not be found or belongs to another workspace."
+      />
+    );
   }
 
   // Guard against cross-project data leakage: if the loaded run belongs to another project
@@ -441,11 +450,11 @@ function RunDetailPanel({
 
   const dialogGroups = explorerGroups.length > 0 ? explorerGroups : fallbackGroups;
   const failedSteps = run.summary?.failed_steps ?? 0;
-  const failedCasesCount = dialogGroups.filter(
-    (g) => g.rollup === "fail" || g.rollup === "aborted",
-  ).length;
-  const hasFailures =
-    failedSteps > 0 || failedCasesCount > 0 || run.status === "FAIL" || run.status === "ERROR";
+  const actualFailedCasesCount = dialogGroups.filter((g) => g.rollup === "fail").length;
+  const abortedCasesCount = dialogGroups.filter((g) => g.rollup === "aborted").length;
+  const failedCasesCount = actualFailedCasesCount + abortedCasesCount;
+  const hasActualFailures = failedSteps > 0 || actualFailedCasesCount > 0;
+  const hasAbortedOnly = !hasActualFailures && abortedCasesCount > 0;
   const failedCount = failedCasesCount > 0 ? failedCasesCount : failedSteps;
 
   const handleCancel = (): void => {
@@ -468,6 +477,9 @@ function RunDetailPanel({
             onNavigateToRun(targetPublicId);
           }
         },
+        onError: (err) => {
+          toast.error(err.message || "Failed to trigger re-run");
+        },
       },
     );
   };
@@ -481,6 +493,9 @@ function RunDetailPanel({
           if (targetPublicId) {
             onNavigateToRun(targetPublicId);
           }
+        },
+        onError: (err) => {
+          toast.error(err.message || "Failed to trigger re-run");
         },
       },
     );
@@ -503,6 +518,14 @@ function RunDetailPanel({
           })()}
           <span className="truncate font-mono text-[12px] text-fg-3">{run.public_id}</span>
           <span className="font-mono text-[11px] text-fg-5">via {run.trigger}</span>
+          <WakeLockIndicator
+            isLive={isLive}
+            preventSleep={
+              (run.playwrightConfig as { preventSleep?: boolean; prevent_sleep?: boolean } | null | undefined)?.preventSleep ??
+              (run.playwrightConfig as { preventSleep?: boolean; prevent_sleep?: boolean } | null | undefined)?.prevent_sleep ??
+              true
+            }
+          />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {isLive ? (
@@ -525,7 +548,10 @@ function RunDetailPanel({
             variant="outline"
             disabled={rerunDisabled}
             onClick={() => setRerunDialogOpen(true)}
-            className={cn(hasFailures && "border-red/40 text-red hover:bg-red/10")}
+            className={cn(
+              hasActualFailures && "border-red/40 text-red hover:bg-red/10",
+              hasAbortedOnly && "border-amber-500/40 text-amber-500 hover:bg-amber-500/10",
+            )}
             data-testid="run-rerun-button"
           >
             <RotateCw
@@ -534,9 +560,11 @@ function RunDetailPanel({
             />
             {rerunMutation.isPending
               ? "Queuing…"
-              : failedCount > 0
+              : hasActualFailures
                 ? `Re-run (${failedCount} failed)`
-                : "Re-run"}
+                : hasAbortedOnly
+                  ? `Resume (${abortedCasesCount} remaining)`
+                  : "Re-run"}
           </Button>
           {targetCasePublicId ? (
             <Link
@@ -560,6 +588,33 @@ function RunDetailPanel({
           </Link>
         </div>
       </div>
+
+      {run.status === "INTERRUPTED" ? (
+        <div
+          role="alert"
+          data-testid="run-interrupted-banner"
+          className="flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-[12px] text-amber-500 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div>
+              <strong className="font-semibold">Run Interrupted:</strong>{" "}
+              <span>
+                Execution disconnected before completing all steps (connection lost, machine slept, or runner stopped).
+              </span>
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shrink-0 border-amber-500/40 text-amber-500 hover:bg-amber-500/20"
+            onClick={() => setRerunDialogOpen(true)}
+          >
+            Resume Remaining
+          </Button>
+        </div>
+      ) : null}
 
       {cancelForbidden ? (
         <div

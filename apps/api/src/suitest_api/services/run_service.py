@@ -439,12 +439,36 @@ async def _resolve_rerun_targets(
         .distinct()
     )
     failed_set = set((await session.scalars(stmt)).all())
+
+    if src.status in (RunStatus.INTERRUPTED, RunStatus.CANCELLED):
+        executed_stmt = select(RunStep.case_id).where(RunStep.run_id == src.id).distinct()
+        executed_set = set((await session.scalars(executed_stmt)).all())
+        planned_case_ids = [
+            item["case_id"]
+            for item in original_selection
+            if isinstance(item, dict) and isinstance(item.get("case_id"), str)
+        ]
+        unexecuted_cases = [cid for cid in planned_case_ids if cid not in executed_set]
+        target_case_ids = [
+            item["case_id"]
+            for item in original_selection
+            if isinstance(item, dict)
+            and (item.get("case_id") in failed_set or item.get("case_id") in unexecuted_cases)
+        ]
+        if not target_case_ids:
+            target_case_ids = list(failed_set.union(unexecuted_cases))
+        if not target_case_ids:
+            raise ValueError("No failed or incomplete test cases to re-run.")
+        return target_case_ids, "resume"
+
     if not failed_set:
         raise ValueError("No failed test cases to re-run.")
 
     if original_selection:
         target_case_ids = [
-            item["case_id"] for item in original_selection if item.get("case_id") in failed_set
+            item["case_id"]
+            for item in original_selection
+            if isinstance(item, dict) and item.get("case_id") in failed_set
         ]
     else:
         target_case_ids = list(failed_set)

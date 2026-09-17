@@ -347,6 +347,7 @@ class RunRepo(AsyncRepository[Run, RunCreate, RunUpdate]):
             run.passed_steps = passed_steps
         if failed_steps is not None:
             run.failed_steps = failed_steps
+        run.updated_at = datetime.now(UTC)
         await self.session.flush()
         return run
 

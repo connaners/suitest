@@ -52,6 +52,7 @@ export interface PlaywrightConfigInput {
   videoQuality?: ("360p" | "480p" | "720p" | "1080p") | undefined;
   highlightSteps?: boolean | undefined;
   cleanSessionBetweenCases?: boolean | undefined;
+  preventSleep?: boolean | undefined;
 }
 
 export interface CreateRunInput {
@@ -180,7 +181,11 @@ export function useRun(runId: string | undefined): UseQueryResult<RunDetail> {
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       const terminal =
-        status === "PASS" || status === "FAIL" || status === "ERROR" || status === "CANCELLED";
+        status === "PASS" ||
+        status === "FAIL" ||
+        status === "ERROR" ||
+        status === "CANCELLED" ||
+        status === "INTERRUPTED";
       return terminal ? false : 2000;
     },
   });

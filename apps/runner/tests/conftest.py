@@ -118,16 +118,21 @@ def _make_project(project_id: str = "proj-1", workspace_id: str = "ws-1") -> Mag
 class _FakeSession:
     """Bare-minimum SQLAlchemy AsyncSession stand-in for the orchestrator.
 
-    The orchestrator only calls ``session.get(Project, project_id)`` directly
+    The orchestrator calls ``session.get(Project, project_id)`` or ``session.get(Run, run_id)``
     and threads the session into the repo classes (which we monkeypatch).
     Everything else (``commit`` / ``flush``) is a no-op recorder.
     """
 
-    def __init__(self, project: MagicMock) -> None:
+    def __init__(self, project: MagicMock, run: MagicMock | None = None) -> None:
         self._project = project
+        self._run = run
         self.commits = 0
 
-    async def get(self, _model: object, _id: object) -> MagicMock:
+    async def get(self, model: object, _id: object) -> MagicMock | None:
+        from suitest_db.models.run import Run
+
+        if model is Run:
+            return self._run
         return self._project
 
     async def commit(self) -> None:
@@ -145,12 +150,12 @@ class _FakeSession:
         return res
 
 
-def _session_factory(project: MagicMock) -> Any:
+def _session_factory(project: MagicMock, run: MagicMock | None = None) -> Any:
     """Return a callable that yields a fresh session-context per call."""
 
     @asynccontextmanager
     async def factory() -> AsyncIterator[_FakeSession]:
-        yield _FakeSession(project)
+        yield _FakeSession(project, run=run)
 
     return factory
 
@@ -183,6 +188,8 @@ def _install_repo_stubs(
             return run
 
         async def update_status(self, _run_id: str, status: RunStatus, **kwargs: object) -> None:
+            if run is not None:
+                run.status = status
             return None
 
     class _FakeWorkspaceCapRepo:

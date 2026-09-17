@@ -132,6 +132,7 @@ function runStatusToBadge(
     case "QUEUED":
       return "neutral";
     case "CANCELLED":
+    case "INTERRUPTED":
       return "warn";
     default:
       return "neutral";

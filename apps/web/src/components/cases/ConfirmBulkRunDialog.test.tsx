@@ -37,6 +37,7 @@ describe("<ConfirmBulkRunDialog>", () => {
       video: "off",
       videoQuality: "1080p",
       highlightSteps: false,
+      preventSleep: false,
     });
   });
 
@@ -84,6 +85,7 @@ describe("<ConfirmBulkRunDialog>", () => {
       video: "retain-on-failure",
       videoQuality: "1080p",
       highlightSteps: true,
+      preventSleep: false,
     });
   });
 

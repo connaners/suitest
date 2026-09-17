@@ -21,6 +21,8 @@ export function statusToBadge(status: RunStatus): "pass" | "fail" | "warn" | "ru
       return "running";
     case "CANCELLED":
       return "fail";
+    case "INTERRUPTED":
+      return "warn";
     default:
       return "neutral";
   }
@@ -57,6 +59,9 @@ export function runToBadge(
   }
   if (status === "CANCELLED") {
     return { status: "fail", label: "ABORTED" };
+  }
+  if (status === "INTERRUPTED") {
+    return { status: "warn", label: "INTERRUPTED" };
   }
   return { status: statusToBadge(status) };
 }
@@ -99,6 +104,9 @@ export function buildRunSegments(
     }
     if (status === "CANCELLED") {
       return [{ value: 100, variant: "fail", label: "Aborted" }];
+    }
+    if (status === "INTERRUPTED") {
+      return [{ value: 100, variant: "warn", label: "Interrupted" }];
     }
     return [];
   }
@@ -144,6 +152,23 @@ export function buildRunSegments(
       segments.push({ value: failed, variant: "fail", label: `${failed} failed` });
     }
     segments.push({ value: remaining, variant: "fail", label: `${remaining} aborted` });
+    return segments;
+  }
+
+  // Interrupted run handling
+  if (status === "INTERRUPTED") {
+    const remaining = Math.max(0, total - (passed + failed));
+    if (remaining <= 0 || (passed === 0 && failed === 0)) {
+      return [{ value: total > 0 ? total : 100, variant: "warn", label: "Interrupted" }];
+    }
+    const segments: ProgressBarSegment[] = [];
+    if (passed > 0) {
+      segments.push({ value: passed, variant: "pass", label: `${passed} passed` });
+    }
+    if (failed > 0) {
+      segments.push({ value: failed, variant: "fail", label: `${failed} failed` });
+    }
+    segments.push({ value: remaining, variant: "warn", label: `${remaining} interrupted` });
     return segments;
   }
 

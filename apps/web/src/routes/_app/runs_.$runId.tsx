@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Minimize2, RotateCw, Square } from "lucide-react";
+import { AlertCircle, Minimize2, RotateCw, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
@@ -8,10 +8,12 @@ import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
 import { RunInterruptedBanner } from "@/components/runs/RunInterruptedBanner";
 import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunSummaryCard } from "@/components/runs/RunSummaryCard";
+import { WakeLockIndicator } from "@/components/runs/WakeLockIndicator";
 import { Button } from "@/components/ui/button";
 import { useCancelRun, useRerunRun, type PlaywrightConfigInput } from "@/hooks/use-runs";
 import { ApiError, fetchRun } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/runs_/$runId")({
   component: RunDetailPage,
@@ -34,7 +36,11 @@ export function RunDetailPage(): React.ReactElement {
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       const terminal =
-        status === "PASS" || status === "FAIL" || status === "ERROR" || status === "CANCELLED";
+        status === "PASS" ||
+        status === "FAIL" ||
+        status === "ERROR" ||
+        status === "CANCELLED" ||
+        status === "INTERRUPTED";
       return terminal ? false : 2000;
     },
   });
@@ -62,11 +68,11 @@ export function RunDetailPage(): React.ReactElement {
 
   const dialogGroups = explorerGroups.length > 0 ? explorerGroups : fallbackGroups;
   const failedSteps = run?.summary?.failed_steps ?? 0;
-  const failedCasesCount = dialogGroups.filter(
-    (g) => g.rollup === "fail" || g.rollup === "aborted",
-  ).length;
-  const hasFailures =
-    failedSteps > 0 || failedCasesCount > 0 || run?.status === "FAIL" || run?.status === "ERROR";
+  const actualFailedCasesCount = dialogGroups.filter((g) => g.rollup === "fail").length;
+  const abortedCasesCount = dialogGroups.filter((g) => g.rollup === "aborted").length;
+  const failedCasesCount = actualFailedCasesCount + abortedCasesCount;
+  const hasActualFailures = failedSteps > 0 || actualFailedCasesCount > 0;
+  const hasAbortedOnly = !hasActualFailures && abortedCasesCount > 0;
   const failedCount = failedCasesCount > 0 ? failedCasesCount : failedSteps;
 
   const handleCancel = (): void => {
@@ -91,6 +97,8 @@ export function RunDetailPage(): React.ReactElement {
         onError: (err) => {
           if (err instanceof ApiError && err.status === 403) {
             setRerunForbidden(true);
+          } else {
+            toast.error(err.message || "Failed to trigger re-run");
           }
         },
       },
@@ -110,6 +118,8 @@ export function RunDetailPage(): React.ReactElement {
         onError: (err) => {
           if (err instanceof ApiError && err.status === 403) {
             setRerunForbidden(true);
+          } else {
+            toast.error(err.message || "Failed to trigger re-run");
           }
         },
       },
@@ -120,8 +130,18 @@ export function RunDetailPage(): React.ReactElement {
 
   return (
     <section className="flex flex-col gap-4" data-testid="run-detail-page">
-      <div className="flex justify-end">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <WakeLockIndicator
+            isLive={isLive}
+            preventSleep={
+              (run?.playwrightConfig as { preventSleep?: boolean; prevent_sleep?: boolean } | null | undefined)?.preventSleep ??
+              (run?.playwrightConfig as { preventSleep?: boolean; prevent_sleep?: boolean } | null | undefined)?.prevent_sleep ??
+              true
+            }
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 ml-auto">
           <Link
             to="/runs"
             search={{ run: run?.public_id ?? runId }}
@@ -152,7 +172,10 @@ export function RunDetailPage(): React.ReactElement {
             variant="outline"
             disabled={rerunDisabled}
             onClick={() => setRerunDialogOpen(true)}
-            className={cn(hasFailures && "border-red/40 text-red hover:bg-red/10")}
+            className={cn(
+              hasActualFailures && "border-red/40 text-red hover:bg-red/10",
+              hasAbortedOnly && "border-amber-500/40 text-amber-500 hover:bg-amber-500/10",
+            )}
             data-testid="run-rerun-button"
           >
             <RotateCw
@@ -161,9 +184,11 @@ export function RunDetailPage(): React.ReactElement {
             />
             {rerunMutation.isPending
               ? "Queuing…"
-              : failedCount > 0
+              : hasActualFailures
                 ? `Re-run (${failedCount} failed)`
-                : "Re-run"}
+                : hasAbortedOnly
+                  ? `Resume (${abortedCasesCount} remaining)`
+                  : "Re-run"}
           </Button>
           <Link
             to="/cases"
@@ -183,6 +208,33 @@ export function RunDetailPage(): React.ReactElement {
           </Link>
         </div>
       </div>
+
+      {run?.status === "INTERRUPTED" ? (
+        <div
+          role="alert"
+          data-testid="run-interrupted-banner"
+          className="flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-[12px] text-amber-500 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div>
+              <strong className="font-semibold">Run Interrupted:</strong>{" "}
+              <span>
+                Execution was interrupted before all steps finished (connection dropped, laptop slept, or runner stopped).
+              </span>
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shrink-0 border-amber-500/40 text-amber-500 hover:bg-amber-500/20"
+            onClick={() => setRerunDialogOpen(true)}
+          >
+            Resume Remaining
+          </Button>
+        </div>
+      ) : null}
 
       {rerunForbidden ? (
         <div

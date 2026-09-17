@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ListChecks } from "lucide-react";
+import { AlertCircle, AlertTriangle, ListChecks } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CaseDetailPanel } from "@/components/runs/CaseDetailPanel";
@@ -35,7 +35,13 @@ interface RunCaseExplorerProps {
 
 /** Once a run reaches one of these, no further steps can appear. */
 function isTerminal(status: RunStatus | undefined): boolean {
-  return status === "PASS" || status === "FAIL" || status === "ERROR" || status === "CANCELLED";
+  return (
+    status === "PASS" ||
+    status === "FAIL" ||
+    status === "ERROR" ||
+    status === "CANCELLED" ||
+    status === "INTERRUPTED"
+  );
 }
 
 /**
@@ -69,6 +75,7 @@ export function RunCaseExplorer({
       const items = query.state.data?.items ?? [];
       const hasMissing =
         status !== "CANCELLED" &&
+        status !== "INTERRUPTED" &&
         plannedCases !== undefined &&
         plannedCases.length > 0 &&
         plannedCases.some((pc) => {
@@ -172,6 +179,24 @@ export function RunCaseExplorer({
           icon={ListChecks}
           title="Running"
           subtitle="Test cases appear here as their steps complete."
+        />
+      );
+    }
+    if (status === "INTERRUPTED") {
+      return (
+        <EmptyState
+          icon={AlertCircle}
+          title="Run Interrupted"
+          subtitle="Connection or execution was abruptly interrupted before steps could be recorded."
+        />
+      );
+    }
+    if (status === "CANCELLED") {
+      return (
+        <EmptyState
+          icon={AlertCircle}
+          title="Run Aborted"
+          subtitle="This run was cancelled before executing any steps."
         />
       );
     }
