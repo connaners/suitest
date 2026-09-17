@@ -76,3 +76,28 @@ export function useCreateProject(): UseMutationResult<ProjectPublic, Error, Crea
     },
   });
 }
+
+export interface UpdateProjectInput {
+  projectId: string;
+  name?: string | undefined;
+  description?: string | undefined;
+}
+
+/**
+ * Update project metadata via ``PATCH /projects/:id`` (name and description).
+ *
+ * Slugs are immutable and cannot be patched. Gated to OWNER and ADMIN roles.
+ */
+export function useUpdateProject(): UseMutationResult<ProjectPublic, Error, UpdateProjectInput> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ projectId, ...payload }: UpdateProjectInput) => {
+      const res = await api.patch<ProjectPublic>(`/projects/${projectId}`, payload);
+      return res.data;
+    },
+    onSuccess: (project) => {
+      void queryClient.invalidateQueries({ queryKey: ["project", project.id] });
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}

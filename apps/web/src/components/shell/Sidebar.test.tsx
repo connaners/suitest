@@ -9,9 +9,11 @@ import {
 } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Sidebar, type SidebarProps } from "@/components/shell/Sidebar";
+import { server } from "@/mocks/server";
 
 /**
  * Mount the Sidebar inside a minimal in-memory TanStack Router so `<Link>`
@@ -221,4 +223,56 @@ describe("<Sidebar>", () => {
     }
     expect(aside?.className).toContain("md:w-[64px]");
   });
+
+  it("passes canManage=false to ProjectPicker when userRole is QA", async () => {
+    server.use(
+      http.get("*/api/v1/projects", () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "prj_1",
+              name: "Demo Project",
+              slug: "demo-project",
+            },
+          ],
+          meta: { next_cursor: null, limit: 20 },
+        }),
+      ),
+    );
+    await renderSidebar("/dashboard", { userRole: "QA" });
+    const trigger = await screen.findByTestId("project-picker");
+    expect(trigger).toBeInTheDocument();
+    trigger.click();
+    await waitFor(() => {
+      expect(screen.getByTestId("project-picker-list")).toBeInTheDocument();
+      expect(screen.queryByTestId("project-picker-create")).toBeNull();
+      expect(screen.queryByTestId("project-picker-action-bar")).toBeNull();
+    });
+  });
+
+  it("passes canManage=true to ProjectPicker when userRole is Owner", async () => {
+    server.use(
+      http.get("*/api/v1/projects", () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "prj_1",
+              name: "Demo Project",
+              slug: "demo-project",
+            },
+          ],
+          meta: { next_cursor: null, limit: 20 },
+        }),
+      ),
+    );
+    await renderSidebar("/dashboard", { userRole: "Owner" });
+    const trigger = await screen.findByTestId("project-picker");
+    expect(trigger).toBeInTheDocument();
+    trigger.click();
+    await waitFor(() => {
+      expect(screen.getByTestId("project-picker-create")).toBeInTheDocument();
+      expect(screen.getByTestId("project-picker-action-bar")).toBeInTheDocument();
+    });
+  });
 });
+

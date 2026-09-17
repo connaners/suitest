@@ -124,6 +124,9 @@ export function Sidebar({
   // over the content, out of the 64px rail).
   const isOpen = !collapsed || hovered || focused || pickerOpen || projectPickerOpen;
 
+  const normalizedRole = userRole?.trim().toUpperCase();
+  const canManageProjects = normalizedRole === "OWNER" || normalizedRole === "ADMIN";
+
   const configItems: NavItem[] = [
     { label: "Integrations", icon: Plug, to: "/integrations" },
     { label: "Docs", icon: BookOpen, to: "/docs" },
@@ -299,6 +302,7 @@ export function Sidebar({
           collapsed={!isOpen}
           open={projectPickerOpen}
           onOpenChange={setProjectPickerOpen}
+          canManage={canManageProjects}
         />
 
         {/* Section 3 — Nav. min-h-0 is load-bearing: a flex child keeps
