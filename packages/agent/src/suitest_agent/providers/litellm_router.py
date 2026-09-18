@@ -187,6 +187,11 @@ class LiteLLMProvider:
         }
         if self._api_key:
             kwargs["api_key"] = self._api_key
+        elif self.name in _OPENAI_SHIM:
+            # LiteLLM's openai/* router checks for an api_key and raises OpenAIException - Missing credentials
+            # if none is provided. For custom/local OpenAI-compatible endpoints that don't need auth,
+            # provide a dummy placeholder.
+            kwargs["api_key"] = "none"
         if self._base_url:
             kwargs["api_base"] = self._base_url
         if self._extra_headers:
