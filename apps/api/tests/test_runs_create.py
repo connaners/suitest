@@ -244,8 +244,8 @@ async def test_create_run_enqueues_arq_job(api_db: ApiDb) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_run_zero_steps_returns_400(api_db: ApiDb) -> None:
-    """A run where selected test cases have 0 total steps must return 400."""
+async def test_create_run_zero_steps_allowed_and_enqueued(api_db: ApiDb) -> None:
+    """A run where selected test cases have 0 total steps is accepted with 202 and enqueued."""
     user = await api_db.seed_user(email="run-create-nosteps@example.com")
     ws = await api_db.member_workspace(user, slug="run-create-nosteps-ws")
     await api_db.seed_ready_llm(ws.id)
@@ -277,5 +277,6 @@ async def test_create_run_zero_steps_returns_400(api_db: ApiDb) -> None:
                 },
                 headers={"X-Workspace-Id": ws.id},
             )
-    assert resp.status_code == 400
-    assert "none of the selected test cases have any steps to execute" in resp.json()["detail"]
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["status"] == "QUEUED"
