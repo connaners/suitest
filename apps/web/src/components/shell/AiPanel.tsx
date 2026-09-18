@@ -20,6 +20,7 @@ import {
   type ChatToolEvent,
 } from "@/lib/chat-client";
 import { providerLabel } from "@/lib/llm-vendors";
+import { isEditable } from "@/lib/utils";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
 import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities } from "@/stores/use-capabilities";
@@ -40,6 +41,8 @@ import { useCapabilities } from "@/stores/use-capabilities";
 
 const SESSION_KEY = "suitest.agentSessionId";
 const AUTO_APPROVE_KEY = "suitest.agentAutoApprove";
+const TOGGLE_HINT =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘J" : "Ctrl+J";
 /** Panel-local model pick. Deliberately not the workspace config: switching
  * models while chatting is a conversational act, not a tenant config change. */
 const MODEL_KEY = "suitest.agentModel";
@@ -125,7 +128,7 @@ function AiPanelInner(): React.ReactElement {
   // ⌘J / Ctrl+J toggles the panel from anywhere in the shell.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.defaultPrevented) return;
+      if (e.defaultPrevented || isEditable(e.target)) return;
       if (e.key.toLowerCase() === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         toggle();
@@ -266,10 +269,11 @@ function AiPanelInner(): React.ReactElement {
     }
   }, [models, model, offered]);
 
-  // Keep the newest turn / streamed token in view.
+  // Keep the newest turn / streamed token in view — also after expanding, since
+  // the collapsed rail unmounts the thread and it remounts scrolled to the top.
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: "end" });
-  }, [turns, streaming]);
+  }, [turns, streaming, isOpen]);
 
   // Restore the last conversation on mount so a reload keeps the thread.
   useEffect(() => {
@@ -438,8 +442,8 @@ function AiPanelInner(): React.ReactElement {
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label="Open Suitest Agent (⌘J)"
-                title="Open Suitest Agent (⌘J)"
+                aria-label={`Open Suitest Agent (${TOGGLE_HINT})`}
+                title={`Open Suitest Agent (${TOGGLE_HINT})`}
                 aria-expanded={false}
                 data-testid="ai-panel-expand"
                 onClick={toggle}
@@ -452,7 +456,7 @@ function AiPanelInner(): React.ReactElement {
               </button>
             </TooltipTrigger>
             <TooltipContent side="left">
-              <span>Open assistant (⌘J)</span>
+              <span>Open assistant ({TOGGLE_HINT})</span>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -557,8 +561,8 @@ function AiPanelInner(): React.ReactElement {
           ) : null}
           <button
             type="button"
-            aria-label="Collapse Suitest Agent (⌘J)"
-            title="Collapse (⌘J)"
+            aria-label={`Collapse Suitest Agent (${TOGGLE_HINT})`}
+            title={`Collapse (${TOGGLE_HINT})`}
             aria-expanded={true}
             data-testid="ai-panel-collapse"
             onClick={toggle}

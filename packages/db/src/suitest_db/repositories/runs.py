@@ -146,6 +146,19 @@ class RunRepo(AsyncRepository[Run, RunCreate, RunUpdate]):
         )
         return resolved
 
+    async def latest_by_projects(self, project_ids: Sequence[str]) -> dict[str, Run]:
+        """Map project id → its newest run, one windowed query (no per-project loop)."""
+        if not project_ids:
+            return {}
+        rank = (
+            func.row_number()
+            .over(partition_by=Run.project_id, order_by=(Run.created_at.desc(), Run.id.desc()))
+            .label("rank")
+        )
+        ranked = select(Run.id, rank).where(Run.project_id.in_(project_ids)).subquery()
+        stmt = select(Run).join(ranked, ranked.c.id == Run.id).where(ranked.c.rank == 1)
+        return {run.project_id: run for run in (await self.session.scalars(stmt)).all()}
+
     async def list_since(self, project_id: str, since: datetime) -> Sequence[Run]:
         """All runs for a project created at/after ``since`` (analytics windows)."""
         stmt = (

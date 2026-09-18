@@ -91,6 +91,7 @@ describe("<AiPanel>", () => {
     localStorage.removeItem("suitest.agentModel");
     localStorage.removeItem("suitest.aiPanelOpen");
     localStorage.removeItem("suitest.aiPanelWidth");
+    localStorage.removeItem("suitest.agentPanelCollapsed");
     vi.mocked(fetchLlmModels).mockReset();
   });
 
@@ -255,5 +256,15 @@ describe("<AiPanel>", () => {
 
     const panel = screen.getByTestId("ai-panel");
     expect(panel).toHaveStyle({ width: "520px" });
+  });
+
+  it("leaves ⌘J alone while typing in a field", async () => {
+    setCaps(CLOUD_ASSIST_CAPS);
+    render(<AiPanel />);
+
+    await userEvent.click(screen.getByTestId("ai-panel-composer-input"));
+    await userEvent.keyboard("{Meta>}j{/Meta}");
+
+    expect(screen.getByTestId("ai-panel")).toBeInTheDocument();
   });
 });

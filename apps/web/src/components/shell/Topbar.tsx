@@ -33,7 +33,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn, isEditable } from "@/lib/utils";
 import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities } from "@/stores/use-capabilities";
 
@@ -127,7 +127,7 @@ export function Topbar({
       const isCmdJ = (e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "j" || e.key === "J");
       const isCmdShiftL =
         (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "l" || e.key === "L");
-      if (isCmdJ || isCmdShiftL) {
+      if ((isCmdJ || isCmdShiftL) && !isEditable(e.target)) {
         if (llmReady && hasAiConversation) {
           e.preventDefault();
           useAiPanel.getState().toggle();
