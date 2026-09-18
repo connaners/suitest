@@ -6,6 +6,7 @@ import {
   ArrowUp,
   CameraOff,
   ChevronDown,
+  ChevronRight,
   Code2,
   Download,
   FileDown,
@@ -513,18 +514,20 @@ function CaseTree({
   onGenerate,
   gatingSuiteId,
   onSetGating,
+  isFiltered = false,
 }: {
   suites: Suite[];
   cases: Case[];
   selectedId: string | null;
   selectedIds: Set<string>;
+  isFiltered?: boolean;
   onSelect: (publicId: string) => void;
   onToggleSelection: (id: string) => void;
   onToggleAll: (ids: string[]) => void;
   onNewCase: () => void;
   onGenerate: (strategy?: GeneratorStrategy) => void;
   gatingSuiteId: string | null;
-  onSetGating: (suiteId: string) => void;
+  onSetGating: (suiteId: string | null) => void;
 }): React.ReactElement {
   const allIds = cases.map((c) => c.id);
   const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
@@ -548,26 +551,34 @@ function CaseTree({
     return (
       <EmptyState
         icon={ListChecks}
-        title="No cases yet"
+        title={isFiltered ? "No matching cases" : "No cases yet"}
         className="h-full border-none bg-transparent"
-        subtitle="Generate from OpenAPI, record a browser session, or write manually."
-        action={[
-          {
-            label: "From OpenAPI",
-            variant: "outline",
-            onClick: () => {
-              onGenerate("openapi");
-            },
-          },
-          {
-            label: "Record session",
-            variant: "outline",
-            onClick: () => {
-              onGenerate("recorder");
-            },
-          },
-          { label: "Write manually", variant: "default", onClick: onNewCase },
-        ]}
+        subtitle={
+          isFiltered
+            ? "No test cases matched the selected tab or filter."
+            : "Generate from OpenAPI, record a browser session, or write manually."
+        }
+        {...(!isFiltered
+          ? {
+              action: [
+                {
+                  label: "From OpenAPI",
+                  variant: "outline" as const,
+                  onClick: () => {
+                    onGenerate("openapi");
+                  },
+                },
+                {
+                  label: "Record session",
+                  variant: "outline" as const,
+                  onClick: () => {
+                    onGenerate("recorder");
+                  },
+                },
+                { label: "Write manually", variant: "default" as const, onClick: onNewCase },
+              ],
+            }
+          : {})}
       />
     );
   }
@@ -591,22 +602,25 @@ function CaseTree({
         </span>
       </div>
 
-      {[...grouped.entries()].map(([suiteId, items]) => {
-        const suite = suiteById.get(suiteId);
-        return (
-          <CaseTreeSuite
-            key={suiteId}
-            suite={suite}
-            items={items}
-            selectedId={selectedId}
-            selectedIds={selectedIds}
-            gatingSuiteId={gatingSuiteId}
-            onSelect={onSelect}
-            onToggleSelection={onToggleSelection}
-            onSetGating={onSetGating}
-          />
-        );
-      })}
+      {[...grouped.entries()]
+        .filter(([_, items]) => !isFiltered || items.length > 0)
+        .map(([suiteId, items]) => {
+          const suite = suiteById.get(suiteId);
+          return (
+            <CaseTreeSuite
+              key={suiteId}
+              suite={suite}
+              items={items}
+              selectedId={selectedId}
+              selectedIds={selectedIds}
+              gatingSuiteId={gatingSuiteId}
+              onSelect={onSelect}
+              onToggleSelection={onToggleSelection}
+              onToggleSuite={onToggleAll}
+              onSetGating={onSetGating}
+            />
+          );
+        })}
     </nav>
   );
 }
@@ -619,6 +633,7 @@ function CaseTreeSuite({
   gatingSuiteId,
   onSelect,
   onToggleSelection,
+  onToggleSuite,
   onSetGating,
 }: {
   suite: Suite | undefined;
@@ -628,28 +643,77 @@ function CaseTreeSuite({
   gatingSuiteId: string | null;
   onSelect: (publicId: string) => void;
   onToggleSelection: (id: string) => void;
-  onSetGating: (suiteId: string) => void;
+  onToggleSuite: (ids: string[]) => void;
+  onSetGating: (suiteId: string | null) => void;
 }): React.ReactElement {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const suiteName = suite?.name ?? "Unassigned";
+  const itemIds = useMemo(() => items.map((c) => c.id), [items]);
+  const allSuiteSelected = itemIds.length > 0 && itemIds.every((id) => selectedIds.has(id));
+  const someSuiteSelected = !allSuiteSelected && itemIds.some((id) => selectedIds.has(id));
+
   return (
     <div data-testid="cases-tree-suite">
-      <div className="mb-1.5 flex items-center gap-1.5 px-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fg-5">
-        <FolderTree className="h-3 w-3" aria-hidden="true" />
-        {suite?.name ?? "Unassigned"}
-        <span className="font-mono text-[10px] text-fg-5">{items.length}</span>
+      <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fg-5">
+        <button
+          type="button"
+          data-testid="suite-collapse-btn"
+          aria-label={isCollapsed ? `Expand ${suiteName}` : `Collapse ${suiteName}`}
+          aria-expanded={!isCollapsed}
+          onClick={() => setIsCollapsed((prev) => !prev)}
+          className="rounded p-0.5 text-fg-5 hover:bg-bg-elev-2 hover:text-fg-3 focus:outline-none"
+        >
+          {isCollapsed ? (
+            <ChevronRight className="h-3 w-3" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="h-3 w-3" aria-hidden="true" />
+          )}
+        </button>
+        <Checkbox
+          data-testid="suite-row-checkbox"
+          checked={allSuiteSelected}
+          indeterminate={someSuiteSelected}
+          aria-label={`Select all cases in ${suiteName}`}
+          disabled={items.length === 0}
+          className="shrink-0"
+          onCheckedChange={() => {
+            onToggleSuite(itemIds);
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+        />
+        <FolderTree className="h-3 w-3 shrink-0" aria-hidden="true" />
+        <span className="truncate">{suiteName}</span>
+        <span className="shrink-0 font-mono text-[10px] text-fg-5">{items.length}</span>
         {suite?.default_testing_approach ? (
           <TestingApproachBadge
             approach={suite.default_testing_approach}
-            className="normal-case tracking-normal"
+            className="normal-case tracking-normal shrink-0"
           />
         ) : null}
         {suite ? (
           suite.id === gatingSuiteId ? (
-            <span
-              data-testid="suite-gating-badge"
-              className="ml-auto rounded-sm bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-accent"
-            >
-              Gating
-            </span>
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              <span
+                data-testid="suite-gating-badge"
+                className="rounded-sm bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-accent"
+              >
+                Gating
+              </span>
+              <button
+                type="button"
+                data-testid="suite-unset-gating-btn"
+                title="Remove gating suite"
+                aria-label="Remove gating suite"
+                onClick={() => {
+                  onSetGating(null);
+                }}
+                className="rounded-sm px-1 py-0.5 text-[9px] font-medium tracking-wide text-fg-5 hover:bg-bg-elev-2 hover:text-red transition-colors"
+              >
+                Unset
+              </button>
+            </div>
           ) : (
             <button
               type="button"
@@ -657,63 +721,65 @@ function CaseTreeSuite({
               onClick={() => {
                 onSetGating(suite.id);
               }}
-              className="ml-auto rounded-sm px-1 text-[9px] font-medium tracking-wide text-fg-4 hover:text-accent"
+              className="ml-auto shrink-0 rounded-sm px-1 text-[9px] font-medium tracking-wide text-fg-4 hover:text-accent"
             >
               Set gating
             </button>
           )
         ) : null}
       </div>
-      <ul className="flex flex-col gap-px">
-        {items.map((c) => (
-          <li key={c.id} className="flex min-w-0 items-center">
-            <Checkbox
-              data-testid="case-row-checkbox"
-              checked={selectedIds.has(c.id)}
-              aria-label={`Select ${c.public_id}`}
-              className="ml-1 mr-1.5 shrink-0"
-              onCheckedChange={() => {
-                onToggleSelection(c.id);
-              }}
-              onClick={(e) => {
-                // Prevent the checkbox click from bubbling to the row button
-                e.stopPropagation();
-              }}
-            />
-            <button
-              type="button"
-              data-testid="cases-tree-row"
-              data-public-id={c.public_id}
-              data-selected={c.public_id === selectedId ? "true" : "false"}
-              onClick={() => {
-                onSelect(c.public_id);
-              }}
-              className={cn(
-                "flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md px-2 py-2 text-left text-[12.5px] text-fg-1 hover:bg-bg-elev-2",
-                c.public_id === selectedId &&
-                  "bg-bg-elev-2 shadow-[inset_2px_0_0_0_theme(colors.accent)]",
-              )}
-            >
-              <SourceDot
-                status={c.status === "DEPRECATED" || c.status === "STALE" ? "warn" : "pass"}
+      {!isCollapsed ? (
+        <ul className="flex flex-col gap-px">
+          {items.map((c) => (
+            <li key={c.id} className="flex min-w-0 items-center">
+              <Checkbox
+                data-testid="case-row-checkbox"
+                checked={selectedIds.has(c.id)}
+                aria-label={`Select ${c.public_id}`}
+                className="ml-1 mr-1.5 shrink-0"
+                onCheckedChange={() => {
+                  onToggleSelection(c.id);
+                }}
+                onClick={(e) => {
+                  // Prevent the checkbox click from bubbling to the row button
+                  e.stopPropagation();
+                }}
               />
-              <span className="shrink-0 whitespace-nowrap font-mono text-[10.5px] text-fg-5">
-                {c.public_id}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-medium" title={c.title}>
-                {c.title || displayTitle(c.name)}
-              </span>
-              <TestingApproachBadge
-                approach={c.effective_testing_approach}
-                className="hidden xl:inline-flex"
-              />
-              <span className="shrink-0">
-                <SourcePill source={caseSourceToPill(c.source)} />
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+              <button
+                type="button"
+                data-testid="cases-tree-row"
+                data-public-id={c.public_id}
+                data-selected={c.public_id === selectedId ? "true" : "false"}
+                onClick={() => {
+                  onSelect(c.public_id);
+                }}
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md px-2 py-2 text-left text-[12.5px] text-fg-1 hover:bg-bg-elev-2",
+                  c.public_id === selectedId &&
+                    "bg-bg-elev-2 shadow-[inset_2px_0_0_0_theme(colors.accent)]",
+                )}
+              >
+                <SourceDot
+                  status={c.status === "DEPRECATED" || c.status === "STALE" ? "warn" : "pass"}
+                />
+                <span className="shrink-0 whitespace-nowrap font-mono text-[10.5px] text-fg-5">
+                  {c.public_id}
+                </span>
+                <span className="min-w-0 flex-1 truncate font-medium" title={c.title}>
+                  {c.title || displayTitle(c.name)}
+                </span>
+                <TestingApproachBadge
+                  approach={c.effective_testing_approach}
+                  className="hidden xl:inline-flex"
+                />
+                <span className="shrink-0">
+                  <SourcePill source={caseSourceToPill(c.source)} />
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -2436,6 +2502,7 @@ function CasesBody(): React.ReactElement {
                 cases={filtered}
                 selectedId={selectedId}
                 selectedIds={selectedIds}
+                isFiltered={active !== "all" || query.trim() !== "" || approachFilter !== ""}
                 onSelect={(publicId) => {
                   void navigate({ search: { case: publicId } });
                 }}

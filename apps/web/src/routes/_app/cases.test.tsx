@@ -233,6 +233,129 @@ describe("Test Cases screen", () => {
     });
   });
 
+  it("suite selection: renders a checkbox for each suite in the tree", async () => {
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+    const suiteCheckboxes = screen.getAllByTestId("suite-row-checkbox");
+    expect(suiteCheckboxes.length).toBe(2);
+  });
+
+  it("filtering: hides empty suites that have no matching cases in the current tab", async () => {
+    const user = userEvent.setup();
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+
+    // Initially both suites are present (Smoke with 2 cases, Regression with 1 case)
+    expect(screen.getAllByTestId("cases-tree-suite")).toHaveLength(2);
+
+    // Switch to Manual tab (Smoke has 1 manual case, Regression has 0)
+    await user.click(screen.getByTestId("cases-tab-manual"));
+
+    // Only Smoke suite should be displayed; Regression suite is hidden because it has 0 matching cases
+    const visibleSuites = screen.getAllByTestId("cases-tree-suite");
+    expect(visibleSuites).toHaveLength(1);
+    expect(visibleSuites[0]).toHaveTextContent(/Smoke/i);
+  });
+
+  it("suite selection: checking a suite selects all cases in that suite", async () => {
+    const user = userEvent.setup();
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+
+    const suiteCheckboxes = screen.getAllByTestId("suite-row-checkbox") as HTMLInputElement[];
+    // Click Smoke suite checkbox (has 2 cases: case_01, case_03)
+    await user.click(suiteCheckboxes[0] as HTMLElement);
+
+    const bar = await screen.findByTestId("bulk-action-bar");
+    expect(bar).toHaveTextContent("2 selected");
+    expect(suiteCheckboxes[0]?.checked).toBe(true);
+    expect(suiteCheckboxes[1]?.checked).toBe(false);
+
+    // Clicking it again deselects all cases in Smoke suite
+    await user.click(suiteCheckboxes[0] as HTMLElement);
+    await waitFor(() => {
+      expect(screen.queryByTestId("bulk-action-bar")).toBeNull();
+    });
+    expect(suiteCheckboxes[0]?.checked).toBe(false);
+  });
+
+  it("suite selection: partial selection in suite shows indeterminate state", async () => {
+    const user = userEvent.setup();
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+
+    // Select only 1 case in Smoke suite (TC-101)
+    const caseCheckboxes = screen.getAllByTestId("case-row-checkbox");
+    await user.click(caseCheckboxes[0] as HTMLElement);
+
+    const suiteCheckboxes = screen.getAllByTestId("suite-row-checkbox") as HTMLInputElement[];
+    expect(suiteCheckboxes[0]?.indeterminate).toBe(true);
+    expect(suiteCheckboxes[0]?.checked).toBe(false);
+
+    // Clicking indeterminate checkbox selects all cases in Smoke suite
+    await user.click(suiteCheckboxes[0] as HTMLElement);
+    expect(suiteCheckboxes[0]?.checked).toBe(true);
+    const bar = await screen.findByTestId("bulk-action-bar");
+    expect(bar).toHaveTextContent("2 selected");
+  });
+
+  it("suite collapse: collapsing a suite hides its case rows and expanding shows them", async () => {
+    const user = userEvent.setup();
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+
+    // Initially 3 case rows are present across 2 suites
+    expect(screen.getAllByTestId("cases-tree-row")).toHaveLength(3);
+
+    const collapseBtns = screen.getAllByTestId("suite-collapse-btn");
+    expect(collapseBtns).toHaveLength(2);
+
+    // Collapse the Smoke suite (which has 2 cases)
+    await user.click(collapseBtns[0] as HTMLElement);
+
+    // Only Regression suite case (1 case) should now be visible in the tree
+    expect(screen.getAllByTestId("cases-tree-row")).toHaveLength(1);
+
+    // Expand the Smoke suite again
+    await user.click(collapseBtns[0] as HTMLElement);
+    expect(screen.getAllByTestId("cases-tree-row")).toHaveLength(3);
+  });
+
+  it("gating suite: allows unsetting the gating suite", async () => {
+    const user = userEvent.setup();
+    let patchedPayload: unknown = null;
+    server.use(
+      http.get("*/api/v1/projects/:projectId", () =>
+        HttpResponse.json({
+          id: "prj_demo",
+          name: "Fixture project",
+          gating_suite_id: "ste_smoke",
+        }),
+      ),
+      http.patch("*/api/v1/projects/:projectId", async ({ request }) => {
+        patchedPayload = await request.json();
+        return HttpResponse.json({
+          id: "prj_demo",
+          name: "Fixture project",
+          gating_suite_id: null,
+        });
+      }),
+    );
+
+    renderCases();
+    await screen.findByTestId("cases-tree", undefined, { timeout: 3000 });
+
+    // Smoke suite has the gating badge and unset button (loaded via useProject query)
+    expect(await screen.findByTestId("suite-gating-badge", undefined, { timeout: 3000 })).toBeInTheDocument();
+    const unsetBtn = await screen.findByTestId("suite-unset-gating-btn", undefined, { timeout: 3000 });
+    expect(unsetBtn).toBeInTheDocument();
+
+    await user.click(unsetBtn);
+    await waitFor(() => {
+      expect(patchedPayload).toEqual({ gatingSuiteId: null });
+    });
+  });
+
   it("M1-15b: clicking Delete in bulk bar fires POST /test-cases/bulk-update (after undo window)", async () => {
     const user = userEvent.setup();
     let bulkCalled = false;
