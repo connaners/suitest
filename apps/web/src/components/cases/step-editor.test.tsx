@@ -431,6 +431,26 @@ describe("StepEditor", () => {
     expect(codeInput).toHaveAttribute("placeholder", "// Optional: MCP step code");
   });
 
+  it("validates empty step action on Save and shows inline error without calling PATCH", async () => {
+    const user = userEvent.setup();
+    let patchCalled = false;
+
+    server.use(
+      http.patch("*/api/v1/test-cases/:caseId/steps", () => {
+        patchCalled = true;
+        return HttpResponse.json(FULL_CASE_RESPONSE);
+      }),
+    );
+
+    renderEditor([{ ...STEP_1, action: "   ", code: null }]);
+    const saveBtn = screen.getByTestId("step-save-btn");
+    await user.click(saveBtn);
+
+    expect(patchCalled).toBe(false);
+    expect(screen.getByTestId("step-editor-error")).toBeInTheDocument();
+    expect(screen.getByText(/Step #1 action cannot be empty/)).toBeInTheDocument();
+  });
+
   // --------------------------------------------------------------------------
   // Edge: empty steps list shows add button only
   // --------------------------------------------------------------------------

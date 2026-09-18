@@ -233,6 +233,12 @@ class RunService:
                     }
                 )
 
+        total_steps_sum = sum(int(c.get("total_steps") or 0) for c in planned_cases_snapshot)
+        if total_steps_sum == 0:
+            raise ValueError(
+                "Cannot create run: none of the selected test cases have any steps to execute"
+            )
+
         # ``metadata_json`` payload is JSON-serialisable: every selection dict
         # came from Pydantic ``model_dump`` upstream, and routing override is
         # ``dict[str, str] | None``. Typed against ``dict[str, Any]`` so the
@@ -370,6 +376,11 @@ class RunService:
             self._session, src, target_case_ids, original_selection
         )
         rerun_planned_snapshot = await _build_planned_snapshot(self._session, new_selection)
+        if (
+            not rerun_planned_snapshot
+            or sum(int(c.get("total_steps") or 0) for c in rerun_planned_snapshot) == 0
+        ):
+            raise ValueError("Cannot rerun: selected test cases have no steps to execute")
 
         effective_pw_config = (
             playwright_config

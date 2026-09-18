@@ -365,14 +365,20 @@ async def get_run(
         if "playwright_config" in metadata_dict
         and isinstance(metadata_dict["playwright_config"], dict)
         else None,
-        error_message=str(
-            metadata_dict.get("error")
-            or metadata_dict.get("error_message")
-            or metadata_dict.get("interrupted_reason")
-            or metadata_dict.get("reconciliation")
-            or ""
-        ).strip()
-        or None,
+        error_message=(
+            str(
+                metadata_dict.get("error")
+                or metadata_dict.get("error_message")
+                or metadata_dict.get("interrupted_reason")
+                or metadata_dict.get("reconciliation")
+                or ""
+            ).strip()
+            or (
+                "Cannot execute run: selected test cases contain no steps"
+                if run.status == RunStatus.ERROR and summary.total_steps == 0
+                else None
+            )
+        ),
     )
 
 

@@ -136,3 +136,49 @@ def test_run_detail_error_message_mapping() -> None:
         error_message=r.metadata_json["error"],
     )
     assert detail.error_message == "Run timed out: no heartbeat or progress update received"
+
+
+@pytest.mark.asyncio
+async def test_create_run_zero_steps_raises_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    repo = AsyncMock()
+    project_repo = AsyncMock()
+    project = _project("ws_1")
+    project_repo.get_by_id.return_value = project
+
+    session = AsyncMock()
+    repo.session = session
+
+    # Mock McpProviderRepo list_by_workspace
+    monkeypatch.setattr(
+        "suitest_api.services.run_service.McpProviderRepo.list_by_workspace",
+        AsyncMock(return_value=[]),
+    )
+
+    mock_case_rows = MagicMock()
+    mock_case_rows.__iter__.return_value = [("case_1", "proj_1")]
+
+    mock_step_rows = MagicMock()
+    mock_step_rows.__iter__.return_value = []
+
+    mock_tc_info = MagicMock()
+    mock_tc_info.all.return_value = [("case_1", "TC-1", "title", 0)]
+
+    session.execute.side_effect = [mock_case_rows, mock_step_rows, mock_tc_info]
+
+    svc = RunService(_ctx("ws_1"), repo, project_repo)
+    with pytest.raises(
+        ValueError, match="none of the selected test cases have any steps to execute"
+    ):
+        await svc.create_run(
+            project_id="proj_1",
+            name="run",
+            selection=[{"case_id": "case_1"}],
+            branch=None,
+            commit_sha=None,
+            env="staging",
+            trigger=RunTrigger.MANUAL,
+            user_id="user_1",
+            mcp_routing_override=None,
+        )

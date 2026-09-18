@@ -767,6 +767,20 @@ async def _finalize_run(
                 passed_steps=summary["passed"],
                 failed_steps=failed_total,
             )
+            if summary["total"] == 0 and run_row is not None:
+                meta = dict(run_row.metadata_json or {})
+                if not meta.get("error"):
+                    meta["error"] = "Cannot execute run: selected test cases contain no steps"
+                    run_row.metadata_json = meta
+        planned_cases: list[Any] = []
+        if run_row is not None and isinstance(run_row.metadata_json, dict):
+            planned_cases = run_row.metadata_json.get("planned_cases") or []
+        planned_case_ids = {
+            item["case_id"]
+            for item in planned_cases
+            if isinstance(item, dict) and isinstance(item.get("case_id"), str)
+        }
+
         executed_case_ids = {c_id for c_id, _, _ in selection if c_id}
         if executed_case_ids:
             status_whens = []
@@ -790,6 +804,20 @@ async def _finalize_run(
                     last_run_at=completed_time,
                     last_run_result=case(*status_whens, else_=TestCase.last_run_result),
                     last_duration_ms=case(*dur_whens, else_=TestCase.last_duration_ms),
+                )
+            )
+
+        skipped_case_ids = planned_case_ids - executed_case_ids
+        if skipped_case_ids:
+            skip_status = "CANCELLED" if cancelled else "SKIP"
+            await session.execute(
+                update(TestCase)
+                .where(TestCase.id.in_(skipped_case_ids))
+                .values(
+                    last_run_id=run_id,
+                    last_run_at=completed_time,
+                    last_run_result=skip_status,
+                    last_duration_ms=0,
                 )
             )
         await session.commit()
@@ -1121,7 +1149,7 @@ def _update_outcomes(
 ) -> None:
     if result.outcome == StepOutcome.PASS:
         summary["passed"] += 1
-        if case_id not in case_outcome:
+        if case_outcome.get(case_id) not in ("FAIL", "ERROR"):
             case_outcome[case_id] = "PASS"
     elif result.outcome == StepOutcome.FAIL:
         summary["failed"] += 1

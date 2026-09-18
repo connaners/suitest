@@ -16,6 +16,10 @@ The four tests below exercise:
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from suitest_runner.jobs.run_test_case import run_test_case
@@ -790,3 +794,173 @@ async def test_highlight_steps_executes_action_captures_after_shot_and_cleans_up
     # Check that final evaluate cleared it
     final_clear_script = str(invocations[5][2].get("script", ""))
     assert "removeAttribute('data-suitest-highlight')" in final_clear_script
+
+
+async def test_finalize_run_updates_skipped_for_zero_step_planned_cases(
+    stub_ctx_all_pass: tuple[dict[str, object], object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When planned_cases contains a 0-step case, it is updated to SKIP."""
+    import suitest_runner.jobs.run_test_case as job_mod
+
+    ctx, _ = stub_ctx_all_pass
+    factory = ctx["session_factory"]
+    executed_statements: list[object] = []
+    original_factory = factory
+
+    orig_repo_cls = job_mod.RunRepo
+
+    class _PatchedRunRepo(orig_repo_cls):  # type: ignore[misc,valid-type]
+        async def get_by_id(self, _run_id: str) -> MagicMock | None:
+            r = await super().get_by_id(_run_id)
+            if r is not None:
+                r.metadata_json = {
+                    "planned_cases": [
+                        {"case_id": "case-1", "total_steps": 3},
+                        {"case_id": "c2-empty", "total_steps": 0},
+                    ]
+                }
+            return r
+
+    monkeypatch.setattr(job_mod, "RunRepo", _PatchedRunRepo)
+
+    @asynccontextmanager
+    async def _inspecting_factory() -> AsyncIterator[Any]:
+        async with original_factory() as session:
+            orig_exec = session.execute
+
+            async def _exec(stmt: object) -> Any:
+                executed_statements.append(stmt)
+                return await orig_exec(stmt)
+
+            session.execute = _exec
+            yield session
+
+    ctx["session_factory"] = _inspecting_factory
+    out = await run_test_case(ctx, "run-1")
+    assert out["status"] == "PASS"
+
+    update_stmts = [s for s in executed_statements if "UPDATE test_cases" in str(s)]
+    assert len(update_stmts) == 2
+    # Verify second statement updated last_run_result to SKIP
+    second_stmt = update_stmts[1]
+    vals = getattr(second_stmt, "_values", {})
+    val_map = {getattr(k, "key", str(k)): v for k, v in vals.items()}
+    assert getattr(val_map.get("last_run_result"), "value", None) == "SKIP"
+    assert getattr(val_map.get("last_run_id"), "value", None) == "run-1"
+    assert getattr(val_map.get("last_duration_ms"), "value", None) == 0
+
+
+async def test_complex_mixed_run_all_case_conditions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test mixed run with passing case, 0-step case, blank-step case, and failing case."""
+    import suitest_runner.jobs.run_test_case as job_mod
+
+    from tests.conftest import (
+        _install_repo_stubs,
+        _make_capability,
+        _make_invoker,
+        _make_project,
+        _make_registry_instance,
+        _make_run,
+        _make_step,
+        _RecordingRedis,
+        _session_factory,
+    )
+
+    # 1. Case Pass: 2 steps, both PASS
+    c1_s0 = _make_step("c1_s0", {"tool": "t", "arguments": {}})
+    c1_s1 = _make_step("c1_s1", {"tool": "t", "arguments": {}})
+
+    # 2. Case Blank: Step 0 is blank (action="   ", code=None), Step 1 is normal PASS
+    c3_s0 = _make_step("c3_s0", None)
+    c3_s0.action = "   "
+    c3_s0.code = None
+    c3_s1 = _make_step("c3_s1", {"tool": "t", "arguments": {}})
+
+    # 3. Case Fail: Step 0 FAIL, Step 1 aborted
+    c4_s0 = _make_step("c4_s0", {"tool": "t", "arguments": {}})
+    c4_s1 = _make_step("c4_s1", {"tool": "t", "arguments": {}})
+
+    selection = [
+        ("case-pass", 0, c1_s0),
+        ("case-pass", 1, c1_s1),
+        ("case-blank", 2, c3_s0),
+        ("case-blank", 3, c3_s1),
+        ("case-fail", 4, c4_s0),
+        ("case-fail", 5, c4_s1),
+    ]
+
+    # Invocations: c1_s0 (PASS), c1_s1 (PASS), c3_s0 is blank so skipped (no invoke), c3_s1 (PASS), c4_s0 (FAIL)
+    invoker = _make_invoker(["PASS", "PASS", "PASS", "FAIL"])
+    run = _make_run()
+    run.metadata_json = {
+        "planned_cases": [
+            {"case_id": "case-pass", "total_steps": 2},
+            {"case_id": "case-empty", "total_steps": 0},
+            {"case_id": "case-blank", "total_steps": 2},
+            {"case_id": "case-fail", "total_steps": 2},
+        ]
+    }
+    cap = _make_capability()
+    inserted_steps: list[dict[str, object]] = []
+    _install_repo_stubs(
+        monkeypatch,
+        run=run,
+        selection=selection,
+        capability=cap,
+        inserted_steps=inserted_steps,
+    )
+
+    executed_statements: list[object] = []
+    original_factory = _session_factory(_make_project())
+
+    @asynccontextmanager
+    async def _inspecting_factory() -> AsyncIterator[Any]:
+        async with original_factory() as session:
+            orig_exec = session.execute
+
+            async def _exec(stmt: object) -> Any:
+                executed_statements.append(stmt)
+                return await orig_exec(stmt)
+
+            session.execute = _exec
+            yield session
+
+    ctx: dict[str, object] = {
+        "session_factory": _inspecting_factory,
+        "redis": _RecordingRedis(),
+        "invoker": invoker,
+        "registry": _make_registry_instance(),
+    }
+    out = await run_test_case(ctx, "run-1")
+
+    # Run level outcome
+    assert out["status"] == "FAIL"
+    assert out["passed"] == 3  # c1_s0, c1_s1, c3_s1
+    assert out["failed"] == 1  # c4_s0
+    assert out["skipped"] == 1  # c3_s0
+
+    # 5 steps executed/recorded: c1_s0, c1_s1, c3_s0, c3_s1, c4_s0 (c4_s1 aborted due to fail-fast)
+    assert len(inserted_steps) == 5
+    assert inserted_steps[2]["outcome"] == "SKIP"
+    assert "EMPTY_STEP: step action is blank" in str(inserted_steps[2].get("error_message"))
+
+    # Database updates for test_cases:
+    update_stmts = [s for s in executed_statements if "UPDATE test_cases" in str(s)]
+    assert len(update_stmts) == 2
+
+    # Verify executed cases statement
+    first_stmt = update_stmts[0]
+    first_vals = getattr(first_stmt, "_values", {})
+    # case-pass and case-blank must have ended in PASS, case-fail in FAIL
+    res_case = getattr(first_vals.get(job_mod.TestCase.last_run_result), "whens", [])
+    assert len(res_case) == 3
+    # Second statement updates case-empty to SKIP
+    second_stmt = update_stmts[1]
+    second_vals = getattr(second_stmt, "_values", {})
+    val_map = {getattr(k, "key", str(k)): v for k, v in second_vals.items()}
+    assert getattr(val_map.get("last_run_result"), "value", None) == "SKIP"
+    assert getattr(val_map.get("last_run_id"), "value", None) == "run-1"
+    assert getattr(val_map.get("last_duration_ms"), "value", None) == 0

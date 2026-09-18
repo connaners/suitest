@@ -17,6 +17,7 @@ silently degrading the run record.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -317,3 +318,33 @@ async def test_browser_lock_step_execution_marks_error_and_fatal_infra() -> None
     assert result.is_fatal_infra is True
     assert result.error_message is not None
     assert "MCP_TOOL_ERROR: Browser is already in use" in result.error_message
+
+
+@pytest.mark.asyncio
+async def test_execute_step_blank_action_skips_without_translator() -> None:
+    inv = MagicMock()
+    translator = AsyncMock()
+    step = SimpleNamespace(
+        id="step-blank",
+        case_id="tc-blank",
+        step_order=1,
+        action="   ",
+        code=None,
+        step_type="agentic",
+        expected=None,
+        notes=None,
+        tags=[],
+    )
+    result = await execute_step(
+        invoker=inv,
+        test_step=step,  # type: ignore[arg-type]
+        run_id="r",
+        workspace_id="w",
+        actor_user_id="u",
+        translator=translator,
+        routing_overrides=None,
+    )
+    assert result.outcome == StepOutcome.SKIP
+    assert result.error_message == "EMPTY_STEP: step action is blank"
+    translator.assert_not_called()
+    inv.invoke.assert_not_called()

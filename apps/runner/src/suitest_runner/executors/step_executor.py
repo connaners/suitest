@@ -160,10 +160,13 @@ async def _parse_or_translate_step(
 ) -> tuple[dict[str, object] | None, StepOutcome | None, str | None]:
     """Parse deterministic step JSON or translate an agentic prose action."""
     if not test_step.code:
+        action = (test_step.action or "").strip()
+        if not action:
+            return None, StepOutcome.SKIP, "EMPTY_STEP: step action is blank"
         if translator is None:
             return None, StepOutcome.SKIP, "NO_LLM_FOR_AGENTIC_STEP: step has no code"
         try:
-            translated = await translator(test_step.action)
+            translated = await translator(action)
         except Exception as exc:
             log.exception("step.executor.translate_error", step_id=test_step.id)
             return None, StepOutcome.ERROR, f"AGENTIC_TRANSLATE_ERROR: {exc}"
