@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import AsyncIterator
 
+    from arq.connections import ArqRedis
     from sqlalchemy.ext.asyncio import AsyncSession
     from suitest_db.models.agent import AgentToolCall
 
@@ -67,8 +68,11 @@ _MUTATION_AUTONOMY = frozenset({AutonomyLevel.ASSIST, AutonomyLevel.SEMI_AUTO, A
 
 
 class AgentChatService:
-    def __init__(self, session: AsyncSession, *, ctx: TenantContext) -> None:
+    def __init__(
+        self, session: AsyncSession, *, ctx: TenantContext, arq: ArqRedis | None = None
+    ) -> None:
         self._session = session
+        self._arq = arq
         self._ctx = ctx
         self._workspace_id = ctx.workspace_id
         self._user_id: str | None = ctx.user_id or None
@@ -156,6 +160,7 @@ class AgentChatService:
                 ctx=self._ctx,
                 case_service=case_service,
                 confirmed=True,
+                arq=self._arq,
             )
         except ToolInputError as exc:
             await repo.settle_tool_call(pending.id, status="error", error_msg=str(exc))
