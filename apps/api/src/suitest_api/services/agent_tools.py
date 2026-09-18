@@ -26,6 +26,7 @@ unchanged.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -203,31 +204,15 @@ async def execute_tool(
     except ValidationError as exc:
         raise ToolInputError(exc.json(indent=None)) from exc
 
-    if tool == "case.get":
-        return await _case_get(parsed, session=session, ctx=ctx)
-    if tool == "cases.search":
-        return await _cases_search(parsed, session=session, ctx=ctx)
-    if tool == "project.overview":
-        return await _project_overview(parsed, session=session, ctx=ctx)
-    if tool == "suites.list":
-        return await _suites_list(parsed, session=session, ctx=ctx)
-    if tool == "suite.get":
-        return await _suite_get(parsed, session=session, ctx=ctx)
-    if tool == "runs.list":
-        return await _runs_list(parsed, session=session, ctx=ctx)
-    if tool == "run.get":
-        return await _run_get(parsed, session=session, ctx=ctx)
+    if tool in READ_TOOLS:
+        return await _READ_HANDLERS[tool](parsed, session=session, ctx=ctx)
+    if not confirmed:
+        raise ToolDeniedError(tool)
     if tool == "run.trigger":
-        if not confirmed:
-            raise ToolDeniedError(tool)
         return await _run_trigger(parsed, session=session, ctx=ctx, arq=arq)
     if tool == "case.update_meta":
-        if not confirmed:
-            raise ToolDeniedError(tool)
         return await _case_update_meta(parsed, session=session, ctx=ctx, case_service=case_service)
     if tool == "case.set_steps":
-        if not confirmed:
-            raise ToolDeniedError(tool)
         return await _case_set_steps(parsed, session=session, ctx=ctx, case_service=case_service)
     raise ToolInputError(f"unhandled tool: {tool}")
 
@@ -300,11 +285,10 @@ def _run_brief(run: Run) -> dict[str, object]:
 
 async def _resolve_project(session: AsyncSession, ctx: TenantContext, ref: str) -> Project:
     """Match a project by id, slug or name (case-insensitive) within the workspace."""
-    wanted = ref.strip().lower()
-    for project in await ProjectRepo(session).list_by_workspace(ctx.workspace_id):
-        if wanted in (project.id.lower(), project.slug.lower(), project.name.lower()):
-            return project
-    raise ToolInputError(f"project not found: {ref}")
+    project = await ProjectRepo(session).resolve_ref(ctx.workspace_id, ref)
+    if project is None:
+        raise ToolInputError(f"project not found: {ref}")
+    return project
 
 
 async def _project_overview(
@@ -316,17 +300,21 @@ async def _project_overview(
         if args.project
         else list(await repo.list_by_workspace(ctx.workspace_id))
     )
+    ids = [p.id for p in projects]
+    counts = await repo.active_counts(ids)
+    latest = await RunRepo(session).latest_by_projects(ids)
     items: list[dict[str, object]] = []
     for project in projects:
-        runs, _ = await RunRepo(session).list_by_project(project.id, limit=1)
+        suite_count, case_count = counts.get(project.id, (0, 0))
+        last_run = latest.get(project.id)
         items.append(
             {
                 "id": project.id,
                 "slug": project.slug,
                 "name": project.name,
-                "suite_count": await repo.count_active_suites(project.id),
-                "case_count": await repo.count_active_cases(project.id),
-                "last_run": _run_brief(runs[0]) if runs else None,
+                "suite_count": suite_count,
+                "case_count": case_count,
+                "last_run": _run_brief(last_run) if last_run else None,
             }
         )
     return {"projects": items}
@@ -341,13 +329,12 @@ async def _suites_list(
     if args.query:
         q = args.query.strip().lower()
         suites = [s for s in suites if q in s.name.lower()]
-    counts = await repo.case_counts([s.id for s in suites])
+    page = suites[:50]
+    counts = await repo.case_counts([s.id for s in page])
     return {
         "project": project.name,
         "total": len(suites),
-        "suites": [
-            {"id": s.id, "name": s.name, "case_count": counts.get(s.id, 0)} for s in suites[:50]
-        ],
+        "suites": [{"id": s.id, "name": s.name, "case_count": counts.get(s.id, 0)} for s in page],
     }
 
 
@@ -399,6 +386,17 @@ async def _run_get(
             "failed_steps": summary.failed_steps,
         }
     }
+
+
+_READ_HANDLERS: dict[str, Callable[..., Awaitable[dict[str, object]]]] = {
+    "case.get": _case_get,
+    "cases.search": _cases_search,
+    "project.overview": _project_overview,
+    "suites.list": _suites_list,
+    "suite.get": _suite_get,
+    "runs.list": _runs_list,
+    "run.get": _run_get,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -459,19 +457,22 @@ async def _run_trigger(
 
     svc = RunService(ctx, RunRepo(session), ProjectRepo(session))
     try:
-        run = await svc.create_run_for_suite(
-            suite_id=args.suite_id,
-            name=None,
-            branch=None,
-            commit_sha=None,
-            env=args.env,
-            trigger=RunTrigger.AGENT,
-            user_id=ctx.user_id,
-            mcp_routing_override=None,
-        )
-        job_id = await dispatch_run(
-            mode=get_settings().mode, arq=arq, run_id=run.id, queue_name="suitest:runs"
-        )
+        # Savepoint: if dispatch fails the run row and its audit entry roll back,
+        # instead of being committed with the tool-error note as an orphan QUEUED run.
+        async with session.begin_nested():
+            run = await svc.create_run_for_suite(
+                suite_id=args.suite_id,
+                name=None,
+                branch=None,
+                commit_sha=None,
+                env=args.env,
+                trigger=RunTrigger.AGENT,
+                user_id=ctx.user_id,
+                mcp_routing_override=None,
+            )
+            job_id = await dispatch_run(
+                mode=get_settings().mode, arq=arq, run_id=run.id, queue_name="suitest:runs"
+            )
     except (ValueError, HTTPException) as exc:
         raise ToolInputError(str(getattr(exc, "detail", exc))) from exc
     if job_id is not None:
