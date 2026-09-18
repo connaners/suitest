@@ -364,7 +364,7 @@ async def test_list_test_case_runs_includes_runs_without_artifacts(api_db: ApiDb
     assert nomedia_run["playwrightConfig"] is not None
     assert nomedia_run["playwrightConfig"]["screenshot"] == "off"
     assert nomedia_run["playwrightConfig"]["highlightSteps"] is False
-    assert nomedia_run["playwrightConfig"]["preventSleep"] is True
+    assert nomedia_run["playwrightConfig"]["preventSleep"] is False
 
     async with api_db.client(user) as c:
         resp_limited = await c.get(

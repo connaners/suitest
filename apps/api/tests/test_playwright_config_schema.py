@@ -6,9 +6,9 @@ from suitest_api.schemas.runs import CreateRunBody
 
 def test_playwright_config_defaults() -> None:
     cfg = PlaywrightConfig()
-    assert cfg.prevent_sleep is True
-    assert cfg.model_dump(by_alias=True)["preventSleep"] is True
-    assert cfg.model_dump(by_alias=False)["prevent_sleep"] is True
+    assert cfg.prevent_sleep is False
+    assert cfg.model_dump(by_alias=True)["preventSleep"] is False
+    assert cfg.model_dump(by_alias=False)["prevent_sleep"] is False
 
 
 def test_playwright_config_accepts_camel_case() -> None:
