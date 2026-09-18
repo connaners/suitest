@@ -20,7 +20,7 @@ interface WakeLockIndicatorProps {
 export function WakeLockIndicator({
   isLive,
   className,
-  preventSleep = true,
+  preventSleep = false,
 }: WakeLockIndicatorProps): React.ReactElement | null {
   const [hasScreenLock, setHasScreenLock] = React.useState(false);
 
