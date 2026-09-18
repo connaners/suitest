@@ -20,6 +20,33 @@ in the git tags (`launcher-v*`, `mcp-v*`, `lifecycle-v*`, `tssdk-v*`,
 stood in those tags' trees. The milestone tags that predate package-level
 versioning:
 
+## [0.14.0](https://github.com/suiflex/suitest/compare/v0.13.0...v0.14.0) (2026-09-18)
+
+
+### Features
+
+* **api:** give the chat agent project, suite and run tools ([8d4427e](https://github.com/suiflex/suitest/commit/8d4427ee647d5975a3faf3029296e87c18b99c2a)), closes [#197](https://github.com/suiflex/suitest/issues/197)
+* **db:** add batched project lookup and count helpers ([18dca24](https://github.com/suiflex/suitest/commit/18dca240a93321de5201f4e4c016f085dad54996))
+* expand chat agent tools and add panel collapse toggle ([9039a92](https://github.com/suiflex/suitest/commit/9039a92cb9e7ac89665a1d4c98cc057621dc6895))
+* **ui:** add resizable pane, centered collapse handle, and hover trigger animation ([6b21b5d](https://github.com/suiflex/suitest/commit/6b21b5dda030146cb7c759b1eb77c92b4bbe1b20))
+* **ui:** add toggle and minimize controls for Assistant Chat sidebar ([fb54a43](https://github.com/suiflex/suitest/commit/fb54a436879227831a7eea6a05d69fb6ad41c545)), closes [#198](https://github.com/suiflex/suitest/issues/198)
+* **ui:** add toggle, minimize, and resizable controls for Assistant Chat sidebar ([bfb1e6b](https://github.com/suiflex/suitest/commit/bfb1e6ba96639b32b2ad647ce76b5cf83597586f))
+* **web:** let users collapse the assistant chat panel ([43cad00](https://github.com/suiflex/suitest/commit/43cad009186038d6352fc4bcc761efdb441fbfb9)), closes [#198](https://github.com/suiflex/suitest/issues/198)
+
+
+### Bug Fixes
+
+* **api:** address review on chat agent run and project tools ([0444a04](https://github.com/suiflex/suitest/commit/0444a049f3217736e3e7c628ac15e3d49ab54122))
+* **api:** default preventSleep to false in run config ([5ec8840](https://github.com/suiflex/suitest/commit/5ec884082ae5cf19da68cb834c87a02f4dfdae6e)), closes [#208](https://github.com/suiflex/suitest/issues/208)
+* **llm:** enhance connection resilience, assertive validation UX, and real-time status sync ([1f45c35](https://github.com/suiflex/suitest/commit/1f45c356d1458eca384d83326eff7cd1bc740d4d))
+* **llm:** enhance connection resilience, assertive validation UX, and real-time status sync ([1f1ab18](https://github.com/suiflex/suitest/commit/1f1ab18f076485aab29ed00c637af4a04df0f6c4))
+* **runs:** make preventSleep opt-in across API, runner and UI ([6a62d7a](https://github.com/suiflex/suitest/commit/6a62d7a640daf83d3a2d3821d1b5a9ee43685b86))
+* **runs:** reconcile interrupted runs, add sleep prevention wake-lock, and polish run metrics ([4165f44](https://github.com/suiflex/suitest/commit/4165f44aee6f12b86113f0275c5c43ecb18ecadb))
+* **runs:** reconcile interrupted runs, add sleep prevention wake-lock, and polish run metrics (Issue [#191](https://github.com/suiflex/suitest/issues/191)) ([c859410](https://github.com/suiflex/suitest/commit/c85941006bea0aa5017beba1d4b0fe48382a3ff3))
+* **ui:** harmonize PR 211 testids, restore w-[380px] class, and add header collapse button ([8c726b2](https://github.com/suiflex/suitest/commit/8c726b2253a7a45461eb777f02e04c91a13c5aad))
+* **web:** refine assistant panel shortcut and scroll on expand ([bb032d5](https://github.com/suiflex/suitest/commit/bb032d56783e07c2a24e88e41ca7f5519dc1cf0a))
+* **web:** treat missing preventSleep as off and clarify its scope ([33f2aad](https://github.com/suiflex/suitest/commit/33f2aadc26bff34253b0ed7091749b7dd1b9a5da)), closes [#208](https://github.com/suiflex/suitest/issues/208)
+
 ## [0.13.0](https://github.com/suiflex/suitest/compare/v0.12.0...v0.13.0) (2026-09-17)
 
 
