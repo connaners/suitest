@@ -11,8 +11,10 @@ ponytail: single-concurrency polling loop; upgrade path is the ARQ worker
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fcntl
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,30 +37,40 @@ log = structlog.get_logger(__name__)
 _POLL_INTERVAL_SECONDS = 1.0
 
 
-def _acquire_supervisor_lock() -> io.TextIOWrapper | None:
+def _acquire_supervisor_lock(timeout_seconds: float = 3.0) -> io.TextIOWrapper | None:
     """Acquire a single-instance advisory lock for the local supervisor.
 
-    Returns the open file handle if acquired, or None if another supervisor is active.
+    Retries briefly to gracefully handle restarts where the outgoing supervisor
+    process is still flushing and releasing its file lock.
     """
-    try:
-        data_dir = os.environ.get("SUITEST_DATA_DIR")
-        if data_dir:
-            lock_dir = Path(data_dir)
-        elif "SUITEST_ARTIFACTS_DIR" in os.environ:
-            lock_dir = Path(os.environ["SUITEST_ARTIFACTS_DIR"]).parent
-        else:
-            lock_dir = Path.cwd() / ".suitest"
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        lock_file = lock_dir / "supervisor.lock"
-        f = open(lock_file, "a+", encoding="utf-8")  # noqa: SIM115
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        f.seek(0)
-        f.truncate()
-        f.write(f"{os.getpid()}\n")
-        f.flush()
-        return f
-    except (BlockingIOError, OSError):
-        return None
+    data_dir = os.environ.get("SUITEST_DATA_DIR")
+    if data_dir:
+        lock_dir = Path(data_dir)
+    elif "SUITEST_ARTIFACTS_DIR" in os.environ:
+        lock_dir = Path(os.environ["SUITEST_ARTIFACTS_DIR"]).parent
+    else:
+        lock_dir = Path.cwd() / ".suitest"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_dir / "supervisor.lock"
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        f = None
+        try:
+            f = open(lock_file, "a+", encoding="utf-8")  # noqa: SIM115
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            f.seek(0)
+            f.truncate()
+            f.write(f"{os.getpid()}\n")
+            f.flush()
+            return f
+        except (BlockingIOError, OSError):
+            if f is not None:
+                with contextlib.suppress(OSError):
+                    f.close()
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.2)
 
 
 async def _reconcile_zombie_runs(session_factory: async_sessionmaker[AsyncSession]) -> None:
