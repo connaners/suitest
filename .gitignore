@@ -111,3 +111,5 @@ apps/web/.forgeguard/
 .codex/
 .mcp.json
 .cursor/
+.forgeguard/
+.agents/mcp_config.json

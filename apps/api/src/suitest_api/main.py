@@ -51,6 +51,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.settings = get_settings()
     app.state.started_at = time.monotonic()
     app.state.capabilities = build_base_capabilities()
+
+    if app.state.settings.database_url.startswith("sqlite"):
+        from suitest_db.bootstrap import create_local_schema
+
+        from suitest_api.auth.db import engine
+
+        await create_local_schema(engine)
+
     if app.state.settings.superadmin_email and app.state.settings.superadmin_password:
         from suitest_api.auth.db import async_session_maker
         from suitest_api.services.bootstrap import bootstrap_first_install_superadmin
