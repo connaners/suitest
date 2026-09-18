@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
+from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ from suitest_shared.domain.enums import MessageRole
 from suitest_shared.schemas.agent_chat import ChatRequest, ChatSseEvent
 
 from suitest_api.auth.db import get_async_session
+from suitest_api.deps.arq import get_arq
 from suitest_api.deps.scope import TenantContext, require_workspace_membership
 from suitest_api.deps.tier import require_llm_ready
 from suitest_api.services.agent_chat_service import AgentChatService
@@ -59,6 +61,7 @@ async def agent_chat(
     request: Request,
     ctx: TenantContext = Depends(require_workspace_membership),
     session: AsyncSession = Depends(get_async_session),
+    arq: ArqRedis | None = Depends(get_arq),
 ) -> StreamingResponse:
     """Stream a conversation-mode reply (SSE tokens + WS tool events)."""
     config = await LLMConfigRepo(session).get_active(ctx.workspace_id)
@@ -76,7 +79,7 @@ async def agent_chat(
         if ws_redis is not None:
             await ws_redis.publish(f"workspace:{ctx.workspace_id}", json.dumps(envelope))
 
-    svc = AgentChatService(session, ctx=ctx)
+    svc = AgentChatService(session, ctx=ctx, arq=arq)
 
     async def stream() -> AsyncIterator[bytes]:
         async for event in svc.stream(

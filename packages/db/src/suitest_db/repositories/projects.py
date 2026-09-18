@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from suitest_db.models.case import TestCase
 from suitest_db.models.project import Project, Suite
 from suitest_db.repositories.base import AsyncRepository
@@ -78,6 +78,48 @@ class ProjectRepo(AsyncRepository[Project, ProjectCreate, ProjectUpdate]):
         stmt = select(Project).where(Project.id == project_id, Project.deleted_at.is_(None))
         result: Project | None = await self.session.scalar(stmt)
         return result
+
+    async def resolve_ref(self, workspace_id: str, ref: str) -> Project | None:
+        """Active project in ``workspace_id`` matching an id, slug or name (case-insensitive)."""
+        wanted = ref.strip().lower()
+        stmt = (
+            select(Project)
+            .where(
+                Project.workspace_id == workspace_id,
+                Project.deleted_at.is_(None),
+                or_(
+                    Project.id == ref.strip(),
+                    func.lower(Project.slug) == wanted,
+                    func.lower(Project.name) == wanted,
+                ),
+            )
+            .order_by(Project.created_at.asc())
+            .limit(1)
+        )
+        result: Project | None = await self.session.scalar(stmt)
+        return result
+
+    async def active_counts(self, project_ids: Sequence[str]) -> dict[str, tuple[int, int]]:
+        """Map project id → (active suites, active cases in them), one grouped query.
+
+        Projects with no active suite are absent; callers default to ``(0, 0)``.
+        """
+        if not project_ids:
+            return {}
+        stmt = (
+            select(
+                Suite.project_id,
+                func.count(func.distinct(Suite.id)),
+                func.count(TestCase.id),
+            )
+            .outerjoin(TestCase, (TestCase.suite_id == Suite.id) & TestCase.deleted_at.is_(None))
+            .where(Suite.project_id.in_(project_ids), Suite.deleted_at.is_(None))
+            .group_by(Suite.project_id)
+        )
+        return {
+            pid: (int(suites), int(cases))
+            for pid, suites, cases in (await self.session.execute(stmt)).all()
+        }
 
     # ------------------------------------------------------------------
     # M1d-5 write helpers
