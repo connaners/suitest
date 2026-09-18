@@ -855,7 +855,6 @@ async def test_complex_mixed_run_all_case_conditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test mixed run with passing case, 0-step case, blank-step case, and failing case."""
-    import suitest_runner.jobs.run_test_case as job_mod
 
     from tests.conftest import (
         _install_repo_stubs,
@@ -954,8 +953,9 @@ async def test_complex_mixed_run_all_case_conditions(
     # Verify executed cases statement
     first_stmt = update_stmts[0]
     first_vals = getattr(first_stmt, "_values", {})
+    first_val_map = {getattr(k, "key", str(k)): v for k, v in first_vals.items()}
     # case-pass and case-blank must have ended in PASS, case-fail in FAIL
-    res_case = getattr(first_vals.get(job_mod.TestCase.last_run_result), "whens", [])
+    res_case = getattr(first_val_map.get("last_run_result"), "whens", [])
     assert len(res_case) == 3
     # Second statement updates case-empty to SKIP
     second_stmt = update_stmts[1]
