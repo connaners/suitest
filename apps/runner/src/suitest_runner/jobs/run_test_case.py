@@ -35,6 +35,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 import httpx
 import structlog
 from sqlalchemy import case, select, update
@@ -711,6 +714,49 @@ async def _maybe_capture_screenshot(
         )
 
 
+async def _finalize_skipped_cases(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    planned_case_ids: set[str],
+    executed_case_ids: set[str],
+    completed_time: datetime,
+    cancelled: bool,
+) -> None:
+    skipped_case_ids = planned_case_ids - executed_case_ids
+    if not skipped_case_ids:
+        return
+    skip_status = "CANCELLED" if cancelled else "SKIP"
+    await session.execute(
+        update(TestCase)
+        .where(TestCase.id.in_(skipped_case_ids))
+        .values(
+            last_run_id=run_id,
+            last_run_at=completed_time,
+            last_run_result=skip_status,
+            last_duration_ms=0,
+        )
+    )
+
+
+def _determine_final_run_status(
+    summary: dict[str, int],
+    *,
+    cancelled: bool,
+    run_id: str,
+) -> RunStatus:
+    if cancelled:
+        return RunStatus.CANCELLED
+    if summary["total"] == 0:
+        log.warning("runner.run.empty_selection", run_id=run_id)
+        return RunStatus.ERROR
+    if summary["failed"] > 0:
+        return RunStatus.FAIL
+    if summary["errored"] > 0:
+        return RunStatus.ERROR
+    return RunStatus.PASS
+
+
 async def _finalize_run(
     *,
     factory: Any,
@@ -732,17 +778,11 @@ async def _finalize_run(
     total_planned_steps = len(selection)
     duration_ms = int((time.perf_counter() - t0) * 1000)
     failed_total = summary["failed"] + summary["errored"]
-    if cancelled:
-        final_status = RunStatus.CANCELLED
-    elif summary["total"] == 0:
-        log.warning("runner.run.empty_selection", run_id=run_id)
-        final_status = RunStatus.ERROR
-    elif summary["failed"] > 0:
-        final_status = RunStatus.FAIL
-    elif summary["errored"] > 0:
-        final_status = RunStatus.ERROR
-    else:
-        final_status = RunStatus.PASS
+    final_status = _determine_final_run_status(
+        summary,
+        cancelled=cancelled,
+        run_id=run_id,
+    )
 
     async with factory() as session:
         completed_time = datetime.now(UTC)
@@ -807,19 +847,14 @@ async def _finalize_run(
                 )
             )
 
-        skipped_case_ids = planned_case_ids - executed_case_ids
-        if skipped_case_ids:
-            skip_status = "CANCELLED" if cancelled else "SKIP"
-            await session.execute(
-                update(TestCase)
-                .where(TestCase.id.in_(skipped_case_ids))
-                .values(
-                    last_run_id=run_id,
-                    last_run_at=completed_time,
-                    last_run_result=skip_status,
-                    last_duration_ms=0,
-                )
-            )
+        await _finalize_skipped_cases(
+            session,
+            run_id=run_id,
+            planned_case_ids=planned_case_ids,
+            executed_case_ids=executed_case_ids,
+            completed_time=completed_time,
+            cancelled=cancelled,
+        )
         await session.commit()
 
     await _publish(
