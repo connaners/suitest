@@ -191,4 +191,14 @@ describe("<AiPanel>", () => {
     await userEvent.click(screen.getByTestId("ai-panel-expand"));
     expect(screen.getByTestId("ai-panel")).toBeInTheDocument();
   });
+
+  it("leaves ⌘J alone while typing in a field", async () => {
+    setCaps(CLOUD_ASSIST_CAPS);
+    render(<AiPanel />);
+
+    await userEvent.click(screen.getByTestId("ai-panel-composer-input"));
+    await userEvent.keyboard("{Meta>}j{/Meta}");
+
+    expect(screen.getByTestId("ai-panel")).toBeInTheDocument();
+  });
 });

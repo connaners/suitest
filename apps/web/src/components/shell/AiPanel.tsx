@@ -32,6 +32,16 @@ import { useCapabilities } from "@/stores/use-capabilities";
 const SESSION_KEY = "suitest.agentSessionId";
 const AUTO_APPROVE_KEY = "suitest.agentAutoApprove";
 const COLLAPSED_KEY = "suitest.agentPanelCollapsed";
+const TOGGLE_HINT =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘J" : "Ctrl+J";
+
+/** Typing in a field keeps its own ⌘J / Ctrl+J behaviour. */
+function isEditable(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+  );
+}
 /** Panel-local model pick. Deliberately not the workspace config: switching
  *  models here must not move the runner and the generators with it. */
 const MODEL_KEY = "suitest.agentModel";
@@ -177,10 +187,11 @@ function AiPanelInner(): React.ReactElement {
     }
   }, [models, model, offered]);
 
-  // Keep the newest turn / streamed token in view.
+  // Keep the newest turn / streamed token in view — also after expanding, since
+  // the collapsed rail unmounts the thread and it remounts scrolled to the top.
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: "end" });
-  }, [turns, streaming]);
+  }, [turns, streaming, collapsed]);
 
   // Restore the last conversation on mount so a reload keeps the thread.
   useEffect(() => {
@@ -206,7 +217,13 @@ function AiPanelInner(): React.ReactElement {
   // ⌘J / Ctrl+J toggles the panel from anywhere in the shell.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key.toLowerCase() === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+      if (
+        e.key.toLowerCase() === "j" &&
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !isEditable(e.target)
+      ) {
         e.preventDefault();
         setCollapsed((prev) => !prev);
       }
@@ -366,8 +383,8 @@ function AiPanelInner(): React.ReactElement {
       >
         <button
           type="button"
-          aria-label="Open Suitest Agent (⌘J)"
-          title="Open Suitest Agent (⌘J)"
+          aria-label={`Open Suitest Agent (${TOGGLE_HINT})`}
+          title={`Open Suitest Agent (${TOGGLE_HINT})`}
           aria-expanded={false}
           data-testid="ai-panel-expand"
           onClick={() => setCollapsed(false)}
@@ -440,8 +457,8 @@ function AiPanelInner(): React.ReactElement {
         ) : null}
         <button
           type="button"
-          aria-label="Collapse Suitest Agent (⌘J)"
-          title="Collapse (⌘J)"
+          aria-label={`Collapse Suitest Agent (${TOGGLE_HINT})`}
+          title={`Collapse (${TOGGLE_HINT})`}
           aria-expanded={true}
           data-testid="ai-panel-collapse"
           onClick={() => setCollapsed(true)}
