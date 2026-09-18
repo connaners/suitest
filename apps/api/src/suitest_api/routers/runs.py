@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -23,6 +24,7 @@ from suitest_db.models.run import Run, RunStep
 from suitest_db.repositories.projects import ProjectRepo
 from suitest_db.repositories.run_step_logs import RunStepLogRepo
 from suitest_db.repositories.runs import RunRepo
+from suitest_db.repositories.runs import RunSummary as DbRunSummary
 from suitest_shared.domain.enums import RunStatus
 from suitest_shared.schemas.pagination import Page, PageMeta
 
@@ -251,6 +253,40 @@ async def get_runs_summary(
     )
 
 
+def _extract_run_error_message(
+    run: Run,
+    summary: DbRunSummary,
+    metadata_dict: dict[str, Any],
+) -> str | None:
+    raw = str(
+        metadata_dict.get("error")
+        or metadata_dict.get("error_message")
+        or metadata_dict.get("interrupted_reason")
+        or metadata_dict.get("reconciliation")
+        or ""
+    ).strip()
+    if raw:
+        return raw
+    if run.status == RunStatus.ERROR and summary.total_steps == 0:
+        return "Cannot execute run: selected test cases contain no steps"
+    return None
+
+
+def _extract_snapshot_cases(snapshot_cases: list[Any]) -> list[RunCaseSummary]:
+    cases: list[RunCaseSummary] = []
+    for item in snapshot_cases:
+        if isinstance(item, dict):
+            cases.append(
+                RunCaseSummary(
+                    case_id=str(item.get("case_id", "")),
+                    case_public_id=str(item.get("case_public_id", "")),
+                    case_title=str(item.get("case_title", "")),
+                    total_steps=int(item.get("total_steps") or 0),
+                )
+            )
+    return cases
+
+
 @router.get("/runs/{run_id}", response_model=RunDetail)
 async def get_run(
     run_id: str,
@@ -281,16 +317,7 @@ async def get_run(
     planned_cases: list[RunCaseSummary] = []
     snapshot_cases = metadata_dict.get("planned_cases")
     if isinstance(snapshot_cases, list) and snapshot_cases:
-        for item in snapshot_cases:
-            if isinstance(item, dict):
-                planned_cases.append(
-                    RunCaseSummary(
-                        case_id=str(item.get("case_id", "")),
-                        case_public_id=str(item.get("case_public_id", "")),
-                        case_title=str(item.get("case_title", "")),
-                        total_steps=int(item.get("total_steps") or 0),
-                    )
-                )
+        planned_cases = _extract_snapshot_cases(snapshot_cases)
     elif isinstance(raw_selection, list) and raw_selection:
         case_ids = [
             item["case_id"]
@@ -365,14 +392,7 @@ async def get_run(
         if "playwright_config" in metadata_dict
         and isinstance(metadata_dict["playwright_config"], dict)
         else None,
-        error_message=str(
-            metadata_dict.get("error")
-            or metadata_dict.get("error_message")
-            or metadata_dict.get("interrupted_reason")
-            or metadata_dict.get("reconciliation")
-            or ""
-        ).strip()
-        or None,
+        error_message=_extract_run_error_message(run, summary, metadata_dict),
     )
 
 

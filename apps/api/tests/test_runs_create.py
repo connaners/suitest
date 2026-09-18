@@ -241,3 +241,42 @@ async def test_create_run_enqueues_arq_job(api_db: ApiDb) -> None:
     assert function == "run_test_case"
     assert args == (run_id,)
     assert kwargs.get("_queue_name") == "suitest:runs"
+
+
+@pytest.mark.asyncio
+async def test_create_run_zero_steps_allowed_and_enqueued(api_db: ApiDb) -> None:
+    """A run where selected test cases have 0 total steps is accepted with 202 and enqueued."""
+    user = await api_db.seed_user(email="run-create-nosteps@example.com")
+    ws = await api_db.member_workspace(user, slug="run-create-nosteps-ws")
+    await api_db.seed_ready_llm(ws.id)
+    project = Project(workspace_id=ws.id, slug="p-nosteps", name="P")
+    await api_db.add_all([project])
+    suite = Suite(project_id=project.id, name="S", order=0)
+    await api_db.add_all([suite])
+    case = TestCase(
+        suite_id=suite.id,
+        public_id="TC-EMPTY",
+        name="empty case",
+        source=CaseSource.MANUAL,
+    )
+    await api_db.add_all([case])
+
+    app = api_db.app_for(user)
+    from asgi_lifespan import LifespanManager
+    from httpx import ASGITransport, AsyncClient
+
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                "/api/v1/runs",
+                json={
+                    "projectId": project.id,
+                    "name": "from-test",
+                    "selection": [{"caseId": case.id}],
+                },
+                headers={"X-Workspace-Id": ws.id},
+            )
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["status"] == "QUEUED"

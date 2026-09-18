@@ -304,6 +304,17 @@ export function StepEditor({
   // ------------------------------------------------------------------
   const handleSave = useCallback(() => {
     setError(null);
+    const emptyIndex = steps.findIndex(
+      (s) => !s.action.trim() && (!s.code || !s.code.trim()),
+    );
+    if (emptyIndex !== -1) {
+      setError({
+        title: "Empty step action",
+        message: `Step #${emptyIndex + 1} action cannot be empty. Please enter an action description before saving.`,
+        stepIndex: emptyIndex,
+      });
+      return;
+    }
     replaceStepsMutation.mutate(steps);
   }, [steps, replaceStepsMutation]);
 

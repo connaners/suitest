@@ -373,9 +373,10 @@ export function CaseDetailPanel({
               type="button"
               size="sm"
               variant="outline"
-              disabled={isRerunning}
+              disabled={isRerunning || group.total === 0}
+              title={group.total === 0 ? "Cannot re-run a test case with no steps" : undefined}
               onClick={() => onRerunCase(group.caseId)}
-              className="h-6 gap-1 px-2 text-[11px] text-fg-3 hover:bg-bg-elev-2 hover:text-fg-1"
+              className="h-6 gap-1 px-2 text-[11px] text-fg-3 hover:bg-bg-elev-2 hover:text-fg-1 disabled:opacity-50"
               data-testid="case-rerun-button"
             >
               <RotateCw className={cn("h-3 w-3", isRerunning && "animate-spin")} aria-hidden="true" />
