@@ -167,6 +167,8 @@ describe("LlmSettingsPanel", () => {
     // Named for a person, not the raw provider key.
     expect(status).toHaveTextContent(/Anthropic/);
     expect(status).toHaveTextContent(/validation required/i);
+    expect(screen.getByTestId("llm-validation-warning-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("llm-verify-banner-btn")).toBeInTheDocument();
   });
 
   it("signs in with Google on localhost by polling the loopback listener", async () => {
@@ -629,5 +631,91 @@ describe("LlmSettingsPanel", () => {
 
     expect(await screen.findByTestId("google-signin-model-input")).toBeInTheDocument();
     expect(screen.queryByTestId("google-signin-model-select")).not.toBeInTheDocument();
+  });
+
+  it("pre-populates form fields from active config and allows testing without saving first", async () => {
+    server.use(
+      http.get("*/api/v1/workspaces/ws_1/llm-config", () =>
+        HttpResponse.json({
+          id: "llmcfg_custom",
+          provider: "custom",
+          model: "agy",
+          apiKeyHint: null,
+          config: { base_url: "http://localhost:20128/v1" },
+          isActive: true,
+          status: "ready",
+          lastValidatedAt: "2026-09-18T12:00:00Z",
+          authMethod: "api_key",
+          oauthAccount: null,
+        }),
+      ),
+    );
+
+    renderPanel();
+    await screen.findByTestId("llm-remove");
+
+    // Form should be pre-populated from the active custom config
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^provider$/i)).toHaveValue("custom");
+      expect(screen.getByLabelText(/model/i)).toHaveValue("agy");
+      expect(screen.getByLabelText(/base url/i)).toHaveValue("http://localhost:20128/v1");
+    });
+
+    const testBtn = screen.getByTestId("llm-test");
+    expect(testBtn).toHaveTextContent("Test connection");
+    expect(testBtn).not.toBeDisabled();
+  });
+
+  it("updates test button to Save & Test when form is edited and saves before test", async () => {
+    let savedBody: unknown = null;
+    server.use(
+      http.get("*/api/v1/workspaces/ws_1/llm-config", () =>
+        HttpResponse.json(null, { status: 404 }),
+      ),
+      http.put("*/api/v1/workspaces/ws_1/llm-config", async ({ request }) => {
+        savedBody = await request.json();
+        return HttpResponse.json({
+          id: "llmcfg_new",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+          apiKeyHint: "sk-••••1234",
+          config: {},
+          isActive: true,
+          status: "validation_required",
+          lastValidatedAt: null,
+          authMethod: "api_key",
+          oauthAccount: null,
+        });
+      }),
+      http.post("*/api/v1/workspaces/ws_1/llm-config/test", () =>
+        HttpResponse.json({ ok: true, latencyMs: 150, modelEcho: "claude-sonnet-4-5" }),
+      ),
+    );
+
+    renderPanel();
+    const user = userEvent.setup();
+    await screen.findByTestId("llm-none");
+
+    const testBtn = screen.getByTestId("llm-test");
+    expect(testBtn).toBeDisabled();
+
+    // Type a model into draft
+    await user.type(screen.getByLabelText(/model/i), "claude-sonnet-4-5");
+    expect(testBtn).toHaveTextContent("Test connection");
+    expect(testBtn).not.toBeDisabled();
+
+    // Click Test connection (which saves draft first)
+    await user.click(testBtn);
+
+    await waitFor(() => {
+      expect(savedBody).toEqual({
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+        config: {},
+      });
+    });
+
+    const result = await screen.findByTestId("llm-test-result");
+    expect(result).toHaveTextContent(/OK — claude-sonnet-4-5/);
   });
 });

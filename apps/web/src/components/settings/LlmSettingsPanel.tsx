@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   deleteLlmConfig,
@@ -10,7 +10,8 @@ import {
   testLlmConfig,
 } from "@/lib/api-client";
 
-import { providerLabel, vendorById, vendorsInGroup } from "@/lib/llm-vendors";
+import { providerLabel, vendorById, vendorForProvider, vendorsInGroup } from "@/lib/llm-vendors";
+import { useCapabilities } from "@/stores/use-capabilities";
 
 import { ChatGptSignIn } from "./ChatGptSignIn";
 import { GoogleSignIn } from "./GoogleSignIn";
@@ -43,6 +44,7 @@ export function LlmSettingsPanel({
   const [testResult, setTestResult] = useState<LlmTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [testingTrigger, setTestingTrigger] = useState<"banner" | "form" | null>(null);
 
   const vendor = vendorById(vendorId);
   // A vendor with no sign-in has only one way in, so the radio never shows and
@@ -61,10 +63,12 @@ export function LlmSettingsPanel({
     return next;
   };
 
-  const refresh = (): void => {
-    void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "llm-config"] });
+  const refresh = async (): Promise<void> => {
+    await queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "llm-config"] });
     // Readiness may have changed — refetch capabilities so gated UI updates.
-    void queryClient.invalidateQueries({ queryKey: ["capabilities"] });
+    await queryClient.invalidateQueries({ queryKey: ["capabilities"] });
+    // Immediately sync Zustand capabilities so AI panel, status chips, and gated features update without page refresh
+    void useCapabilities.getState().fetch();
   };
 
   const saveMutation = useMutation({
@@ -73,7 +77,7 @@ export function LlmSettingsPanel({
       setError(null);
       setApiKey("");
       setHasUnsavedChanges(false);
-      refresh();
+      void refresh();
     },
     onError: () => setError("Could not save LLM config. Check the provider and key."),
   });
@@ -82,20 +86,60 @@ export function LlmSettingsPanel({
     mutationFn: () => testLlmConfig(workspaceId),
     onSuccess: (r) => {
       setTestResult(r);
-      if (r.ok) refresh();
+      if (r.ok) void refresh();
     },
     onError: () => setError("Connection test failed to run."),
+    onSettled: () => setTestingTrigger(null),
   });
 
   const removeMutation = useMutation({
     mutationFn: () => deleteLlmConfig(workspaceId),
     onSuccess: () => {
       setTestResult(null);
-      refresh();
+      void refresh();
     },
   });
 
   const active = configQuery.data;
+
+  // Auto-sync when capabilities change externally (e.g. from topbar status badge)
+  const llmStatus = useCapabilities((state) => state.capabilities?.llm?.status);
+  useEffect(() => {
+    if (llmStatus === "ready") {
+      void queryClient.invalidateQueries({ queryKey: ["workspace", workspaceId, "llm-config"] });
+    }
+  }, [llmStatus, queryClient, workspaceId]);
+
+  // Pre-populate form when active config loads and user hasn't made unsaved edits
+  useEffect(() => {
+    if (active && !hasUnsavedChanges) {
+      const v = vendorForProvider(active.provider);
+      if (v) setVendorId(v.id);
+      if (active.authMethod === "oauth" || active.authMethod === "api_key") {
+        setAuthMethod(active.authMethod);
+      }
+      setModel(active.model ?? "");
+      const base =
+        typeof active.config["base_url"] === "string" ? active.config["base_url"] : "";
+      setBaseUrl(base);
+    }
+  }, [active, hasUnsavedChanges]);
+
+  const handleTestOrSaveAndTest = async (trigger: "banner" | "form" = "form"): Promise<void> => {
+    setError(null);
+    setTestingTrigger(trigger);
+    if (!active || hasUnsavedChanges) {
+      try {
+        await saveMutation.mutateAsync();
+        testMutation.mutate();
+      } catch {
+        // saveMutation.onError displays user-facing error message
+        setTestingTrigger(null);
+      }
+    } else {
+      testMutation.mutate();
+    }
+  };
 
   return (
     <section className="max-w-xl space-y-5" data-testid="llm-settings-panel">
@@ -110,35 +154,98 @@ export function LlmSettingsPanel({
           {configQuery.isLoading ? (
             <span className="text-fg-3">Loading…</span>
           ) : active ? (
-            <div className="flex items-center justify-between rounded-md border border-accent/30 bg-accent/10 px-3 py-2">
-              <span className="min-w-0">
-                Active: <strong>{providerLabel(active.provider)}</strong> / {active.model}{" "}
-                <span className="text-fg-3">({active.status.replaceAll("_", " ")})</span>
-                {active.apiKeyHint ? (
-                  <span className="ml-2 font-mono text-fg-4">{active.apiKeyHint}</span>
+            active.status === "validation_required" ? (
+              <div
+                className="space-y-3 rounded-md border border-amber/40 bg-amber/10 p-3.5"
+                data-testid="llm-validation-warning-banner"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 text-base leading-none" aria-hidden="true">
+                      ⚠️
+                    </span>
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[13px] font-semibold text-fg-1">
+                          Active: <strong>{providerLabel(active.provider)}</strong> / {active.model}
+                        </span>
+                        <span className="rounded bg-amber/20 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-amber uppercase tracking-wider">
+                          validation required
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-fg-2">
+                        Configuration is saved, but connection has not been verified yet. AI features (Assistant Chat, AI generator) remain locked until connection succeeds.
+                      </p>
+                      {active.apiKeyHint ? (
+                        <span className="font-mono text-[11px] text-fg-4">{active.apiKeyHint}</span>
+                      ) : null}
+                      {typeof active.config["base_url"] === "string" && active.config["base_url"] ? (
+                        <span className="block truncate font-mono text-[11px] text-fg-4">
+                          {active.config["base_url"]}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  {canWrite ? (
+                    <button
+                      type="button"
+                      onClick={() => removeMutation.mutate()}
+                      className="shrink-0 text-[12px] text-red hover:underline"
+                      data-testid="llm-remove"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+
+                {canWrite ? (
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleTestOrSaveAndTest("banner")}
+                      disabled={testMutation.isPending || saveMutation.isPending}
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-amber px-3 text-[12px] font-semibold text-black hover:bg-amber/90 disabled:opacity-60 transition-opacity"
+                      data-testid="llm-verify-banner-btn"
+                    >
+                      {testingTrigger === "banner"
+                        ? "Verifying connection…"
+                        : "⚡ Verify Connection Now"}
+                    </button>
+                    <span className="text-[11px] text-fg-3">Runs a quick 1-token roundtrip test</span>
+                  </div>
                 ) : null}
-                {active.authMethod === "oauth" ? (
-                  <span className="ml-2 text-violet" data-testid="llm-oauth-account">
-                    signed in{active.oauthAccount ? ` as ${active.oauthAccount}` : ""}
-                  </span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between rounded-md border border-accent/30 bg-accent/10 px-3 py-2">
+                <span className="min-w-0">
+                  Active: <strong>{providerLabel(active.provider)}</strong> / {active.model}{" "}
+                  <span className="text-fg-3">({active.status.replaceAll("_", " ")})</span>
+                  {active.apiKeyHint ? (
+                    <span className="ml-2 font-mono text-fg-4">{active.apiKeyHint}</span>
+                  ) : null}
+                  {active.authMethod === "oauth" ? (
+                    <span className="ml-2 text-violet" data-testid="llm-oauth-account">
+                      signed in{active.oauthAccount ? ` as ${active.oauthAccount}` : ""}
+                    </span>
+                  ) : null}
+                  {typeof active.config["base_url"] === "string" && active.config["base_url"] ? (
+                    <span className="mt-0.5 block truncate font-mono text-[11px] text-fg-4">
+                      {active.config["base_url"]}
+                    </span>
+                  ) : null}
+                </span>
+                {canWrite ? (
+                  <button
+                    type="button"
+                    onClick={() => removeMutation.mutate()}
+                    className="text-[12.5px] text-red hover:underline"
+                    data-testid="llm-remove"
+                  >
+                    Remove
+                  </button>
                 ) : null}
-                {typeof active.config["base_url"] === "string" && active.config["base_url"] ? (
-                  <span className="mt-0.5 block truncate font-mono text-[11px] text-fg-4">
-                    {active.config["base_url"]}
-                  </span>
-                ) : null}
-              </span>
-              {canWrite ? (
-                <button
-                  type="button"
-                  onClick={() => removeMutation.mutate()}
-                  className="text-[12.5px] text-red hover:underline"
-                  data-testid="llm-remove"
-                >
-                  Remove
-                </button>
-              ) : null}
-            </div>
+              </div>
+            )
           ) : (
             <span className="text-fg-3" data-testid="llm-none">
               No LLM configured. Manual test management remains available.
@@ -321,19 +428,26 @@ export function LlmSettingsPanel({
           ) : null}
 
           {testResult ? (
-            <p
+            <div
               role="status"
               data-testid="llm-test-result"
-              className={`rounded-md border px-3 py-2 text-[12.5px] ${
+              className={`space-y-1 rounded-md border px-3 py-2 text-[12.5px] ${
                 testResult.ok
                   ? "border-accent/30 bg-accent/10 text-accent"
                   : "border-red/30 bg-red/10 text-red"
               }`}
             >
-              {testResult.ok
-                ? `OK — ${testResult.modelEcho} (${testResult.latencyMs}ms)`
-                : `Failed — ${testResult.error?.code ?? "ERROR"}: ${testResult.error?.message ?? ""}`}
-            </p>
+              <p>
+                {testResult.ok
+                  ? `OK — ${testResult.modelEcho} (${testResult.latencyMs}ms)`
+                  : `Failed — ${testResult.error?.code ?? "ERROR"}: ${testResult.error?.message ?? ""}`}
+              </p>
+              {!testResult.ok && testResult.error?.code === "UPSTREAM_DISCONNECTED" ? (
+                <p className="text-[11px] text-fg-3">
+                  Tip: Upstream connection closed or reset. If using a local LLM or proxy (e.g. port 20128/11434), check that the proxy is healthy and reachable.
+                </p>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="flex gap-2">
@@ -347,16 +461,25 @@ export function LlmSettingsPanel({
             </button>
             <button
               type="button"
-              onClick={() => testMutation.mutate()}
-              disabled={testMutation.isPending || !active || hasUnsavedChanges}
+              onClick={() => void handleTestOrSaveAndTest("form")}
+              disabled={
+                testMutation.isPending ||
+                saveMutation.isPending ||
+                !model ||
+                Boolean(vendor?.needsBaseUrl && !baseUrl)
+              }
               className="inline-flex h-9 items-center justify-center rounded-md border border-border px-4 text-[13px] font-medium text-fg-1 hover:bg-bg-elev-2 disabled:opacity-60"
               data-testid="llm-test"
             >
-              {testMutation.isPending ? "Testing…" : "Test connection"}
+              {testingTrigger === "form" ? "Testing…" : "Test connection"}
             </button>
           </div>
           {!active || hasUnsavedChanges ? (
-            <p className="text-[11.5px] text-fg-4">Save before testing.</p>
+            <p className="text-[11.5px] text-fg-4">
+              {model
+                ? "Saves draft before testing connection."
+                : "Save before testing."}
+            </p>
           ) : null}
         </form>
       ) : null}

@@ -313,8 +313,52 @@ class LLMConfigService:
             result = await impl.complete(call)
         except ProviderError as exc:
             latency = int((time.perf_counter() - start) * 1000)
-            code = "PROVIDER_AUTH" if "auth" in exc.message.lower() else exc.code
-            return (False, latency, "", code, exc.message)
+            msg = exc.message
+            code = exc.code
+            lower_msg = msg.lower()
+            if "auth" in lower_msg or "unauthorized" in lower_msg or "api key" in lower_msg:
+                code = "PROVIDER_AUTH"
+            elif any(
+                k in lower_msg
+                for k in (
+                    "connection reset",
+                    "connection refused",
+                    "connect call failed",
+                    "broken pipe",
+                    "peer",
+                )
+            ):
+                code = "UPSTREAM_DISCONNECTED"
+                msg = f"{msg} — Upstream host/proxy closed or reset connection. Check network, VPN, or local proxy."
+            elif any(k in lower_msg for k in ("timeout", "timed out", "deadline")):
+                code = "UPSTREAM_TIMEOUT"
+                msg = (
+                    f"{msg} — Provider connection timed out. Upstream may be slow or unresponsive."
+                )
+            return (False, latency, "", code, msg)
+        except Exception as exc:
+            latency = int((time.perf_counter() - start) * 1000)
+            msg = str(exc)
+            lower_msg = msg.lower()
+            code = "CONNECTION_ERROR"
+            if any(
+                k in lower_msg
+                for k in (
+                    "connection reset",
+                    "connection refused",
+                    "connect call failed",
+                    "broken pipe",
+                    "peer",
+                )
+            ):
+                code = "UPSTREAM_DISCONNECTED"
+                msg = f"{msg} — Upstream host/proxy closed or reset connection. Check network, VPN, or local proxy."
+            elif any(k in lower_msg for k in ("timeout", "timed out", "deadline")):
+                code = "UPSTREAM_TIMEOUT"
+                msg = (
+                    f"{msg} — Provider connection timed out. Upstream may be slow or unresponsive."
+                )
+            return (False, latency, "", code, msg)
         latency = int((time.perf_counter() - start) * 1000)
         await self._llm.update(active.id, LLMConfigUpdate(last_validated_at=datetime.now(tz=UTC)))
         await self._refresh_capability(llm_ready=True)

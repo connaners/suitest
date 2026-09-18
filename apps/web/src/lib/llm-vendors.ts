@@ -124,6 +124,17 @@ export function vendorsInGroup(group: VendorGroup): Vendor[] {
   return VENDORS.filter((v) => v.group === group);
 }
 
+/** Resolve the UI vendor corresponding to a stored provider key. */
+export function vendorForProvider(provider: string | null | undefined): Vendor | undefined {
+  if (!provider) return undefined;
+  const key = provider.trim().toLowerCase();
+  const direct = VENDORS.find((v) => v.apiKeyProvider === key || v.id === key);
+  if (direct) return direct;
+  if (key === "chatgpt") return vendorById("openai");
+  if (key === "google-vertex" || key === "google-codeassist") return vendorById("google");
+  return undefined;
+}
+
 /** Provider keys only ever produced by a sign-in, so never offered in the picker. */
 const OAUTH_ONLY_LABELS: Record<string, string> = {
   chatgpt: "OpenAI (ChatGPT plan)",
