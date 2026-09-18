@@ -162,9 +162,10 @@ describe("<_app> layout shell", () => {
     // Sized by its own classes, shown only at xl+ — the shell reserves nothing.
     expect(panel.className).toContain("xl:flex");
     expect(panel.className).toContain("w-[380px]");
+    expect(panel).toHaveStyle({ width: "380px" });
   });
 
-  it("collapses the AI rail when useAiPanel is closed in CLOUD tier, showing the floating trigger", async () => {
+  it("collapses the AI rail when useAiPanel is closed in CLOUD tier, showing the collapsed rail", async () => {
     mockCaps(CLOUD_CAPS);
     setCaps(CLOUD_CAPS);
     act(() => {
@@ -176,6 +177,7 @@ describe("<_app> layout shell", () => {
     });
     await screen.findByTestId("app-shell");
     expect(screen.queryByTestId("ai-panel")).toBeNull();
-    expect(await screen.findByTestId("ai-panel-floating-trigger")).toBeInTheDocument();
+    expect(await screen.findByTestId("ai-panel-collapsed")).toBeInTheDocument();
+    expect(screen.getByTestId("ai-panel-expand")).toBeInTheDocument();
   });
 });

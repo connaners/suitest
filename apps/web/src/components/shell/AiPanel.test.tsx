@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -180,37 +180,44 @@ describe("<AiPanel>", () => {
     expect(localStorage.getItem("suitest.agentAutoApprove")).toBe("1");
   });
 
-  it("collapses the panel and renders the floating trigger when collapse button is clicked", async () => {
+  it("preserves composer input draft when collapsed and re-expanded", async () => {
     setCaps(CLOUD_ASSIST_CAPS);
     render(<AiPanel />);
 
-    const collapseBtn = screen.getByTestId("ai-panel-collapse-toggle");
-    expect(collapseBtn).toBeInTheDocument();
-    expect(screen.queryByTestId("ai-panel-floating-trigger")).toBeNull();
+    const input = screen.getByTestId("ai-panel-composer-input");
+    await userEvent.type(input, "draft message to agent");
+    expect(input).toHaveValue("draft message to agent");
 
+    const collapseBtn = screen.getByTestId("ai-panel-collapse");
     await userEvent.click(collapseBtn);
 
     expect(screen.queryByTestId("ai-panel")).toBeNull();
-    expect(screen.getByTestId("ai-panel-floating-trigger")).toBeInTheDocument();
-    expect(useAiPanel.getState().isOpen).toBe(false);
+    const expandBtn = screen.getByTestId("ai-panel-expand");
+    expect(expandBtn).toBeInTheDocument();
+
+    await userEvent.click(expandBtn);
+
+    const restoredInput = screen.getByTestId("ai-panel-composer-input");
+    expect(restoredInput).toHaveValue("draft message to agent");
   });
 
-  it("re-expands the panel when floating trigger is clicked", async () => {
+  it("supports resizing via keyboard arrow keys on separator", async () => {
     setCaps(CLOUD_ASSIST_CAPS);
-    act(() => {
-      useAiPanel.setState({ isOpen: false });
-    });
     render(<AiPanel />);
 
-    const trigger = screen.getByTestId("ai-panel-floating-trigger");
-    expect(trigger).toBeInTheDocument();
-    expect(screen.queryByTestId("ai-panel")).toBeNull();
+    const separator = screen.getByRole("separator", { name: /resize assistant panel/i });
+    expect(separator).toBeInTheDocument();
 
-    await userEvent.click(trigger);
+    // ArrowLeft widens the right panel by +20px (from 380 to 400)
+    fireEvent.keyDown(separator, { key: "ArrowLeft" });
+    const panel = screen.getByTestId("ai-panel");
+    expect(panel).toHaveStyle({ width: "400px" });
+    expect(localStorage.getItem("suitest.aiPanelWidth")).toBe("400");
 
-    expect(await screen.findByTestId("ai-panel")).toBeInTheDocument();
-    expect(screen.queryByTestId("ai-panel-floating-trigger")).toBeNull();
-    expect(useAiPanel.getState().isOpen).toBe(true);
+    // ArrowRight narrows the right panel by -20px (from 400 to 380)
+    fireEvent.keyDown(separator, { key: "ArrowRight" });
+    expect(panel).toHaveStyle({ width: "380px" });
+    expect(localStorage.getItem("suitest.aiPanelWidth")).toBe("380");
   });
 
   it("collapses via header button and ⌘J/Ctrl+J, syncing suitest.agentPanelCollapsed", async () => {
