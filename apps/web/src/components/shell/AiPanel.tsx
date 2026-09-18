@@ -1,8 +1,9 @@
-import { Loader2, Send, ShieldAlert, Sparkles, Zap } from "lucide-react";
+import { Loader2, PanelRightClose, Send, ShieldAlert, Sparkles, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Gated } from "@/components/gating/Gated";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { fetchLlmModels } from "@/lib/api-client";
 import {
   fetchChatHistory,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/chat-client";
 import { providerLabel } from "@/lib/llm-vendors";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
+import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities } from "@/stores/use-capabilities";
 
 /**
@@ -65,9 +67,42 @@ interface ChatTurn {
 export function AiPanel(): React.ReactElement {
   return (
     <Gated feature="ai_conversation" fallback={null}>
-      <AiPanelInner />
+      <AiPanelContainer />
     </Gated>
   );
+}
+
+function AiPanelContainer(): React.ReactElement {
+  const isOpen = useAiPanel((s) => s.isOpen);
+  const toggle = useAiPanel((s) => s.toggle);
+
+  if (!isOpen) {
+    return (
+      <aside data-testid="ai-panel-collapsed" aria-label="Assistant chat minimized">
+        <TooltipProvider delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={toggle}
+                aria-label="Open assistant chat (⌘J)"
+                title="Open assistant chat (⌘J)"
+                data-testid="ai-panel-floating-trigger"
+                className="fixed bottom-5 right-5 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-bg-elev-2 text-fg-2 shadow-lg transition-all duration-150 hover:border-accent hover:bg-bg-elev-3 hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent"
+              >
+                <Sparkles className="h-5 w-5 text-accent" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="left">
+              <span>Open assistant (⌘J)</span>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </aside>
+    );
+  }
+
+  return <AiPanelInner onCollapse={toggle} />;
 }
 
 function ThinkingDots(): React.ReactElement {
@@ -84,7 +119,7 @@ function ThinkingDots(): React.ReactElement {
   );
 }
 
-function AiPanelInner(): React.ReactElement {
+function AiPanelInner({ onCollapse }: { onCollapse?: () => void } = {}): React.ReactElement {
   const capabilities = useCapabilities((s) => s.capabilities);
   const provider = capabilities?.llm?.provider
     ? providerLabel(capabilities.llm.provider)
@@ -367,21 +402,42 @@ function AiPanelInner(): React.ReactElement {
             </span>
           )}
         </div>
-        {turns.length > 0 ? (
-          <button
-            type="button"
-            aria-label="Clear conversation"
-            data-testid="ai-panel-clear"
-            onClick={() => {
-              sessionRef.current = null;
-              localStorage.removeItem(SESSION_KEY);
-              setTurns([]);
-            }}
-            className="ml-auto rounded-md px-2 py-1 text-[11px] text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1"
-          >
-            New chat
-          </button>
-        ) : null}
+        <div className="ml-auto flex items-center gap-1">
+          {turns.length > 0 ? (
+            <button
+              type="button"
+              aria-label="Clear conversation"
+              data-testid="ai-panel-clear"
+              onClick={() => {
+                sessionRef.current = null;
+                localStorage.removeItem(SESSION_KEY);
+                setTurns([]);
+              }}
+              className="rounded-md px-2 py-1 text-[11px] text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1"
+            >
+              New chat
+            </button>
+          ) : null}
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Collapse assistant panel"
+                  title="Collapse assistant (⌘J)"
+                  data-testid="ai-panel-collapse-toggle"
+                  onClick={onCollapse ?? (() => useAiPanel.getState().setOpen(false))}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1"
+                >
+                  <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <span>Collapse assistant (⌘J)</span>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4" data-testid="ai-panel-thread">

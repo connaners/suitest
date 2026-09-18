@@ -7,10 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { server } from "@/mocks/server";
 import { routeTree } from "@/routeTree.gen";
+import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities, type Capabilities } from "@/stores/use-capabilities";
 
 const ZERO_CAPS: Capabilities = {
-  llm: { status: "not_configured", provider: null, model: null, base_url: null, is_test_provider: false },
+  llm: {
+    status: "not_configured",
+    provider: null,
+    model: null,
+    base_url: null,
+    is_test_provider: false,
+  },
   embeddings: { enabled: false, backend: "none", model: null, dim: null },
   features: {
     manual_tcm: true,
@@ -114,6 +121,7 @@ describe("<_app> layout shell", () => {
     vi.restoreAllMocks();
     act(() => {
       useCapabilities.setState({ capabilities: null, loading: true, error: null });
+      useAiPanel.setState({ isOpen: true });
     });
   });
 
@@ -154,5 +162,20 @@ describe("<_app> layout shell", () => {
     // Sized by its own classes, shown only at xl+ — the shell reserves nothing.
     expect(panel.className).toContain("xl:flex");
     expect(panel.className).toContain("w-[380px]");
+  });
+
+  it("collapses the AI rail when useAiPanel is closed in CLOUD tier, showing the floating trigger", async () => {
+    mockCaps(CLOUD_CAPS);
+    setCaps(CLOUD_CAPS);
+    act(() => {
+      useAiPanel.setState({ isOpen: false });
+    });
+    const { router } = renderAt("/dashboard");
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/dashboard");
+    });
+    await screen.findByTestId("app-shell");
+    expect(screen.queryByTestId("ai-panel")).toBeNull();
+    expect(await screen.findByTestId("ai-panel-floating-trigger")).toBeInTheDocument();
   });
 });

@@ -6,12 +6,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiPanel } from "@/components/shell/AiPanel";
 import { fetchLlmModels } from "@/lib/api-client";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
+import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities, type Capabilities } from "@/stores/use-capabilities";
 
 vi.mock("@/lib/api-client", () => ({ fetchLlmModels: vi.fn() }));
 
 const ZERO_CAPS: Capabilities = {
-  llm: { status: "not_configured", provider: null, model: null, base_url: null, is_test_provider: false },
+  llm: {
+    status: "not_configured",
+    provider: null,
+    model: null,
+    base_url: null,
+    is_test_provider: false,
+  },
   embeddings: { enabled: false, backend: "none", model: null, dim: null },
   features: {
     manual_tcm: true,
@@ -72,14 +79,17 @@ describe("<AiPanel>", () => {
   beforeEach(() => {
     act(() => {
       useCapabilities.setState({ capabilities: null, loading: true, error: null });
+      useAiPanel.setState({ isOpen: true });
     });
   });
   afterEach(() => {
     act(() => {
       useCapabilities.setState({ capabilities: null, loading: true, error: null });
       useActiveWorkspace.setState({ workspaceId: null });
+      useAiPanel.setState({ isOpen: true });
     });
     localStorage.removeItem("suitest.agentModel");
+    localStorage.removeItem("suitest.aiPanelOpen");
     vi.mocked(fetchLlmModels).mockReset();
   });
 
@@ -167,5 +177,38 @@ describe("<AiPanel>", () => {
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("ai-panel-autoapprove-warning")).toBeInTheDocument();
     expect(localStorage.getItem("suitest.agentAutoApprove")).toBe("1");
+  });
+
+  it("collapses the panel and renders the floating trigger when collapse button is clicked", async () => {
+    setCaps(CLOUD_ASSIST_CAPS);
+    render(<AiPanel />);
+
+    const collapseBtn = screen.getByTestId("ai-panel-collapse-toggle");
+    expect(collapseBtn).toBeInTheDocument();
+    expect(screen.queryByTestId("ai-panel-floating-trigger")).toBeNull();
+
+    await userEvent.click(collapseBtn);
+
+    expect(screen.queryByTestId("ai-panel")).toBeNull();
+    expect(screen.getByTestId("ai-panel-floating-trigger")).toBeInTheDocument();
+    expect(useAiPanel.getState().isOpen).toBe(false);
+  });
+
+  it("re-expands the panel when floating trigger is clicked", async () => {
+    setCaps(CLOUD_ASSIST_CAPS);
+    act(() => {
+      useAiPanel.setState({ isOpen: false });
+    });
+    render(<AiPanel />);
+
+    const trigger = screen.getByTestId("ai-panel-floating-trigger");
+    expect(trigger).toBeInTheDocument();
+    expect(screen.queryByTestId("ai-panel")).toBeNull();
+
+    await userEvent.click(trigger);
+
+    expect(await screen.findByTestId("ai-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("ai-panel-floating-trigger")).toBeNull();
+    expect(useAiPanel.getState().isOpen).toBe(true);
   });
 });

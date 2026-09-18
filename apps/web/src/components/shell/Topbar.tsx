@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Menu,
   Network,
+  PanelRight,
   Play,
   Plug,
   Plus,
@@ -33,6 +34,8 @@ import {
 } from "@/components/ui/command";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useAiPanel } from "@/stores/use-ai-panel";
+import { useCapabilities } from "@/stores/use-capabilities";
 
 interface CommandTarget {
   label: string;
@@ -93,6 +96,13 @@ export function Topbar({
   const [commandOpen, setCommandOpen] = useState(false);
   const navigate = useNavigate();
 
+  const llmReady = useCapabilities((s) => s.capabilities?.llm?.status === "ready");
+  const hasAiConversation = useCapabilities(
+    (s) => s.capabilities?.features?.ai_conversation === true,
+  );
+  const isAiPanelOpen = useAiPanel((s) => s.isOpen);
+  const toggleAiPanel = useAiPanel((s) => s.toggle);
+
   // Build breadcrumbs from every route match that declares a title in its
   // `staticData`. The root + `_app` pathless layout are intentionally
   // excluded — they don't carry a title.
@@ -103,18 +113,29 @@ export function Topbar({
         .filter((t): t is string => typeof t === "string" && t.length > 0),
   });
 
-  // Global ⌘K / Ctrl+K shortcut. Re-bound on each render is cheap because
-  // there's only one Topbar mounted in the shell.
+  // Global shortcuts:
+  // ⌘K / Ctrl+K for command palette
+  // ⌘J / Ctrl+J or ⌘Shift+L / Ctrl+Shift+L for Assistant chat toggle
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setCommandOpen((prev) => !prev);
+        return;
+      }
+      const isCmdJ = (e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "j" || e.key === "J");
+      const isCmdShiftL =
+        (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "l" || e.key === "L");
+      if (isCmdJ || isCmdShiftL) {
+        if (llmReady && hasAiConversation) {
+          e.preventDefault();
+          useAiPanel.getState().toggle();
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [llmReady, hasAiConversation]);
 
   const runCommand = useCallback(
     (to: string) => {
@@ -222,6 +243,23 @@ export function Topbar({
           </IconTip>
 
           <LlmStatusBadge />
+
+          {llmReady && hasAiConversation ? (
+            <IconTip label={isAiPanelOpen ? "Collapse assistant (⌘J)" : "Open assistant (⌘J)"}>
+              <button
+                type="button"
+                onClick={toggleAiPanel}
+                aria-label={isAiPanelOpen ? "Collapse assistant" : "Open assistant"}
+                data-testid="topbar-ai-panel-toggle"
+                className={cn(
+                  "flex h-7 w-7 items-center justify-center rounded-md text-fg-3 hover:bg-bg-elev-2 hover:text-fg-1",
+                  isAiPanelOpen && "bg-bg-elev-2 text-accent",
+                )}
+              >
+                <PanelRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </IconTip>
+          ) : null}
 
           {/* + New (disabled in M1b) */}
           <Tooltip>

@@ -13,10 +13,17 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { Topbar } from "@/components/shell/Topbar";
+import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities, type Capabilities } from "@/stores/use-capabilities";
 
 const ZERO_CAPS: Capabilities = {
-  llm: { status: "not_configured", provider: null, model: null, base_url: null, is_test_provider: false },
+  llm: {
+    status: "not_configured",
+    provider: null,
+    model: null,
+    base_url: null,
+    is_test_provider: false,
+  },
   embeddings: { enabled: false, backend: "none", model: null, dim: null },
   features: {
     manual_tcm: true,
@@ -34,6 +41,35 @@ const ZERO_CAPS: Capabilities = {
     auto_defect_filing_rule: true,
   },
   autonomy: { available: ["manual"], default: "manual" },
+  mcpProviders: [],
+  version: "1.0.0",
+};
+
+const CLOUD_CAPS: Capabilities = {
+  llm: {
+    status: "ready",
+    provider: "anthropic",
+    model: "claude-sonnet-4-5",
+    base_url: null,
+    is_test_provider: false,
+  },
+  embeddings: { enabled: true, backend: "openai", model: "text-embedding-3-small", dim: 1536 },
+  features: {
+    manual_tcm: true,
+    deterministic_runner: true,
+    deterministic_generator_openapi: true,
+    deterministic_generator_recorder: true,
+    deterministic_generator_crawler: true,
+    ai_generation: true,
+    ai_execution_agentic: true,
+    ai_diagnose: true,
+    ai_conversation: true,
+    semantic_search: true,
+    fts_search: true,
+    auto_defect_filing_ai: true,
+    auto_defect_filing_rule: true,
+  },
+  autonomy: { available: ["manual", "assist", "semi_auto", "auto"], default: "assist" },
   mcpProviders: [],
   version: "1.0.0",
 };
@@ -93,12 +129,15 @@ describe("<Topbar>", () => {
   beforeEach(() => {
     act(() => {
       useCapabilities.setState({ capabilities: ZERO_CAPS, loading: false, error: null });
+      useAiPanel.setState({ isOpen: true });
     });
   });
   afterEach(() => {
     act(() => {
       useCapabilities.setState({ capabilities: null, loading: true, error: null });
+      useAiPanel.setState({ isOpen: true });
     });
+    localStorage.removeItem("suitest.aiPanelOpen");
   });
 
   it("renders the LLM status badge slot", async () => {
@@ -198,5 +237,69 @@ describe("<Topbar>", () => {
     for (const label of labels) {
       expect(list).toHaveTextContent(label);
     }
+  });
+
+  it("does not render assistant toggle button in ZERO tier", async () => {
+    await renderTopbar("/dashboard");
+    expect(screen.queryByTestId("topbar-ai-panel-toggle")).toBeNull();
+  });
+
+  it("renders assistant toggle button in CLOUD tier with LLM ready and toggles open state on click", async () => {
+    act(() => {
+      useCapabilities.setState({ capabilities: CLOUD_CAPS, loading: false, error: null });
+    });
+    await renderTopbar("/dashboard");
+
+    const toggleBtn = screen.getByTestId("topbar-ai-panel-toggle");
+    expect(toggleBtn).toBeInTheDocument();
+    expect(toggleBtn).toHaveAttribute("aria-label", "Collapse assistant");
+
+    await userEvent.click(toggleBtn);
+    expect(useAiPanel.getState().isOpen).toBe(false);
+
+    await userEvent.click(toggleBtn);
+    expect(useAiPanel.getState().isOpen).toBe(true);
+  });
+
+  it("toggles assistant open state on ⌘J keydown", async () => {
+    act(() => {
+      useCapabilities.setState({ capabilities: CLOUD_CAPS, loading: false, error: null });
+    });
+    await renderTopbar("/dashboard");
+
+    expect(useAiPanel.getState().isOpen).toBe(true);
+    const user = userEvent.setup();
+    await user.keyboard("{Meta>}j{/Meta}");
+    expect(useAiPanel.getState().isOpen).toBe(false);
+
+    await user.keyboard("{Meta>}j{/Meta}");
+    expect(useAiPanel.getState().isOpen).toBe(true);
+  });
+
+  it("toggles assistant open state on ⌘Shift+L keydown", async () => {
+    act(() => {
+      useCapabilities.setState({ capabilities: CLOUD_CAPS, loading: false, error: null });
+    });
+    await renderTopbar("/dashboard");
+
+    expect(useAiPanel.getState().isOpen).toBe(true);
+    const user = userEvent.setup();
+    await user.keyboard("{Meta>}{Shift>}l{/Shift}{/Meta}");
+    expect(useAiPanel.getState().isOpen).toBe(false);
+
+    await user.keyboard("{Meta>}{Shift>}l{/Shift}{/Meta}");
+    expect(useAiPanel.getState().isOpen).toBe(true);
+  });
+
+  it("toggles assistant open state on Ctrl+J keydown", async () => {
+    act(() => {
+      useCapabilities.setState({ capabilities: CLOUD_CAPS, loading: false, error: null });
+    });
+    await renderTopbar("/dashboard");
+
+    expect(useAiPanel.getState().isOpen).toBe(true);
+    const user = userEvent.setup();
+    await user.keyboard("{Control>}j{/Control}");
+    expect(useAiPanel.getState().isOpen).toBe(false);
   });
 });
