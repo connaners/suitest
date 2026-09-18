@@ -153,3 +153,26 @@ async def test_run_trigger_needs_confirm_then_enqueues(api_db: ApiDb) -> None:
     run = cast("dict[str, object]", got["run"])
     assert run["trigger"] == RunTrigger.AGENT
     assert run["status"] == RunStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_run_trigger_leaves_no_run_when_dispatch_fails(api_db: ApiDb) -> None:
+    ctx, smoke = await _seed(api_db, "tool-orphan")
+
+    # No ARQ pool in server mode: dispatch refuses after the run row was flushed.
+    async with api_db.maker() as session:
+        with pytest.raises(ToolInputError):
+            await execute_tool(
+                "run.trigger",
+                {"suite_id": smoke.id},
+                session=session,
+                ctx=ctx,
+                case_service=cast("TestCaseService", MagicMock()),
+                confirmed=True,
+                arq=None,
+            )
+        # The chat service commits after a tool error to record its note.
+        await session.commit()
+
+    listed = await _call(api_db, ctx, "runs.list", {"project": "omni"})
+    assert [r["public_id"] for r in cast("list[dict[str, object]]", listed["runs"])] == ["R-1001"]
