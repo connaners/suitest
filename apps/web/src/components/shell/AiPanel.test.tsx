@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,12 +6,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiPanel } from "@/components/shell/AiPanel";
 import { fetchLlmModels } from "@/lib/api-client";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
+import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities, type Capabilities } from "@/stores/use-capabilities";
 
 vi.mock("@/lib/api-client", () => ({ fetchLlmModels: vi.fn() }));
 
 const ZERO_CAPS: Capabilities = {
-  llm: { status: "not_configured", provider: null, model: null, base_url: null, is_test_provider: false },
+  llm: {
+    status: "not_configured",
+    provider: null,
+    model: null,
+    base_url: null,
+    is_test_provider: false,
+  },
   embeddings: { enabled: false, backend: "none", model: null, dim: null },
   features: {
     manual_tcm: true,
@@ -72,14 +79,18 @@ describe("<AiPanel>", () => {
   beforeEach(() => {
     act(() => {
       useCapabilities.setState({ capabilities: null, loading: true, error: null });
+      useAiPanel.setState({ isOpen: true });
     });
   });
   afterEach(() => {
     act(() => {
       useCapabilities.setState({ capabilities: null, loading: true, error: null });
       useActiveWorkspace.setState({ workspaceId: null });
+      useAiPanel.setState({ isOpen: true });
     });
     localStorage.removeItem("suitest.agentModel");
+    localStorage.removeItem("suitest.aiPanelOpen");
+    localStorage.removeItem("suitest.aiPanelWidth");
     localStorage.removeItem("suitest.agentPanelCollapsed");
     vi.mocked(fetchLlmModels).mockReset();
   });
@@ -170,26 +181,81 @@ describe("<AiPanel>", () => {
     expect(localStorage.getItem("suitest.agentAutoApprove")).toBe("1");
   });
 
-  it("collapses via button and ⌘J, and remembers the choice", async () => {
+  it("preserves composer input draft when collapsed and re-expanded", async () => {
+    setCaps(CLOUD_ASSIST_CAPS);
+    render(<AiPanel />);
+
+    const input = screen.getByTestId("ai-panel-composer-input");
+    await userEvent.type(input, "draft message to agent");
+    expect(input).toHaveValue("draft message to agent");
+
+    const collapseBtn = screen.getByTestId("ai-panel-collapse");
+    await userEvent.click(collapseBtn);
+
+    expect(screen.queryByTestId("ai-panel")).toBeNull();
+    const expandBtn = screen.getByTestId("ai-panel-expand");
+    expect(expandBtn).toBeInTheDocument();
+
+    await userEvent.click(expandBtn);
+
+    const restoredInput = screen.getByTestId("ai-panel-composer-input");
+    expect(restoredInput).toHaveValue("draft message to agent");
+  });
+
+  it("supports resizing via keyboard arrow keys on separator", async () => {
+    setCaps(CLOUD_ASSIST_CAPS);
+    render(<AiPanel />);
+
+    const separator = screen.getByRole("separator", { name: /resize assistant panel/i });
+    expect(separator).toBeInTheDocument();
+
+    // ArrowLeft widens the right panel by +20px (from 380 to 400)
+    fireEvent.keyDown(separator, { key: "ArrowLeft" });
+    const panel = screen.getByTestId("ai-panel");
+    expect(panel).toHaveStyle({ width: "400px" });
+    expect(localStorage.getItem("suitest.aiPanelWidth")).toBe("400");
+
+    // ArrowRight narrows the right panel by -20px (from 400 to 380)
+    fireEvent.keyDown(separator, { key: "ArrowRight" });
+    expect(panel).toHaveStyle({ width: "380px" });
+    expect(localStorage.getItem("suitest.aiPanelWidth")).toBe("380");
+  });
+
+  it("collapses via header button and ⌘J/Ctrl+J, syncing suitest.agentPanelCollapsed", async () => {
     setCaps(CLOUD_ASSIST_CAPS);
     const { unmount } = render(<AiPanel />);
 
-    await userEvent.click(screen.getByTestId("ai-panel-collapse"));
+    const headerCollapse = screen.getByTestId("ai-panel-collapse");
+    expect(headerCollapse).toBeInTheDocument();
+
+    await userEvent.click(headerCollapse);
     expect(screen.queryByTestId("ai-panel")).toBeNull();
     expect(screen.getByTestId("ai-panel-collapsed")).toBeInTheDocument();
+    expect(screen.getByTestId("ai-panel-expand")).toBeInTheDocument();
     expect(localStorage.getItem("suitest.agentPanelCollapsed")).toBe("1");
 
     await userEvent.keyboard("{Meta>}j{/Meta}");
     expect(screen.getByTestId("ai-panel")).toBeInTheDocument();
+    expect(localStorage.getItem("suitest.agentPanelCollapsed")).toBe("0");
 
     await userEvent.keyboard("{Control>}j{/Control}");
     expect(screen.queryByTestId("ai-panel")).toBeNull();
+    expect(screen.getByTestId("ai-panel-collapsed")).toBeInTheDocument();
 
     unmount();
     render(<AiPanel />);
     expect(screen.getByTestId("ai-panel-collapsed")).toBeInTheDocument();
     await userEvent.click(screen.getByTestId("ai-panel-expand"));
     expect(screen.getByTestId("ai-panel")).toBeInTheDocument();
+  });
+
+  it("restores custom panel width from localStorage", () => {
+    localStorage.setItem("suitest.aiPanelWidth", "520");
+    setCaps(CLOUD_ASSIST_CAPS);
+    render(<AiPanel />);
+
+    const panel = screen.getByTestId("ai-panel");
+    expect(panel).toHaveStyle({ width: "520px" });
   });
 
   it("leaves ⌘J alone while typing in a field", async () => {

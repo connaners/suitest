@@ -1,8 +1,16 @@
-import { Loader2, PanelRightClose, Send, ShieldAlert, Sparkles, Zap } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Loader2,
+  PanelRightClose,
+  Send,
+  ShieldAlert,
+  Sparkles,
+  Zap,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Gated } from "@/components/gating/Gated";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { fetchLlmModels } from "@/lib/api-client";
 import {
   fetchChatHistory,
@@ -12,11 +20,13 @@ import {
   type ChatToolEvent,
 } from "@/lib/chat-client";
 import { providerLabel } from "@/lib/llm-vendors";
+import { isEditable } from "@/lib/utils";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
+import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities } from "@/stores/use-capabilities";
 
 /**
- * Right-rail agent panel (380px). Wrapped in `<Gated feature="ai_conversation">`
+ * Right-rail agent panel (resizable, default 380px). Wrapped in `<Gated feature="ai_conversation">`
  * so it renders `null` in ZERO tier and the layout grid collapses (handled
  * upstream in `_app.tsx`). In LOCAL/CLOUD it streams a conversation-mode reply
  * over SSE (`POST /agent/chat`, M3-12 / M3-13).
@@ -31,36 +41,35 @@ import { useCapabilities } from "@/stores/use-capabilities";
 
 const SESSION_KEY = "suitest.agentSessionId";
 const AUTO_APPROVE_KEY = "suitest.agentAutoApprove";
-const COLLAPSED_KEY = "suitest.agentPanelCollapsed";
 const TOGGLE_HINT =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘J" : "Ctrl+J";
-
-/** Typing in a field keeps its own ⌘J / Ctrl+J behaviour. */
-function isEditable(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
-  );
-}
 /** Panel-local model pick. Deliberately not the workspace config: switching
- *  models here must not move the runner and the generators with it. */
+ * models while chatting is a conversational act, not a tenant config change. */
 const MODEL_KEY = "suitest.agentModel";
+const WIDTH_KEY = "suitest.aiPanelWidth";
+const MIN_WIDTH = 300;
+const MAX_WIDTH = 800;
+const DEFAULT_WIDTH = 380;
 /** Tools that mutate a case — only these need (or can be auto-) approved. */
 const MUTATION_TOOLS = new Set(["case.set_steps", "case.update_meta"]);
 /** Stop an auto-approve chain from running away across model rounds. */
 const AUTO_CHAIN_LIMIT = 6;
 
-function readAutoApprove(): boolean {
+function readWidth(): number {
   try {
-    return localStorage.getItem(AUTO_APPROVE_KEY) === "1";
+    const raw = localStorage.getItem(WIDTH_KEY);
+    if (!raw) return DEFAULT_WIDTH;
+    const parsed = parseInt(raw, 10);
+    if (isNaN(parsed) || parsed < MIN_WIDTH || parsed > MAX_WIDTH) return DEFAULT_WIDTH;
+    return parsed;
   } catch {
-    return false;
+    return DEFAULT_WIDTH;
   }
 }
 
-function readCollapsed(): boolean {
+function readAutoApprove(): boolean {
   try {
-    return localStorage.getItem(COLLAPSED_KEY) === "1";
+    return localStorage.getItem(AUTO_APPROVE_KEY) === "1";
   } catch {
     return false;
   }
@@ -113,6 +122,22 @@ function AiPanelInner(): React.ReactElement {
   const workspaceId = useActiveWorkspace((s) => s.workspaceId);
   const autonomy = capabilities?.autonomy?.default ?? "manual";
 
+  const isOpen = useAiPanel((s) => s.isOpen);
+  const toggle = useAiPanel((s) => s.toggle);
+
+  // ⌘J / Ctrl+J toggles the panel from anywhere in the shell.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || isEditable(e.target)) return;
+      if (e.key.toLowerCase() === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggle]);
+
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState<string | null>(readModel);
   // Membership is asked on every render and in the effects below, and the list
@@ -128,15 +153,72 @@ function AiPanelInner(): React.ReactElement {
     [configuredModel, offered, models],
   );
 
+  const [width, setWidth] = useState<number>(readWidth);
+  const widthRef = useRef(width);
+  widthRef.current = width;
+  const isResizingRef = useRef(false);
+
+  // Cleanup resize listeners if unmounted mid-drag
+  const cleanupResizeRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    return () => {
+      if (cleanupResizeRef.current) {
+        cleanupResizeRef.current();
+      }
+    };
+  }, []);
+
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    let lastWidth = widthRef.current;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const nextWidth = Math.min(
+        Math.max(window.innerWidth - moveEvent.clientX, MIN_WIDTH),
+        Math.min(MAX_WIDTH, typeof window !== "undefined" ? window.innerWidth * 0.7 : MAX_WIDTH),
+      );
+      lastWidth = nextWidth;
+      setWidth(nextWidth);
+      // NOTE: We defer localStorage.setItem to mouseup to avoid frame drops
+    };
+
+    const onMouseUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      cleanupResizeRef.current = null;
+      try {
+        localStorage.setItem(WIDTH_KEY, String(lastWidth));
+      } catch {
+        // ignore private mode / storage quota errors
+      }
+    };
+
+    cleanupResizeRef.current = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }, []);
+
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [autoApprove, setAutoApprove] = useState(readAutoApprove);
-  // Collapsing only swaps the markup; state stays mounted so a streaming reply
-  // keeps going while the rail is folded away.
-  const [collapsed, setCollapsed] = useState(readCollapsed);
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<string | null>(localStorage.getItem(SESSION_KEY));
   const threadEndRef = useRef<HTMLDivElement>(null);
@@ -191,7 +273,7 @@ function AiPanelInner(): React.ReactElement {
   // the collapsed rail unmounts the thread and it remounts scrolled to the top.
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: "end" });
-  }, [turns, streaming, collapsed]);
+  }, [turns, streaming, isOpen]);
 
   // Restore the last conversation on mount so a reload keeps the thread.
   useEffect(() => {
@@ -204,32 +286,6 @@ function AiPanelInner(): React.ReactElement {
       setTurns(history.map((m) => ({ role: m.role as ChatTurn["role"], content: m.content })));
       setLoading(false);
     });
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
-    } catch {
-      /* private mode — in-memory only */
-    }
-  }, [collapsed]);
-
-  // ⌘J / Ctrl+J toggles the panel from anywhere in the shell.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (
-        e.key.toLowerCase() === "j" &&
-        (e.metaKey || e.ctrlKey) &&
-        !e.shiftKey &&
-        !e.altKey &&
-        !isEditable(e.target)
-      ) {
-        e.preventDefault();
-        setCollapsed((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const pickModel = (next: string): void => {
@@ -375,35 +431,82 @@ function AiPanelInner(): React.ReactElement {
     }, 0);
   };
 
-  if (collapsed) {
+  if (!isOpen) {
     return (
       <aside
         className="hidden h-full w-12 shrink-0 flex-col items-center border-l border-border-subtle bg-bg-elev-1 pt-2 xl:flex"
         data-testid="ai-panel-collapsed"
       >
-        <button
-          type="button"
-          aria-label={`Open Suitest Agent (${TOGGLE_HINT})`}
-          title={`Open Suitest Agent (${TOGGLE_HINT})`}
-          aria-expanded={false}
-          data-testid="ai-panel-expand"
-          onClick={() => setCollapsed(false)}
-          className="relative flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent hover:bg-accent/25"
-        >
-          <Sparkles className="h-4 w-4" />
-          {streaming ? (
-            <span className="absolute right-0 top-0 h-2 w-2 animate-pulse rounded-full bg-accent" />
-          ) : null}
-        </button>
+        <TooltipProvider delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={`Open Suitest Agent (${TOGGLE_HINT})`}
+                title={`Open Suitest Agent (${TOGGLE_HINT})`}
+                aria-expanded={false}
+                data-testid="ai-panel-expand"
+                onClick={toggle}
+                className="relative flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent hover:bg-accent/25 focus:outline-none focus:ring-2 focus:ring-accent"
+              >
+                <Sparkles className="h-4 w-4" />
+                {streaming ? (
+                  <span className="absolute right-0 top-0 h-2 w-2 animate-pulse rounded-full bg-accent" />
+                ) : null}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="left">
+              <span>Open assistant ({TOGGLE_HINT})</span>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </aside>
     );
   }
 
   return (
     <aside
-      className="hidden h-full w-[380px] shrink-0 flex-col border-l border-border-subtle bg-bg-elev-1 xl:flex"
+      style={{ width: `${width}px` }}
+      className="relative hidden h-full w-[380px] shrink-0 flex-col border-l border-border-subtle bg-bg-elev-1 xl:flex"
       data-testid="ai-panel"
     >
+      {/* Draggable resize handle along the left border with keyboard accessibility */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize assistant panel"
+        aria-valuenow={width}
+        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={MAX_WIDTH}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            const next = Math.min(MAX_WIDTH, width + 20);
+            setWidth(next);
+            try {
+              localStorage.setItem(WIDTH_KEY, String(next));
+            } catch {
+              // ignore storage error
+            }
+          } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            const next = Math.max(MIN_WIDTH, width - 20);
+            setWidth(next);
+            try {
+              localStorage.setItem(WIDTH_KEY, String(next));
+            } catch {
+              // ignore storage error
+            }
+          }
+        }}
+        onMouseDown={startResize}
+        title="Drag or use arrow keys to resize panel"
+        className="group absolute inset-y-0 -left-1 z-20 flex w-2 cursor-col-resize items-center justify-center hover:bg-accent/20 active:bg-accent/40 focus:bg-accent/20 focus:outline-none transition-colors"
+      >
+        <div className="h-8 w-0.5 rounded-full bg-border group-hover:bg-accent group-active:bg-accent group-focus:bg-accent transition-colors" />
+      </div>
+
       <div className="flex h-[47px] items-center gap-2 border-b border-border-subtle px-4">
         <span
           className="flex h-7 w-7 items-center justify-center rounded-full bg-accent/15 text-accent"
@@ -440,32 +543,34 @@ function AiPanelInner(): React.ReactElement {
             </span>
           )}
         </div>
-        {turns.length > 0 ? (
+        <div className="ml-auto flex items-center gap-1">
+          {turns.length > 0 ? (
+            <button
+              type="button"
+              aria-label="Clear conversation"
+              data-testid="ai-panel-clear"
+              onClick={() => {
+                sessionRef.current = null;
+                localStorage.removeItem(SESSION_KEY);
+                setTurns([]);
+              }}
+              className="rounded-md px-2 py-1 text-[11px] text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1"
+            >
+              New chat
+            </button>
+          ) : null}
           <button
             type="button"
-            aria-label="Clear conversation"
-            data-testid="ai-panel-clear"
-            onClick={() => {
-              sessionRef.current = null;
-              localStorage.removeItem(SESSION_KEY);
-              setTurns([]);
-            }}
-            className="ml-auto rounded-md px-2 py-1 text-[11px] text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1"
+            aria-label={`Collapse Suitest Agent (${TOGGLE_HINT})`}
+            title={`Collapse (${TOGGLE_HINT})`}
+            aria-expanded={true}
+            data-testid="ai-panel-collapse"
+            onClick={toggle}
+            className="rounded-md p-1.5 text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1"
           >
-            New chat
+            <PanelRightClose className="h-4 w-4" />
           </button>
-        ) : null}
-        <button
-          type="button"
-          aria-label={`Collapse Suitest Agent (${TOGGLE_HINT})`}
-          title={`Collapse (${TOGGLE_HINT})`}
-          aria-expanded={true}
-          data-testid="ai-panel-collapse"
-          onClick={() => setCollapsed(true)}
-          className={`${turns.length > 0 ? "" : "ml-auto "}rounded-md p-1.5 text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1`}
-        >
-          <PanelRightClose className="h-4 w-4" />
-        </button>
+        </div>
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4" data-testid="ai-panel-thread">
