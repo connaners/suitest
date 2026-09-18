@@ -70,8 +70,15 @@ async def _reconcile_zombie_runs(session_factory: async_sessionmaker[AsyncSessio
             if zombies:
                 now = datetime.now(UTC)
                 for z in zombies:
-                    z.status = RunStatus.ERROR
+                    z.status = RunStatus.INTERRUPTED
                     z.completed_at = now
+                    if z.started_at is not None:
+                        started = (
+                            z.started_at
+                            if z.started_at.tzinfo is not None
+                            else z.started_at.replace(tzinfo=UTC)
+                        )
+                        z.duration_ms = max(0, int((now - started).total_seconds() * 1000))
                     meta = dict(z.metadata_json or {})
                     meta["reconciliation"] = "Supervisor restarted while run was in progress"
                     z.metadata_json = meta
@@ -100,8 +107,36 @@ async def drain_once(ctx: dict[str, object]) -> None:
     for run_id in run_ids:
         try:
             await run_test_case(ctx, run_id)
-        except Exception:
-            log.error("supervisor.run_error", run_id=run_id, exc_info=True)
+        except (Exception, asyncio.CancelledError) as exc:
+            log.error("supervisor.run_interrupted", run_id=run_id, exc_info=True)
+            try:
+                async with factory() as session:
+                    run_row = await session.get(Run, run_id)
+                    if run_row is not None and run_row.status == RunStatus.RUNNING:
+                        now = datetime.now(UTC)
+                        run_row.status = RunStatus.INTERRUPTED
+                        run_row.completed_at = now
+                        if run_row.started_at is not None:
+                            started = (
+                                run_row.started_at
+                                if run_row.started_at.tzinfo is not None
+                                else run_row.started_at.replace(tzinfo=UTC)
+                            )
+                            run_row.duration_ms = max(
+                                0, int((now - started).total_seconds() * 1000)
+                            )
+                        meta = dict(run_row.metadata_json or {})
+                        meta["reconciliation"] = (
+                            "Supervisor stopped or task cancelled"
+                            if isinstance(exc, asyncio.CancelledError)
+                            else f"Supervisor error during run: {exc}"
+                        )
+                        run_row.metadata_json = meta
+                        await session.commit()
+            except Exception:
+                log.warning("supervisor.reconcile_error_failed", run_id=run_id, exc_info=True)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
 
 
 async def serve() -> None:

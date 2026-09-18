@@ -44,6 +44,7 @@ from suitest_agent.providers.litellm_router import get_provider
 from suitest_core.autonomy import AutonomyConfig, compute_effective
 from suitest_core.capabilities import AutonomyLevel as CoreAutonomy
 from suitest_core.llm_credentials import resolve_credential
+from suitest_core.wake_lock import async_prevent_sleep
 from suitest_db.models.case import TestCase
 from suitest_db.models.project import Project
 from suitest_db.repositories.llm_configs import LLMConfigRepo, LLMConfigUpdate
@@ -62,7 +63,7 @@ from suitest_runner.observability import get_tracer
 from suitest_runner.settings import RunnerSettings
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncIterator, Sequence
 
     from suitest_api.schemas.self_heal import SelectorRepairPublic
     from suitest_api.services.defect_auto_filer import DefectAutoFiler
@@ -745,15 +746,27 @@ async def _finalize_run(
 
     async with factory() as session:
         completed_time = datetime.now(UTC)
-        await RunRepo(session).update_status(
-            run_id,
-            final_status,
-            completed_at=completed_time,
-            duration_ms=duration_ms,
-            total_steps=total_planned_steps,
-            passed_steps=summary["passed"],
-            failed_steps=failed_total,
-        )
+        run_row = await RunRepo(session).get_by_id(run_id)
+        if run_row is not None and run_row.status in (
+            RunStatus.INTERRUPTED,
+            RunStatus.CANCELLED,
+        ):
+            log.info(
+                "runner.finalize.skip_terminal_status",
+                run_id=run_id,
+                status=run_row.status.value,
+            )
+            final_status = run_row.status
+        else:
+            await RunRepo(session).update_status(
+                run_id,
+                final_status,
+                completed_at=completed_time,
+                duration_ms=duration_ms,
+                total_steps=total_planned_steps,
+                passed_steps=summary["passed"],
+                failed_steps=failed_total,
+            )
         executed_case_ids = {c_id for c_id, _, _ in selection if c_id}
         if executed_case_ids:
             status_whens = []
@@ -1248,10 +1261,56 @@ async def _handle_case_transition(
                 log.warning("runner.clean_session.recycle_failed", error=str(exc))
 
 
+@contextlib.asynccontextmanager
+async def _step_heartbeat(
+    factory: Any, run_id: str, interval_seconds: float = 60.0
+) -> AsyncIterator[None]:
+    """Periodically touch run.updated_at while a step is actively executing.
+
+    Guarantees long-running steps (e.g. Playwright waits or deployments) are not
+    falsely declared INTERRUPTED by the API while the runner is healthy.
+    """
+    stop_event = asyncio.Event()
+
+    async def _heartbeat_loop() -> None:
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(interval_seconds)
+                if stop_event.is_set():
+                    break
+                if callable(factory):
+                    async with factory() as session:
+                        r = await RunRepo(session).get_by_id(run_id)
+                        if r is not None:
+                            if r.status in (RunStatus.CANCELLED, RunStatus.INTERRUPTED):
+                                break
+                            r.updated_at = datetime.now(UTC)
+                            await session.commit()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                log.debug("runner.step_heartbeat.error", run_id=run_id, error=str(exc))
+
+    task = asyncio.create_task(_heartbeat_loop())
+    try:
+        yield
+    finally:
+        stop_event.set()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 async def _is_run_cancelled(factory: Any, run_id: str) -> bool:
+    """Check whether the run has been cancelled or interrupted."""
     async with factory() as session:
         r_check = await RunRepo(session).get_by_id(run_id)
-        return r_check is not None and r_check.status == RunStatus.CANCELLED
+        if r_check is not None:
+            if r_check.status in (RunStatus.CANCELLED, RunStatus.INTERRUPTED):
+                return True
+            r_check.updated_at = datetime.now(UTC)
+            await session.commit()
+        return False
 
 
 async def _run_test_case_body(ctx: dict[str, object], run_id: str) -> dict[str, object]:
@@ -1324,129 +1383,150 @@ async def _run_test_case_body(ctx: dict[str, object], run_id: str) -> dict[str, 
         case_duration_ms: dict[str, int] = {}
         case_outcome: dict[str, str] = {}
 
-        for case_id, step_order, test_step in selection:
-            await _handle_case_transition(
-                case_id=case_id,
-                current_case_id=current_case_id,
-                video_mgr=video_mgr,
-                case_has_failure=case_has_failure,
-                last_run_step_by_case=last_run_step_by_case,
-                clean_session=clean_session,
-                invoker=invoker,
-                target_pw_provider=target_pw_provider,
+        playwright_cfg = (run.metadata_json or {}).get("playwright_config")
+        if not isinstance(playwright_cfg, dict):
+            playwright_cfg = {}
+        prevent_sleep = bool(
+            playwright_cfg.get(
+                "prevent_sleep",
+                playwright_cfg.get("preventSleep", False),
             )
-            current_case_id = case_id
-            if await _is_run_cancelled(factory, run_id):
-                log.info("runner.job.cancelled_by_user", run_id=run_id)
-                cancelled = True
-                break
+        )
+        sleep_ctx = (
+            async_prevent_sleep(f"suitest-run-{run_id}")
+            if prevent_sleep
+            else contextlib.nullcontext()
+        )
 
-            if case_id in failed_case_ids:
-                log.info(
-                    "runner.step.skip_after_case_failure",
+        async with sleep_ctx:
+            for case_id, step_order, test_step in selection:
+                await _handle_case_transition(
+                    case_id=case_id,
+                    current_case_id=current_case_id,
+                    video_mgr=video_mgr,
+                    case_has_failure=case_has_failure,
+                    last_run_step_by_case=last_run_step_by_case,
+                    clean_session=clean_session,
+                    invoker=invoker,
+                    target_pw_provider=target_pw_provider,
+                )
+                current_case_id = case_id
+                if await _is_run_cancelled(factory, run_id):
+                    log.info("runner.job.cancelled_by_user", run_id=run_id)
+                    cancelled = True
+                    break
+
+                if case_id in failed_case_ids:
+                    log.info(
+                        "runner.step.skip_after_case_failure",
+                        run_id=run_id,
+                        case_id=case_id,
+                        step_order=step_order,
+                    )
+                    continue
+
+                step_target_kind = (
+                    test_step.target_kind.value
+                    if hasattr(test_step.target_kind, "value")
+                    else str(test_step.target_kind)
+                )
+                is_web_step = (
+                    step_target_kind in ("FE_WEB", "web", "frontend")
+                    or (test_step.mcp_provider and "playwright" in test_step.mcp_provider)
+                    or not test_step.mcp_provider
+                )
+                if is_web_step:
+                    await video_mgr.start(case_id)
+
+                summary["total"] += 1
+                await _publish(
+                    redis_client,
+                    run_id,
+                    "run.step.started",
+                    {
+                        "runId": run_id,
+                        "stepIndex": step_order,
+                        "action": test_step.action,
+                        "mcpProvider": test_step.mcp_provider,
+                        "targetKind": step_target_kind,
+                    },
+                    factory=factory,
+                )
+
+                await highlight_mgr.pre_clear(test_step.id, test_step.target_kind, is_web_step)
+                highlight_applied, target_sel = await highlight_mgr.apply(
+                    test_step.id, test_step.target_kind, is_web_step, test_step.code
+                )
+
+                async with _step_heartbeat(factory, run_id):
+                    (
+                        result,
+                        selector_change_detected,
+                        self_heal_state,
+                    ) = await _execute_and_heal_step(
+                        invoker=invoker,
+                        test_step=test_step,
+                        case_id=case_id,
+                        run_id=run_id,
+                        workspace_id=workspace_id,
+                        triggered_by=triggered_by,
+                        overrides=overrides,
+                        translator=translator,
+                        auto_self_heal=auto_self_heal,
+                        factory=factory,
+                        highlight_applied=highlight_applied,
+                        target_sel=target_sel,
+                        highlight_mgr=highlight_mgr,
+                        is_web_step=is_web_step,
+                        screenshot_mode=screenshot_mode,
+                        target_pw_provider=target_pw_provider,
+                    )
+
+                case_duration_ms[case_id] = case_duration_ms.get(case_id, 0) + int(
+                    result.duration_ms or 0
+                )
+                _update_outcomes(
+                    result=result,
+                    case_id=case_id,
+                    summary=summary,
+                    case_outcome=case_outcome,
+                    case_has_failure=case_has_failure,
+                    failed_case_ids=failed_case_ids,
+                )
+
+                cancelled, last_run_step_by_case[case_id] = await _record_step_persistence(
+                    factory=factory,
+                    ctx=ctx,
+                    redis_client=redis_client,
                     run_id=run_id,
                     case_id=case_id,
                     step_order=step_order,
+                    test_step=test_step,
+                    result=result,
+                    selector_change_detected=selector_change_detected,
+                    self_heal_state=self_heal_state,
+                    summary=summary,
                 )
-                continue
+                if cancelled:
+                    log.info("runner.job.cancelled_by_user", run_id=run_id)
+                    break
 
-            step_target_kind = (
-                test_step.target_kind.value
-                if hasattr(test_step.target_kind, "value")
-                else str(test_step.target_kind)
-            )
-            is_web_step = (
-                step_target_kind in ("FE_WEB", "web", "frontend")
-                or (test_step.mcp_provider and "playwright" in test_step.mcp_provider)
-                or not test_step.mcp_provider
-            )
-            if is_web_step:
-                await video_mgr.start(case_id)
+                settings_obj = ctx.get("settings")
+                if (
+                    isinstance(settings_obj, RunnerSettings)
+                    and settings_obj.evidence_recording
+                    and settings_obj.evidence_pause_ms > 0
+                ):
+                    await asyncio.sleep(settings_obj.evidence_pause_ms / 1000)
 
-            summary["total"] += 1
-            await _publish(
-                redis_client,
-                run_id,
-                "run.step.started",
-                {
-                    "runId": run_id,
-                    "stepIndex": step_order,
-                    "action": test_step.action,
-                    "mcpProvider": test_step.mcp_provider,
-                    "targetKind": step_target_kind,
-                },
-                factory=factory,
-            )
-
-            await highlight_mgr.pre_clear(test_step.id, test_step.target_kind, is_web_step)
-            highlight_applied, target_sel = await highlight_mgr.apply(
-                test_step.id, test_step.target_kind, is_web_step, test_step.code
-            )
-
-            result, selector_change_detected, self_heal_state = await _execute_and_heal_step(
-                invoker=invoker,
-                test_step=test_step,
-                case_id=case_id,
-                run_id=run_id,
-                workspace_id=workspace_id,
-                triggered_by=triggered_by,
-                overrides=overrides,
-                translator=translator,
-                auto_self_heal=auto_self_heal,
-                factory=factory,
-                highlight_applied=highlight_applied,
-                target_sel=target_sel,
-                highlight_mgr=highlight_mgr,
-                is_web_step=is_web_step,
-                screenshot_mode=screenshot_mode,
-                target_pw_provider=target_pw_provider,
-            )
-
-            case_duration_ms[case_id] = case_duration_ms.get(case_id, 0) + int(
-                result.duration_ms or 0
-            )
-            _update_outcomes(
-                result=result,
-                case_id=case_id,
-                summary=summary,
-                case_outcome=case_outcome,
-                case_has_failure=case_has_failure,
-                failed_case_ids=failed_case_ids,
-            )
-
-            cancelled, last_run_step_by_case[case_id] = await _record_step_persistence(
-                factory=factory,
-                ctx=ctx,
-                redis_client=redis_client,
-                run_id=run_id,
-                case_id=case_id,
-                step_order=step_order,
-                test_step=test_step,
-                result=result,
-                selector_change_detected=selector_change_detected,
-                self_heal_state=self_heal_state,
-                summary=summary,
-            )
-            if cancelled:
-                log.info("runner.job.cancelled_by_user", run_id=run_id)
-                break
-
-            settings_obj = ctx.get("settings")
-            if (
-                isinstance(settings_obj, RunnerSettings)
-                and settings_obj.evidence_recording
-                and settings_obj.evidence_pause_ms > 0
-            ):
-                await asyncio.sleep(settings_obj.evidence_pause_ms / 1000)
-
-            if getattr(result, "is_fatal_infra", False):
-                log.error(
-                    "runner.job.fatal_infra_circuit_breaker",
-                    run_id=run_id,
-                    step_order=step_order,
-                    error=result.error_message,
-                )
-                break
+                if getattr(result, "is_fatal_infra", False):
+                    log.error(
+                        "runner.job.fatal_infra_circuit_breaker",
+                        run_id=run_id,
+                        step_order=step_order,
+                        error=result.error_message,
+                    )
+                    break
 
         if current_case_id is not None and video_mgr.active:
             await video_mgr.stop(
@@ -1499,13 +1579,14 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                     RunStatus.FAIL,
                     RunStatus.ERROR,
                     RunStatus.CANCELLED,
+                    RunStatus.INTERRUPTED,
                 ):
                     now = datetime.now(UTC)
                     r.status = RunStatus.CANCELLED
                     r.completed_at = now
                     meta = dict(r.metadata_json) if r.metadata_json else {}
-                    meta["error"] = "Run execution was cancelled or interrupted"
-                    meta["interrupted"] = True
+                    meta["error"] = "Run execution was cancelled"
+                    meta["interrupted"] = False
                     r.metadata_json = meta
                     await session.commit()
         raise
@@ -1520,6 +1601,7 @@ async def run_test_case(ctx: dict[str, object], run_id: str) -> dict[str, object
                     RunStatus.FAIL,
                     RunStatus.ERROR,
                     RunStatus.CANCELLED,
+                    RunStatus.INTERRUPTED,
                 ):
                     now = datetime.now(UTC)
                     r.status = RunStatus.ERROR

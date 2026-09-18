@@ -7,6 +7,7 @@ export interface ExecutionSettings {
   videoQuality: VideoQuality;
   highlightSteps: boolean;
   cleanSessionBetweenCases: boolean;
+  preventSleep: boolean;
 }
 
 export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
@@ -16,6 +17,7 @@ export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   videoQuality: "1080p",
   highlightSteps: false,
   cleanSessionBetweenCases: true,
+  preventSleep: false,
 };
 
 export type ExecutionSettingsInput = {
@@ -28,6 +30,8 @@ export type ExecutionSettingsInput = {
   highlight_steps?: boolean | undefined;
   cleanSessionBetweenCases?: boolean | undefined;
   clean_session_between_cases?: boolean | undefined;
+  preventSleep?: boolean | undefined;
+  prevent_sleep?: boolean | undefined;
 };
 
 export function normalizeExecutionSettings(
@@ -46,6 +50,8 @@ export function normalizeExecutionSettings(
       input.cleanSessionBetweenCases ??
       input.clean_session_between_cases ??
       DEFAULT_EXECUTION_SETTINGS.cleanSessionBetweenCases,
+    preventSleep:
+      input.preventSleep ?? input.prevent_sleep ?? DEFAULT_EXECUTION_SETTINGS.preventSleep,
   };
 }
 
@@ -82,6 +88,7 @@ export function extractExecutionConfig(settings: ExecutionSettings): ExecutionSe
     videoQuality: settings.videoQuality,
     highlightSteps: settings.highlightSteps,
     cleanSessionBetweenCases: settings.cleanSessionBetweenCases,
+    preventSleep: settings.preventSleep,
   };
 }
 

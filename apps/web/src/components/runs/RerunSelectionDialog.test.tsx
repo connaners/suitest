@@ -145,6 +145,7 @@ describe("<RerunSelectionDialog>", () => {
       videoQuality: "1080p",
       highlightSteps: false,
       cleanSessionBetweenCases: true,
+      preventSleep: false,
     });
   });
 
@@ -189,6 +190,7 @@ describe("<RerunSelectionDialog>", () => {
       videoQuality: "1080p",
       highlightSteps: true,
       cleanSessionBetweenCases: true,
+      preventSleep: false,
     });
   });
 

@@ -1,4 +1,4 @@
-import { Camera, ChevronDown, ChevronRight, Eye, Info, RotateCcw, Settings2, Sparkles, Video } from "lucide-react";
+import { Camera, ChevronDown, ChevronRight, Eye, Info, RotateCcw, Settings2, Sparkles, Video, Zap } from "lucide-react";
 import * as React from "react";
 
 import { type ExecutionSettings, type VideoQuality } from "./execution-settings";
@@ -272,6 +272,32 @@ export function ExecutionSettingsPanel({
                 </span>
               </div>
             ) : null}
+          </div>
+
+          {/* Sleep Prevention */}
+          <div className="flex flex-col border-t border-border/50 pt-2.5">
+            <div className="flex items-start justify-between">
+              <div className="flex flex-col pr-2">
+                <label
+                  htmlFor="cfg-prevent-sleep"
+                  className="flex cursor-pointer items-center gap-1.5 font-medium text-fg-2"
+                >
+                  <Zap className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />
+                  Keep system awake during run
+                </label>
+                <span className="text-[11px] text-fg-4">
+                  Inhibits OS sleep and screen timeout while test cases execute. Sleep timers resume automatically when finished.
+                </span>
+              </div>
+              <input
+                id="cfg-prevent-sleep"
+                type="checkbox"
+                checked={value.preventSleep}
+                onChange={(e) => onChange({ ...value, preventSleep: e.target.checked })}
+                data-testid="config-prevent-sleep-toggle"
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-border accent-accent"
+              />
+            </div>
           </div>
         </div>
       ) : null}

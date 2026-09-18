@@ -53,6 +53,16 @@ export function RerunSelectionDialog({
     [activeGroups],
   );
 
+  const actualFailedGroups = React.useMemo(
+    () => activeGroups.filter((g) => g.rollup === "fail"),
+    [activeGroups],
+  );
+
+  const abortedGroups = React.useMemo(
+    () => activeGroups.filter((g) => g.rollup === "aborted"),
+    [activeGroups],
+  );
+
   const [selectedCaseIds, setSelectedCaseIds] = React.useState<Set<string>>(() => {
     if (failedGroups.length > 0) {
       return new Set(failedGroups.map((g) => g.caseId));
@@ -133,7 +143,7 @@ export function RerunSelectionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-1 min-h-0 flex-col gap-3 py-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0 flex-col gap-3 py-1 overflow-y-auto pr-1">
           {/* Quick-select filter presets */}
           {activeGroups.length > 0 ? (
             <div className="flex shrink-0 flex-wrap items-center gap-1.5" data-testid="rerun-presets">
@@ -145,11 +155,17 @@ export function RerunSelectionDialog({
                   className={cn(
                     "rounded px-2 py-1 text-[11.5px] font-medium transition-colors",
                     isFailedOnlySelected
-                      ? "bg-red/15 text-red ring-1 ring-red/30"
+                      ? actualFailedGroups.length > 0
+                        ? "bg-red/15 text-red ring-1 ring-red/30"
+                        : "bg-amber/15 text-amber ring-1 ring-amber/30"
                       : "bg-bg-elev-2 text-fg-3 hover:bg-bg-elev-3 hover:text-fg-1",
                   )}
                 >
-                  Failed only ({failedGroups.length})
+                  {actualFailedGroups.length > 0 && abortedGroups.length > 0
+                    ? `Failed & Incomplete (${failedGroups.length})`
+                    : abortedGroups.length > 0 && actualFailedGroups.length === 0
+                      ? `Remaining only (${failedGroups.length})`
+                      : `Failed only (${failedGroups.length})`}
                 </button>
               ) : null}
               <button

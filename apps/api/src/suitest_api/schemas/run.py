@@ -27,6 +27,7 @@ class PlaywrightConfig(BaseModel):
     )
     highlight_steps: bool = Field(default=False, alias="highlightSteps")
     clean_session_between_cases: bool = Field(default=True, alias="cleanSessionBetweenCases")
+    prevent_sleep: bool = Field(default=True, alias="preventSleep")
 
 
 class RunSummary(BaseModel):
@@ -246,6 +247,7 @@ class RunsSummary(BaseModel):
     failed: int = Field(description="FAIL + ERROR")
     avg_duration_ms: int = Field(alias="avgDurationMs")
     queued: int
+    interrupted: int = Field(default=0, description="Runs in INTERRUPTED state")
 
 
 class NetworkEvent(BaseModel):

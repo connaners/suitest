@@ -6221,6 +6221,11 @@
             "title": "Highlightsteps",
             "type": "boolean"
           },
+          "preventSleep": {
+            "default": true,
+            "title": "Preventsleep",
+            "type": "boolean"
+          },
           "screenshot": {
             "default": "only-on-failure",
             "enum": [
@@ -8429,7 +8434,8 @@
           "PASS",
           "FAIL",
           "CANCELLED",
-          "ERROR"
+          "ERROR",
+          "INTERRUPTED"
         ],
         "title": "RunStatus",
         "type": "string"
@@ -8611,6 +8617,12 @@
           "failed": {
             "description": "FAIL + ERROR",
             "title": "Failed",
+            "type": "integer"
+          },
+          "interrupted": {
+            "default": 0,
+            "description": "Runs in INTERRUPTED state",
+            "title": "Interrupted",
             "type": "integer"
           },
           "passed": {
@@ -18575,7 +18587,7 @@
     },
     "/api/v1/runs/summary": {
       "get": {
-        "description": "Aggregated counters for the Runs dashboard summary bar (docs/API.md \u00a73.5).\n\nCounts are workspace-scoped (joined via ``projects``). ``failed`` folds\n``FAIL`` + ``ERROR`` together to match the Runs UI's binary outcome card.\nStatic endpoint declared BEFORE the dynamic ``/runs/{run_id}`` route below\nso FastAPI's path matcher doesn't try to treat ``summary`` as a run id.",
+        "description": "Aggregated counters for the Runs dashboard summary bar (docs/API.md \u00a73.5).\n\nCounts are workspace-scoped (joined via ``projects``). ``failed`` folds\n``FAIL`` + ``ERROR`` + ``INTERRUPTED`` together to match the Runs UI's binary outcome card.\nStatic endpoint declared BEFORE the dynamic ``/runs/{run_id}`` route below\nso FastAPI's path matcher doesn't try to treat ``summary`` as a run id.",
         "operationId": "get_runs_summary_api_v1_runs_summary_get",
         "parameters": [
           {

@@ -267,12 +267,15 @@ describe("<Sidebar>", () => {
     );
     await renderSidebar("/dashboard", { userRole: "Owner" });
     const trigger = await screen.findByTestId("project-picker");
+    const user = userEvent.setup();
     expect(trigger).toBeInTheDocument();
-    trigger.click();
+    await user.click(trigger);
     await waitFor(() => {
       expect(screen.getByTestId("project-picker-create")).toBeInTheDocument();
       expect(screen.getByTestId("project-picker-action-bar")).toBeInTheDocument();
     });
+    await user.click(screen.getByTestId("project-picker-create"));
+    expect(await screen.findByTestId("create-project-dialog")).toBeInTheDocument();
   });
 });
 

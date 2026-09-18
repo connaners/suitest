@@ -56,7 +56,7 @@ export function rollupOf(
   runStatus?: RunStatus,
 ): CaseRollup {
   if (steps.length === 0) {
-    if (runStatus === "CANCELLED") return "aborted";
+    if (runStatus === "CANCELLED" || runStatus === "INTERRUPTED") return "aborted";
     return totalSteps === 0 ? "skipped" : "neutral";
   }
   if (steps.some((s) => s.outcome === "FAIL" || s.outcome === "ERROR")) return "fail";
@@ -68,7 +68,7 @@ export function rollupOf(
     }
   }
 
-  if (runStatus === "CANCELLED") {
+  if (runStatus === "CANCELLED" || runStatus === "INTERRUPTED") {
     if (totalSteps === undefined || steps.length < totalSteps) {
       return "aborted";
     }
@@ -127,7 +127,10 @@ export function groupStepsByCase(
       total: ordered.length,
       passed,
       failed,
-      rollup: runStatus === "CANCELLED" ? "aborted" : rollupOf(ordered, undefined, runStatus),
+      rollup:
+        runStatus === "CANCELLED" || runStatus === "INTERRUPTED"
+          ? "aborted"
+          : rollupOf(ordered, undefined, runStatus),
       durationMs,
       kind: hasMedia ? "frontend" : "api",
       firstFailure: failing?.error_message?.trim() ?? null,
@@ -192,7 +195,7 @@ export function groupStepsByCase(
         if (hasFailedStep) {
           rollup = "fail";
         } else if (
-          (runStatus === "CANCELLED" && (plannedCases.length === 1 || !finished)) ||
+          ((runStatus === "CANCELLED" || runStatus === "INTERRUPTED") && (plannedCases.length === 1 || !finished)) ||
           (!finished && runStatus !== "RUNNING" && runStatus !== "PASS")
         ) {
           rollup = "aborted";
@@ -219,7 +222,12 @@ export function groupStepsByCase(
           rollup = "queued";
         } else if (hasExplicitZeroSteps) {
           rollup = "skipped";
-        } else if (runStatus === "CANCELLED" || runStatus === "FAIL" || runStatus === "ERROR") {
+        } else if (
+          runStatus === "CANCELLED" ||
+          runStatus === "INTERRUPTED" ||
+          runStatus === "FAIL" ||
+          runStatus === "ERROR"
+        ) {
           rollup = "aborted";
         } else if (runStatus === "PASS") {
           rollup = "skipped";

@@ -80,6 +80,7 @@ class RunStatus(StrEnum):
     FAIL = "FAIL"
     CANCELLED = "CANCELLED"
     ERROR = "ERROR"
+    INTERRUPTED = "INTERRUPTED"
 
 
 class RunTrigger(StrEnum):

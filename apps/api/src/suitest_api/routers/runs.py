@@ -9,7 +9,7 @@ aioboto3 (object store) or a placeholder for ``file://`` artifacts.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from arq.connections import ArqRedis
@@ -96,6 +96,68 @@ async def _run_in_scope_or_404(session: AsyncSession, run_id: str, workspace_id:
     return run.id
 
 
+async def _reconcile_lazy_interrupted_run(
+    session: AsyncSession,
+    run: Run,
+    steps: list[RunStep] | None = None,
+    *,
+    commit: bool = True,
+) -> bool:
+    """If run is RUNNING with no activity for >15 minutes, mark INTERRUPTED."""
+    if run.status != RunStatus.RUNNING:
+        return False
+    now = datetime.now(UTC)
+    cutoff = timedelta(minutes=15)
+    candidates = [run.updated_at, run.started_at, run.created_at]
+    if steps:
+        candidates.extend([s.completed_at or s.started_at or s.created_at for s in steps])
+    elif steps is None:
+        latest_step_time = await session.scalar(
+            select(
+                func.max(
+                    func.coalesce(RunStep.completed_at, RunStep.started_at, RunStep.created_at)
+                )
+            ).where(RunStep.run_id == run.id)
+        )
+        if isinstance(latest_step_time, datetime):
+            candidates.append(latest_step_time)
+    valid_candidates = [
+        c if c.tzinfo is not None else c.replace(tzinfo=UTC) for c in candidates if c is not None
+    ]
+    if not valid_candidates:
+        return False
+    last_activity = max(valid_candidates)
+    if now - last_activity > cutoff:
+        run.status = RunStatus.INTERRUPTED
+        run.completed_at = last_activity
+        if run.started_at is not None:
+            started = (
+                run.started_at
+                if run.started_at.tzinfo is not None
+                else run.started_at.replace(tzinfo=UTC)
+            )
+            run.duration_ms = max(0, int((last_activity - started).total_seconds() * 1000))
+        meta = dict(run.metadata_json or {})
+        reason = "Execution interrupted: run timed out after 15m of inactivity"
+        meta["reconciliation"] = reason
+        meta["error"] = "Run timed out: no heartbeat or progress update received"
+        meta["interrupted"] = True
+        run.metadata_json = meta
+        await write_audit(
+            session,
+            workspace_id=run.workspace_id,
+            user_id=None,
+            action="run.interrupted",
+            resource_type="run",
+            resource_id=run.id,
+            metadata={"reason": reason},
+        )
+        if commit:
+            await session.commit()
+        return True
+    return False
+
+
 @router.get("/runs", response_model=Page[RunListItem])
 async def list_runs(
     project_id: str = Query(alias="projectId"),
@@ -115,7 +177,22 @@ async def list_runs(
         project_id, status=status_, branch=branch, env=env, cursor=decoded, limit=limit
     )
     items: list[RunListItem] = []
+    reconciled_any = False
+    now = datetime.now(UTC)
+    cutoff = timedelta(minutes=15)
     for r in rows:
+        if r.status == RunStatus.RUNNING:
+            last_activity = r.updated_at or r.started_at or r.created_at
+            if last_activity:
+                last_act_utc = (
+                    last_activity
+                    if last_activity.tzinfo is not None
+                    else last_activity.replace(tzinfo=UTC)
+                )
+                if now - last_act_utc > cutoff and await _reconcile_lazy_interrupted_run(
+                    session, r, commit=False
+                ):
+                    reconciled_any = True
         item = RunListItem.model_validate(r)
         item.summary = RunSummary(
             total_steps=r.total_steps,
@@ -124,6 +201,8 @@ async def list_runs(
             duration_ms=r.duration_ms,
         )
         items.append(item)
+    if reconciled_any:
+        await session.commit()
     return Page[RunListItem](
         items=items,
         meta=PageMeta(next_cursor=encode_next(next_keyset), limit=limit),
@@ -138,42 +217,38 @@ async def get_runs_summary(
     """Aggregated counters for the Runs dashboard summary bar (docs/API.md §3.5).
 
     Counts are workspace-scoped (joined via ``projects``). ``failed`` folds
-    ``FAIL`` + ``ERROR`` together to match the Runs UI's binary outcome card.
+    ``FAIL`` + ``ERROR`` + ``INTERRUPTED`` together to match the Runs UI's binary outcome card.
     Static endpoint declared BEFORE the dynamic ``/runs/{run_id}`` route below
     so FastAPI's path matcher doesn't try to treat ``summary`` as a run id.
     """
+    cutoff = datetime.now(UTC) - timedelta(minutes=15)
+    stale_runs = (
+        await session.scalars(
+            select(Run).where(
+                Run.workspace_id == ctx.workspace_id,
+                Run.status == RunStatus.RUNNING,
+                func.coalesce(Run.updated_at, Run.started_at, Run.created_at) < cutoff,
+            )
+        )
+    ).all()
+    if stale_runs:
+        for stale_run in stale_runs:
+            await _reconcile_lazy_interrupted_run(session, stale_run, commit=False)
+        await session.commit()
+
     counts = await RunRepo(session).summary_for_workspace(ctx.workspace_id)
+    interrupted_count = counts.get(RunStatus.INTERRUPTED.value, 0)
     return RunsSummary(
         active=counts.get(RunStatus.RUNNING.value, 0),
         today=counts.get("today", 0),
         passed=counts.get(RunStatus.PASS.value, 0),
-        failed=counts.get(RunStatus.FAIL.value, 0) + counts.get(RunStatus.ERROR.value, 0),
+        failed=counts.get(RunStatus.FAIL.value, 0)
+        + counts.get(RunStatus.ERROR.value, 0)
+        + interrupted_count,
         avg_duration_ms=counts.get("avg_duration_ms", 0),
         queued=counts.get(RunStatus.QUEUED.value, 0),
+        interrupted=interrupted_count,
     )
-
-
-async def _reconcile_stale_run_if_needed(
-    run: Run,
-    metadata_dict: dict[str, object],
-    session: AsyncSession,
-) -> dict[str, object]:
-    """Auto-transition in-flight run to ERROR if heartbeat timed out (>1800s)."""
-    if run.status != RunStatus.RUNNING:
-        return metadata_dict
-    now = datetime.now(UTC)
-    last_activity = run.updated_at or run.started_at or run.created_at
-    if last_activity and (now - last_activity).total_seconds() > 1800:
-        run.status = RunStatus.ERROR
-        run.completed_at = now
-        updated_meta = dict(metadata_dict)
-        updated_meta["error"] = "Run timed out: no heartbeat or progress update received"
-        updated_meta["interrupted"] = True
-        run.metadata_json = updated_meta
-        await session.commit()
-        await session.refresh(run)
-        return updated_meta
-    return metadata_dict
 
 
 @router.get("/runs/{run_id}", response_model=RunDetail)
@@ -195,9 +270,11 @@ async def get_run(
     run, summary = pair
     if not await _project_in_scope(session, run.project_id, ctx.workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+    steps = list((await session.scalars(select(RunStep).where(RunStep.run_id == run.id))).all())
+    if await _reconcile_lazy_interrupted_run(session, run, steps):
+        summary.duration_ms = run.duration_ms
     metadata = run.metadata_json or {}
     metadata_dict = metadata if isinstance(metadata, dict) else {}
-    metadata_dict = await _reconcile_stale_run_if_needed(run, metadata_dict, session)
 
     coverage = metadata_dict.get("coverageSummary")
     raw_selection = metadata_dict.get("selection")
@@ -292,6 +369,7 @@ async def get_run(
             metadata_dict.get("error")
             or metadata_dict.get("error_message")
             or metadata_dict.get("interrupted_reason")
+            or metadata_dict.get("reconciliation")
             or ""
         ).strip()
         or None,

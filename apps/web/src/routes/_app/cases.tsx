@@ -824,15 +824,15 @@ function CaseDetailPanel({
       />
     );
   }
-  if (isLoading || !detail) {
+  if (isLoading) {
     return <CasesSkeleton />;
   }
-  if (isError) {
+  if (isError || !detail) {
     return (
       <EmptyState
         icon={AlertTriangle}
         title="Couldn't load case"
-        subtitle="The backend returned an error."
+        subtitle="This test case was not found or has been deleted."
       />
     );
   }
