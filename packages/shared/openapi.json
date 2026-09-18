@@ -6222,7 +6222,8 @@
             "type": "boolean"
           },
           "preventSleep": {
-            "default": true,
+            "default": false,
+            "description": "Keep the host running the runner awake during the run. Has no effect on the viewer's machine or in docker/server deployments.",
             "title": "Preventsleep",
             "type": "boolean"
           },

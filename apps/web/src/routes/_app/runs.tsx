@@ -523,7 +523,7 @@ function RunDetailPanel({
             preventSleep={
               (run.playwrightConfig as { preventSleep?: boolean; prevent_sleep?: boolean } | null | undefined)?.preventSleep ??
               (run.playwrightConfig as { preventSleep?: boolean; prevent_sleep?: boolean } | null | undefined)?.prevent_sleep ??
-              true
+              false
             }
           />
         </div>

@@ -246,6 +246,7 @@ ghcr.io/suiflex/suitest        (infra/docker/Dockerfile.suitest)
 - ❌ Not for production — single point of failure, no horizontal scale.
 - ❌ No local LLM bundled — set `SUITEST_LLM_*` to an external endpoint if you want CLOUD/LOCAL.
 - ⚠️ External Postgres must have the `pgvector` extension (`CREATE EXTENSION vector`).
+- ℹ️ The run option "Keep system awake" (`preventSleep`, off by default) inhibits sleep on the host running the runner, not the viewer's machine. Inside docker/k8s it is a no-op.
 
 ---
 

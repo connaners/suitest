@@ -1824,7 +1824,7 @@ export interface paths {
          * @description Aggregated counters for the Runs dashboard summary bar (docs/API.md §3.5).
          *
          *     Counts are workspace-scoped (joined via ``projects``). ``failed`` folds
-         *     ``FAIL`` + ``ERROR`` together to match the Runs UI's binary outcome card.
+         *     ``FAIL`` + ``ERROR`` + ``INTERRUPTED`` together to match the Runs UI's binary outcome card.
          *     Static endpoint declared BEFORE the dynamic ``/runs/{run_id}`` route below
          *     so FastAPI's path matcher doesn't try to treat ``summary`` as a run id.
          */
@@ -6234,7 +6234,8 @@ export interface components {
             highlightSteps: boolean;
             /**
              * Preventsleep
-             * @default true
+             * @description Keep the host running the runner awake during the run. Has no effect on the viewer's machine or in docker/server deployments.
+             * @default false
              */
             preventSleep: boolean;
             /**
@@ -7239,6 +7240,12 @@ export interface components {
              * @description FAIL + ERROR
              */
             failed: number;
+            /**
+             * Interrupted
+             * @description Runs in INTERRUPTED state
+             * @default 0
+             */
+            interrupted: number;
             /** Passed */
             passed: number;
             /** Queued */

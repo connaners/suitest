@@ -286,7 +286,7 @@ export function ExecutionSettingsPanel({
                   Keep system awake during run
                 </label>
                 <span className="text-[11px] text-fg-4">
-                  Inhibits OS sleep and screen timeout while test cases execute. Sleep timers resume automatically when finished.
+                  Inhibits OS sleep on the machine running the runner (not your browser) while test cases execute. No effect in docker/server deployments.
                 </span>
               </div>
               <input

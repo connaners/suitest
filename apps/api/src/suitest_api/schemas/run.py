@@ -27,7 +27,14 @@ class PlaywrightConfig(BaseModel):
     )
     highlight_steps: bool = Field(default=False, alias="highlightSteps")
     clean_session_between_cases: bool = Field(default=True, alias="cleanSessionBetweenCases")
-    prevent_sleep: bool = Field(default=True, alias="preventSleep")
+    prevent_sleep: bool = Field(
+        default=False,
+        alias="preventSleep",
+        description=(
+            "Keep the host running the runner awake during the run. Has no effect "
+            "on the viewer's machine or in docker/server deployments."
+        ),
+    )
 
 
 class RunSummary(BaseModel):
