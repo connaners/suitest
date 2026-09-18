@@ -90,6 +90,7 @@ describe("<AiPanel>", () => {
     });
     localStorage.removeItem("suitest.agentModel");
     localStorage.removeItem("suitest.aiPanelOpen");
+    localStorage.removeItem("suitest.aiPanelWidth");
     vi.mocked(fetchLlmModels).mockReset();
   });
 
@@ -210,5 +211,14 @@ describe("<AiPanel>", () => {
     expect(await screen.findByTestId("ai-panel")).toBeInTheDocument();
     expect(screen.queryByTestId("ai-panel-floating-trigger")).toBeNull();
     expect(useAiPanel.getState().isOpen).toBe(true);
+  });
+
+  it("restores custom panel width from localStorage", () => {
+    localStorage.setItem("suitest.aiPanelWidth", "520");
+    setCaps(CLOUD_ASSIST_CAPS);
+    render(<AiPanel />);
+
+    const panel = screen.getByTestId("ai-panel");
+    expect(panel).toHaveStyle({ width: "520px" });
   });
 });

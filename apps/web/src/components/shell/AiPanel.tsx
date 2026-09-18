@@ -1,5 +1,13 @@
-import { Loader2, PanelRightClose, Send, ShieldAlert, Sparkles, Zap } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Send,
+  ShieldAlert,
+  Sparkles,
+  Zap,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Gated } from "@/components/gating/Gated";
 import { Button } from "@/components/ui/button";
@@ -18,7 +26,7 @@ import { useAiPanel } from "@/stores/use-ai-panel";
 import { useCapabilities } from "@/stores/use-capabilities";
 
 /**
- * Right-rail agent panel (380px). Wrapped in `<Gated feature="ai_conversation">`
+ * Right-rail agent panel (resizable, default 380px). Wrapped in `<Gated feature="ai_conversation">`
  * so it renders `null` in ZERO tier and the layout grid collapses (handled
  * upstream in `_app.tsx`). In LOCAL/CLOUD it streams a conversation-mode reply
  * over SSE (`POST /agent/chat`, M3-12 / M3-13).
@@ -40,6 +48,22 @@ const MODEL_KEY = "suitest.agentModel";
 const MUTATION_TOOLS = new Set(["case.set_steps", "case.update_meta"]);
 /** Stop an auto-approve chain from running away across model rounds. */
 const AUTO_CHAIN_LIMIT = 6;
+
+const DEFAULT_WIDTH = 380;
+const MIN_WIDTH = 300;
+const MAX_WIDTH = 800;
+const WIDTH_KEY = "suitest.aiPanelWidth";
+
+function readWidth(): number {
+  try {
+    const raw = localStorage.getItem(WIDTH_KEY);
+    if (!raw) return DEFAULT_WIDTH;
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.min(Math.max(parsed, MIN_WIDTH), MAX_WIDTH) : DEFAULT_WIDTH;
+  } catch {
+    return DEFAULT_WIDTH;
+  }
+}
 
 function readAutoApprove(): boolean {
   try {
@@ -88,9 +112,10 @@ function AiPanelContainer(): React.ReactElement {
                 aria-label="Open assistant chat (⌘J)"
                 title="Open assistant chat (⌘J)"
                 data-testid="ai-panel-floating-trigger"
-                className="fixed bottom-5 right-5 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-bg-elev-2 text-fg-2 shadow-lg transition-all duration-150 hover:border-accent hover:bg-bg-elev-3 hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent"
+                className="group fixed right-0 top-1/2 z-40 flex h-10 w-6 -translate-y-1/2 items-center justify-center overflow-hidden rounded-l-md border border-r-0 border-border bg-bg-elev-2 text-fg-3 shadow-md transition-all duration-200 ease-out hover:w-12 hover:border-accent hover:bg-bg-elev-3 hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent"
               >
-                <Sparkles className="h-5 w-5 text-accent" aria-hidden="true" />
+                <ChevronLeft className="h-4 w-4 shrink-0 transition-transform duration-200 group-hover:-translate-x-0.5" aria-hidden="true" />
+                <Sparkles className="h-3.5 w-3.5 shrink-0 opacity-0 transition-all duration-200 -ml-1 text-accent group-hover:ml-1 group-hover:opacity-100" aria-hidden="true" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="left">
@@ -143,6 +168,41 @@ function AiPanelInner({ onCollapse }: { onCollapse?: () => void } = {}): React.R
         : models,
     [configuredModel, offered, models],
   );
+
+  const [width, setWidth] = useState<number>(readWidth);
+  const isResizingRef = useRef(false);
+
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const nextWidth = Math.min(
+        Math.max(window.innerWidth - moveEvent.clientX, MIN_WIDTH),
+        Math.min(MAX_WIDTH, typeof window !== "undefined" ? window.innerWidth * 0.7 : MAX_WIDTH),
+      );
+      setWidth(nextWidth);
+      try {
+        localStorage.setItem(WIDTH_KEY, String(nextWidth));
+      } catch {
+        // ignore storage errors
+      }
+    };
+
+    const onMouseUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }, []);
 
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
@@ -363,9 +423,40 @@ function AiPanelInner({ onCollapse }: { onCollapse?: () => void } = {}): React.R
 
   return (
     <aside
-      className="hidden h-full w-[380px] shrink-0 flex-col border-l border-border-subtle bg-bg-elev-1 xl:flex"
+      style={{ width: `${width}px` }}
+      className="relative hidden h-full shrink-0 flex-col border-l border-border-subtle bg-bg-elev-1 xl:flex"
       data-testid="ai-panel"
     >
+      {/* Draggable resize handle along the left border */}
+      <div
+        onMouseDown={startResize}
+        title="Drag to resize panel"
+        className="group absolute inset-y-0 -left-1 z-20 flex w-2 cursor-col-resize items-center justify-center hover:bg-accent/20 active:bg-accent/40 transition-colors"
+      >
+        <div className="h-8 w-0.5 rounded-full bg-border group-hover:bg-accent group-active:bg-accent transition-colors" />
+      </div>
+
+      {/* Center edge collapse handle on the dividing border */}
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Collapse assistant panel"
+              title="Collapse assistant (⌘J)"
+              data-testid="ai-panel-collapse-toggle"
+              onClick={onCollapse ?? (() => useAiPanel.getState().setOpen(false))}
+              className="absolute -left-3 top-1/2 z-30 flex h-9 w-6 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 border-border bg-bg-elev-2 text-fg-4 shadow-sm transition-all duration-150 hover:w-7 hover:border-accent hover:bg-bg-elev-3 hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left">
+            <span>Collapse assistant (⌘J)</span>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+
       <div className="flex h-[47px] items-center gap-2 border-b border-border-subtle px-4">
         <span
           className="flex h-7 w-7 items-center justify-center rounded-full bg-accent/15 text-accent"
@@ -418,25 +509,6 @@ function AiPanelInner({ onCollapse }: { onCollapse?: () => void } = {}): React.R
               New chat
             </button>
           ) : null}
-          <TooltipProvider delayDuration={150}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Collapse assistant panel"
-                  title="Collapse assistant (⌘J)"
-                  data-testid="ai-panel-collapse-toggle"
-                  onClick={onCollapse ?? (() => useAiPanel.getState().setOpen(false))}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-fg-4 hover:bg-bg-elev-2 hover:text-fg-1"
-                >
-                  <PanelRightClose className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                <span>Collapse assistant (⌘J)</span>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
         </div>
       </div>
 
