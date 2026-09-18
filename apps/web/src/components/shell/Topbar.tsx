@@ -118,6 +118,7 @@ export function Topbar({
   // ⌘J / Ctrl+J or ⌘Shift+L / Ctrl+Shift+L for Assistant chat toggle
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return;
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setCommandOpen((prev) => !prev);

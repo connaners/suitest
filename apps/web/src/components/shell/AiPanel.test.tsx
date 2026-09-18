@@ -213,6 +213,34 @@ describe("<AiPanel>", () => {
     expect(useAiPanel.getState().isOpen).toBe(true);
   });
 
+  it("collapses via header button and ⌘J/Ctrl+J, syncing suitest.agentPanelCollapsed", async () => {
+    setCaps(CLOUD_ASSIST_CAPS);
+    const { unmount } = render(<AiPanel />);
+
+    const headerCollapse = screen.getByTestId("ai-panel-collapse");
+    expect(headerCollapse).toBeInTheDocument();
+
+    await userEvent.click(headerCollapse);
+    expect(screen.queryByTestId("ai-panel")).toBeNull();
+    expect(screen.getByTestId("ai-panel-collapsed")).toBeInTheDocument();
+    expect(screen.getByTestId("ai-panel-expand")).toBeInTheDocument();
+    expect(localStorage.getItem("suitest.agentPanelCollapsed")).toBe("1");
+
+    await userEvent.keyboard("{Meta>}j{/Meta}");
+    expect(screen.getByTestId("ai-panel")).toBeInTheDocument();
+    expect(localStorage.getItem("suitest.agentPanelCollapsed")).toBe("0");
+
+    await userEvent.keyboard("{Control>}j{/Control}");
+    expect(screen.queryByTestId("ai-panel")).toBeNull();
+    expect(screen.getByTestId("ai-panel-collapsed")).toBeInTheDocument();
+
+    unmount();
+    render(<AiPanel />);
+    expect(screen.getByTestId("ai-panel-collapsed")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("ai-panel-expand"));
+    expect(screen.getByTestId("ai-panel")).toBeInTheDocument();
+  });
+
   it("restores custom panel width from localStorage", () => {
     localStorage.setItem("suitest.aiPanelWidth", "520");
     setCaps(CLOUD_ASSIST_CAPS);
