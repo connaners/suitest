@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     # via env. Mirrored from :class:`RunnerSettings` so both processes can
     # share one ``SUITEST_S3_*`` set without re-declaring the same env vars.
     s3_endpoint: str = Field(default="http://localhost:9000")
+    s3_public_endpoint: str | None = Field(default=None)
+    s3_force_gateway: bool = Field(default=False)
     s3_bucket: str = Field(default="suitest-artifacts")
     s3_access_key: str = Field(default="minioadmin")
     s3_secret_key: str = Field(default="minioadmin")

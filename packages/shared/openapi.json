@@ -18905,7 +18905,7 @@
     },
     "/api/v1/runs/{run_id}/artifacts/{artifact_id}": {
       "get": {
-        "description": "Return a real S3/MinIO presigned download URL for one artifact (M1c Task 18).\n\nReplaces the M1a stub presigner with an :mod:`aioboto3` ``generate_presigned_url``\ncall against the configured bucket. Only ``s3://...`` artifacts are presigned \u2014\nlegacy ``file://`` artifacts (dev fixtures) return 404 here, the client should\nfall back to the static ``/artifacts/raw/`` route the static server exposes.\nEmits an ``artifact.signed_url`` audit row so download attribution is\ncaptured even though the actual fetch happens directly against S3.",
+        "description": "Return a real S3/MinIO presigned download URL or streaming gateway URL for one artifact.",
         "operationId": "get_artifact_signed_url_api_v1_runs__run_id__artifacts__artifact_id__get",
         "parameters": [
           {
@@ -18940,6 +18940,22 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
             }
           }
         ],
@@ -18981,8 +18997,8 @@
     },
     "/api/v1/runs/{run_id}/artifacts/{artifact_id}/raw": {
       "get": {
-        "description": "Stream one ``local://`` artifact from ``SUITEST_ARTIFACTS_DIR`` (local mode).",
-        "operationId": "get_artifact_raw_api_v1_runs__run_id__artifacts__artifact_id__raw_get",
+        "description": "Stream one artifact (s3://, local://, file://) with dual-auth, range requests, ETag, and MIME sanitization.",
+        "operationId": "get_artifact_raw",
         "parameters": [
           {
             "in": "path",
@@ -19003,8 +19019,8 @@
             }
           },
           {
-            "in": "header",
-            "name": "X-Workspace-Id",
+            "in": "query",
+            "name": "workspaceId",
             "required": false,
             "schema": {
               "anyOf": [
@@ -19015,7 +19031,49 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Workspace-Id"
+              "title": "Workspaceid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expires",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expires"
+            }
+          },
+          {
+            "in": "query",
+            "name": "download",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Download",
+              "type": "boolean"
             }
           }
         ],
@@ -19048,6 +19106,120 @@
           }
         ],
         "summary": "Get Artifact Raw",
+        "tags": [
+          "runs"
+        ]
+      },
+      "head": {
+        "description": "Retrieve metadata headers for one artifact without downloading the payload body.",
+        "operationId": "head_artifact_raw",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspaceId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspaceid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expires",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expires"
+            }
+          },
+          {
+            "in": "query",
+            "name": "download",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Download",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Head Artifact Raw",
         "tags": [
           "runs"
         ]

@@ -99,8 +99,7 @@ services:
     entrypoint: >
       /bin/sh -c "
         mc alias set local http://minio:9000 ${SUITEST_S3_ACCESS_KEY:-minioadmin} ${SUITEST_S3_SECRET_KEY:-minioadmin} &&
-        mc mb --ignore-existing local/${SUITEST_S3_BUCKET:-suitest} &&
-        mc anonymous set download local/${SUITEST_S3_BUCKET:-suitest} ||
+        mc mb --ignore-existing local/${SUITEST_S3_BUCKET:-suitest} ||
         echo 'bucket init done';
       "
     restart: "no"

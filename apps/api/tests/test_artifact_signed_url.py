@@ -73,8 +73,9 @@ def recording_s3(monkeypatch: pytest.MonkeyPatch) -> _RecordingS3Client:
 
 @pytest.mark.asyncio
 async def test_signed_url_returns_presigned_and_audits(
-    api_db: ApiDb, recording_s3: _RecordingS3Client
+    api_db: ApiDb, recording_s3: _RecordingS3Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("SUITEST_S3_PUBLIC_ENDPOINT", "https://minio.example")
     user = await api_db.seed_user(email="art-sign@example.com")
     ws = await api_db.member_workspace(user, slug="art-sign-ws")
     proj = Project(workspace_id=ws.id, slug="p", name="P")
