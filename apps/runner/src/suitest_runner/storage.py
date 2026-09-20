@@ -24,14 +24,16 @@ class LocalStorage:
     """Writes artifacts as plain files under a root folder; URLs are ``local://<key>``."""
 
     def __init__(self, root: Path) -> None:
-        self.root = Path(root)
+        self.root = Path(root).resolve()
 
     async def put(self, *, key: str, body: bytes, content_type: str) -> str:
-        path = self.root / key
-        path.parent.mkdir(parents=True, exist_ok=True)
+        target = (self.root / key).resolve()
+        if not target.is_relative_to(self.root):
+            raise ValueError(f"Key {key!r} escapes root directory")
+        target.parent.mkdir(parents=True, exist_ok=True)
         # ponytail: sync write — one artifact per step, not a hot path;
         # move to anyio.to_thread if large videos prove blocking.
-        path.write_bytes(body)
+        target.write_bytes(body)
         return f"local://{key}"
 
 

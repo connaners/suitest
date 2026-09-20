@@ -29,3 +29,26 @@ def test_make_storage_selects_backend(tmp_path: Path) -> None:
 
     s3 = make_storage(RunnerSettings(artifacts_backend="s3"))
     assert isinstance(s3, S3Storage)
+
+
+@pytest.mark.asyncio
+async def test_local_storage_rejects_traversal(tmp_path: Path) -> None:
+    from suitest_runner.storage import LocalStorage
+
+    art_dir = tmp_path / "artifacts"
+    art_dir.mkdir()
+    storage = LocalStorage(root=art_dir)
+
+    with pytest.raises(ValueError, match="escapes root directory"):
+        await storage.put(
+            key="../evil.sh",
+            body=b"rm -rf /",
+            content_type="text/plain",
+        )
+
+    with pytest.raises(ValueError, match="escapes root directory"):
+        await storage.put(
+            key="runs/../../evil.sh",
+            body=b"rm -rf /",
+            content_type="text/plain",
+        )

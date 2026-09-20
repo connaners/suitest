@@ -388,7 +388,9 @@ When `case_order` is supplied, every case id currently in the suite must appear 
 | GET | `/runs/:id/steps` | Run steps with outcomes |
 | GET | `/runs/:id/logs?cursor=...` | Streaming-friendly cursor pagination |
 | GET | `/runs/:id/artifacts` | List artifacts |
-| GET | `/runs/:id/artifacts/:artifactId` | Signed URL to R2 |
+| GET | `/runs/:id/artifacts/:artifactId` | Signed URL (presigned S3 or streaming gateway URL) |
+| GET | `/runs/:id/artifacts/:artifactId/raw` | Stream artifact (range requests, token/cookie/key auth) |
+| HEAD | `/runs/:id/artifacts/:artifactId/raw` | Metadata probe (Content-Length, ETag, Accept-Ranges) |
 | POST | `/runs/:id/cancel` | Cancel |
 | POST | `/runs/:id/rerun` | Re-trigger same run config |
 

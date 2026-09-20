@@ -21,12 +21,14 @@ from typing import TYPE_CHECKING, Any
 
 import aioboto3
 import pytest
+from sqlalchemy import select
 from suitest_api.routers.runs import _parse_http_range, _safe_filename
 from suitest_api.services.file_storage import (
     create_media_token,
     is_internal_s3_endpoint,
     verify_media_token,
 )
+from suitest_db.models.audit import AuditLog
 from suitest_db.models.case import TestCase
 from suitest_db.models.project import Project, Suite
 from suitest_db.models.run import Artifact, Run, RunStep
@@ -70,6 +72,7 @@ class _MockS3Client:
         # key: "{bucket}/{key}" -> (data, content_type, etag)
         self.objects = objects or {}
         self.calls: list[dict[str, Any]] = []
+        self.error_on_head: Exception | None = None
 
     async def generate_presigned_url(
         self, action: str, Params: dict[str, Any], ExpiresIn: int
@@ -78,6 +81,8 @@ class _MockS3Client:
         return f"https://cdn.example.com/{Params['Bucket']}/{Params['Key']}?X-Amz-Signature=stub"
 
     async def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:
+        if self.error_on_head is not None:
+            raise self.error_on_head
         obj_key = f"{Bucket}/{Key}"
         if obj_key in self.objects:
             data, content_type, etag = self.objects[obj_key]
@@ -96,19 +101,25 @@ class _MockS3Client:
         else:
             data, content_type, etag = (b"default-s3-data", "image/png", "mock-etag-001")
 
+        full_len = len(data)
+        content_range: str | None = None
         if Range and Range.startswith("bytes="):
             r = Range.removeprefix("bytes=")
             start_str, _, end_str = r.partition("-")
             start = int(start_str) if start_str else 0
             end = int(end_str) if end_str else len(data) - 1
             data = data[start : end + 1]
+            content_range = f"bytes {start}-{end}/{full_len}"
 
-        return {
+        res: dict[str, Any] = {
             "Body": _MockS3Body(data),
             "ContentLength": len(data),
             "ContentType": content_type,
             "ETag": f'"{etag}"',
         }
+        if content_range:
+            res["ContentRange"] = content_range
+        return res
 
 
 @pytest.fixture()
@@ -691,7 +702,10 @@ async def test_auth_unauthenticated_rejected(api_db: ApiDb, mock_s3: _MockS3Clie
 
 
 @pytest.mark.asyncio
-async def test_legacy_file_scheme(api_db: ApiDb, tmp_path: Path) -> None:
+async def test_legacy_file_scheme(
+    api_db: ApiDb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SUITEST_ARTIFACTS_DIR", str(tmp_path))
     file_path = tmp_path / "legacy_fixture.png"
     file_path.write_bytes(b"\x89PNG-legacy-file")
 
@@ -708,6 +722,68 @@ async def test_legacy_file_scheme(api_db: ApiDb, tmp_path: Path) -> None:
         )
     assert resp.status_code == 200
     assert resp.content == b"\x89PNG-legacy-file"
+
+
+@pytest.mark.asyncio
+async def test_file_scheme_outside_root_blocked(
+    api_db: ApiDb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root_dir = tmp_path / "artifacts"
+    root_dir.mkdir()
+    monkeypatch.setenv("SUITEST_ARTIFACTS_DIR", str(root_dir))
+
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "secret.txt"
+    outside_file.write_bytes(b"SECRET_DATA")
+
+    user, ws, run, art = await _seed_hierarchy(
+        api_db,
+        email="outside-root@example.com",
+        slug="outside-root",
+        artifact_url=f"file://{outside_file}",
+    )
+    async with api_db.client(user) as c:
+        resp = await c.get(
+            f"/api/v1/runs/{run.id}/artifacts/{art.id}/raw",
+            headers={"X-Workspace-Id": ws.id},
+        )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_double_encoded_path_traversal_blocked(api_db: ApiDb) -> None:
+    user, ws, run, art = await _seed_hierarchy(
+        api_db,
+        email="double-traversal@example.com",
+        slug="double-traversal",
+        artifact_url="s3://suitest-artifacts/runs/%252e%252e/secret.png",
+    )
+    async with api_db.client(user) as c:
+        resp = await c.get(
+            f"/api/v1/runs/{run.id}/artifacts/{art.id}/raw",
+            headers={"X-Workspace-Id": ws.id},
+        )
+    assert resp.status_code == 400
+    assert "invalid key path" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_error_returns_502(api_db: ApiDb, mock_s3: _MockS3Client) -> None:
+    mock_s3.error_on_head = RuntimeError("MinIO connection reset")
+    user, ws, run, art = await _seed_hierarchy(
+        api_db,
+        email="s3-down@example.com",
+        slug="s3-down",
+        artifact_url="s3://suitest-artifacts/runs/r1/shot.png",
+    )
+    async with api_db.client(user) as c:
+        resp = await c.get(
+            f"/api/v1/runs/{run.id}/artifacts/{art.id}/raw",
+            headers={"X-Workspace-Id": ws.id},
+        )
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "storage backend unavailable"
 
 
 @pytest.mark.asyncio
@@ -1103,3 +1179,57 @@ async def test_rfc5987_filename_header(api_db: ApiDb, mock_s3: _MockS3Client) ->
     cd = resp.headers["content-disposition"]
     assert 'filename="vido_caf.mp4"' in cd
     assert "filename*=UTF-8''vid%C3%A9o_caf%C3%A9.mp4" in cd
+
+
+@pytest.mark.asyncio
+async def test_token_stream_audit_log_created(api_db: ApiDb, mock_s3: _MockS3Client) -> None:
+    mock_s3.objects["suitest-artifacts/runs/r1/audit_stream.png"] = (
+        b"AUDIT-STREAM-PNG",
+        "image/png",
+        "etag-audit-stream",
+    )
+    _user, ws, run, art = await _seed_hierarchy(
+        api_db,
+        email="token-audit@example.com",
+        slug="token-audit",
+        artifact_url="s3://suitest-artifacts/runs/r1/audit_stream.png",
+    )
+    now = int(time.time())
+    token = create_media_token(run.id, art.id, ws.id, now + 300)
+    async with api_db.client(None) as c:
+        resp = await c.get(
+            f"/api/v1/runs/{run.id}/artifacts/{art.id}/raw?workspaceId={ws.id}&token={token}&expires={now + 300}",
+        )
+    assert resp.status_code == 200
+    assert resp.content == b"AUDIT-STREAM-PNG"
+
+    async with api_db.maker() as s:
+        stmt = select(AuditLog).where(
+            AuditLog.workspace_id == ws.id,
+            AuditLog.action == "artifact.stream",
+            AuditLog.resource_id == art.id,
+        )
+        res = await s.execute(stmt)
+        logs = res.scalars().all()
+        assert len(logs) == 1
+        assert logs[0].metadata["token_auth"] is True
+        assert logs[0].metadata["run_id"] == run.id
+
+
+@pytest.mark.asyncio
+async def test_media_token_domain_separation() -> None:
+    import hashlib
+    import hmac
+
+    # Raw HMAC without domain separation must NOT validate against create_media_token
+    raw_secret = "dev-secret-change-me"
+    now = int(time.time()) + 300
+    payload = f"2:r1:2:a1:2:w1:{now}".encode()
+    forged_sig = hmac.new(raw_secret.encode(), payload, hashlib.sha256).hexdigest()
+    forged_token = f"{now}.{forged_sig}"
+
+    # Verify fails because create/verify_media_token uses domain-separated key
+    assert not verify_media_token(forged_token, "r1", "a1", "w1", expires_at=now, secret=raw_secret)
+
+    valid_token = create_media_token("r1", "a1", "w1", now, secret=raw_secret)
+    assert verify_media_token(valid_token, "r1", "a1", "w1", expires_at=now, secret=raw_secret)

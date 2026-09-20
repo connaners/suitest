@@ -706,6 +706,81 @@ async def _stream_file_range(
         await file.aclose()
 
 
+_ALLOWED_S3_PREFIXES: tuple[str, ...] = ("runs/", "uploads/")
+
+
+def _bounded_unquote(val: str, max_rounds: int = 5) -> str:
+    """Unquote percent-encodings until stable or max_rounds reached to neutralize nested/double encoding."""
+    curr = val
+    for _ in range(max_rounds):
+        next_val = unquote(curr)
+        if next_val == curr:
+            break
+        curr = next_val
+    return curr
+
+
+def _validate_s3_location(artifact_url: str) -> tuple[str, str]:
+    """Validate S3 artifact URL, bound unquoting, enforce prefix containment and anti-traversal.
+
+    Returns: (bucket, key)
+    Raises: HTTPException(400) or HTTPException(403)
+    """
+    settings = get_settings()
+    s3_path = artifact_url.removeprefix("s3://")
+    if "/" not in s3_path:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid s3 url")
+    bucket, raw_key = s3_path.split("/", 1)
+    if bucket != settings.s3_bucket:
+        _log.warning(
+            "artifact.access_rejected: external bucket %s forbidden (expected %s)",
+            bucket,
+            settings.s3_bucket,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="access to external bucket forbidden",
+        )
+
+    unquoted_key = _bounded_unquote(raw_key).replace("\\", "/")
+    normalized_key = raw_key.replace("\\", "/")
+
+    if (
+        not raw_key
+        or not raw_key.strip()
+        or ".." in normalized_key
+        or ".." in unquoted_key
+        or "\x00" in raw_key
+        or "\x00" in unquoted_key
+        or "%00" in raw_key
+        or normalized_key.startswith("/")
+        or unquoted_key.startswith("/")
+    ):
+        _log.warning(
+            "artifact.access_rejected: path traversal or invalid key blocked (key=%r)",
+            raw_key,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid key path",
+        )
+
+    # Prefix containment: key must start with an approved prefix (e.g. runs/, uploads/)
+    clean_key = unquoted_key.lstrip("/")
+    if not any(clean_key.startswith(prefix) for prefix in _ALLOWED_S3_PREFIXES):
+        _log.warning(
+            "artifact.access_rejected: key %r does not start with an allowed prefix %r",
+            raw_key,
+            _ALLOWED_S3_PREFIXES,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid key path",
+        )
+
+    return bucket, raw_key
+
+
 @router.get("/runs/{run_id}/artifacts/{artifact_id}", response_model=ArtifactSignedUrl)
 async def get_artifact_signed_url(
     run_id: str,
@@ -730,32 +805,7 @@ async def get_artifact_signed_url(
         )
 
     settings = get_settings()
-    s3_path = artifact.url.removeprefix("s3://")
-    if "/" not in s3_path:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid s3 url")
-    bucket, key = s3_path.split("/", 1)
-    if bucket != settings.s3_bucket:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="access to external bucket forbidden",
-        )
-    unquoted_key = unquote(key).replace("\\", "/")
-    normalized_key = key.replace("\\", "/")
-    if (
-        not key
-        or not key.strip()
-        or ".." in normalized_key
-        or ".." in unquoted_key
-        or "\x00" in key
-        or "\x00" in unquoted_key
-        or "%00" in key
-        or normalized_key.startswith("/")
-        or unquoted_key.startswith("/")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="invalid key path",
-        )
+    bucket, key = _validate_s3_location(artifact.url)
 
     use_gateway = settings.s3_force_gateway or (
         not settings.s3_public_endpoint and is_internal_s3_endpoint(settings.s3_endpoint)
@@ -849,43 +899,11 @@ async def _resolve_artifact_meta_and_source(
     """
     settings = get_settings()
     if artifact.url.startswith("s3://"):
-        s3_path = artifact.url.removeprefix("s3://")
-        if "/" not in s3_path:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid s3 url")
-        bucket, key = s3_path.split("/", 1)
-        if bucket != settings.s3_bucket:
-            _log.warning(
-                "artifact.access_rejected: external bucket %s forbidden (expected %s)",
-                bucket,
-                settings.s3_bucket,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="access to external bucket forbidden",
-            )
-        unquoted_key = unquote(key).replace("\\", "/")
-        normalized_key = key.replace("\\", "/")
-        if (
-            not key
-            or not key.strip()
-            or ".." in normalized_key
-            or ".." in unquoted_key
-            or "\x00" in key
-            or "\x00" in unquoted_key
-            or "%00" in key
-            or normalized_key.startswith("/")
-            or unquoted_key.startswith("/")
-        ):
-            _log.warning(
-                "artifact.access_rejected: path traversal or invalid key blocked (key=%r)",
-                key,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="invalid key path",
-            )
+        bucket, key = _validate_s3_location(artifact.url)
         try:
             meta_size, meta_mime, s3_etag = await get_s3_object_meta(bucket, key)
+        except HTTPException:
+            raise
         except Exception as exc:
             err_code = ""
             if hasattr(exc, "response") and isinstance(exc.response, dict):
@@ -895,9 +913,18 @@ async def _resolve_artifact_meta_and_source(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="artifact not found in storage",
                 ) from exc
-            meta_size, meta_mime, s3_etag = 0, None, None
+            _log.error(
+                "artifact.storage_error: failed to fetch metadata for %s/%s: %s",
+                bucket,
+                key,
+                exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="storage backend unavailable",
+            ) from exc
 
-        file_size = meta_size if meta_size > 0 else (artifact.size_bytes or 0)
+        file_size = meta_size
         mime_type = artifact.mime_type or meta_mime or "application/octet-stream"
         etag = s3_etag or f"{artifact.id}-{file_size}"
         return file_size, mime_type, etag, None, bucket, key
@@ -905,7 +932,7 @@ async def _resolve_artifact_meta_and_source(
     if artifact.url.startswith("local://"):
         root = Path(settings.artifacts_dir).resolve()  # noqa: ASYNC240 — metadata-only, local FS
         local_rel = artifact.url.removeprefix("local://")
-        unquoted_local = unquote(local_rel).replace("\\", "/")
+        unquoted_local = _bounded_unquote(local_rel).replace("\\", "/")
         normalized_local = local_rel.replace("\\", "/")
         if (
             ".." in normalized_local
@@ -930,12 +957,18 @@ async def _resolve_artifact_meta_and_source(
         return stat.st_size, mime, f"{stat.st_mtime_ns}-{stat.st_size}", path, "", ""
 
     if artifact.url.startswith("file://"):
+        root = Path(settings.artifacts_dir).resolve()  # noqa: ASYNC240 — metadata-only, local FS
         raw_path = artifact.url.removeprefix("file://")
-        unquoted_raw = unquote(raw_path)
+        unquoted_raw = _bounded_unquote(raw_path)
         if "\x00" in raw_path or "\x00" in unquoted_raw or "%00" in raw_path:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid file path")
         path = Path(unquoted_raw).resolve()  # noqa: ASYNC240 — metadata-only, local FS
-        if not path.is_file():
+        if not path.is_relative_to(root) or not path.is_file():
+            _log.warning(
+                "artifact.access_rejected: file path %r outside artifacts_dir %r",
+                unquoted_raw,
+                str(root),
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="artifact not found",
@@ -985,7 +1018,7 @@ def _build_raw_headers(
 
     if mime_lower in _SAFE_INLINE_MIME_TYPES and not download:
         if mime_lower.startswith(("video/", "audio/")):
-            csp = "default-src 'none'; media-src 'self' blob: data:; style-src 'unsafe-inline'"
+            csp = "default-src 'none'; media-src 'self' blob:; style-src 'unsafe-inline'"
         elif mime_lower.startswith("image/"):
             csp = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"
         else:
@@ -1168,6 +1201,18 @@ async def _handle_artifact_raw(
     cached_resp = _check_if_none_match(request, etag)
     if cached_resp is not None:
         return cached_resp
+
+    if token:
+        await write_audit(
+            session,
+            workspace_id=resolved_ws_id,
+            user_id=None,
+            action="artifact.stream",
+            resource_type="artifact",
+            resource_id=artifact.id,
+            metadata={"run_id": run_id, "token_auth": True, "method": request.method},
+        )
+        await session.commit()
 
     base_headers = _build_raw_headers(
         artifact.url, mime_type, etag, download, is_terminal=is_terminal

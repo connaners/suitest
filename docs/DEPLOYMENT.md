@@ -211,7 +211,38 @@ mcp.suitest.example.com {
 - The relay child inherits `SUITEST_API_URL`/`SUITEST_API_KEY` from compose, so tool calls hit the internal API; nothing but `/mcp` needs to be reachable.
 - The underlying server negotiates MCP protocol 2024-11-05; each connected client holds one stdio child for its session.
 
+### 1.7 Artifact Storage, Adaptive S3 Gateway & Bucket Privacy
+
+Suitest delivers run artifacts (screenshots, video replays, traces, logs) via an adaptive dual-mode strategy:
+
+1. **Direct Presigned URLs (Default for public cloud / S3 / R2):**
+   - When `SUITEST_S3_PUBLIC_ENDPOINT` is configured or `SUITEST_S3_ENDPOINT` is a public FQDN (e.g. AWS S3, Cloudflare R2), `GET /api/v1/runs/:id/artifacts/:artId` returns an S3 presigned URL valid for 3600 seconds.
+   - The browser downloads directly from S3/R2 without touching the Suitest API event loop.
+
+2. **Adaptive Streaming Gateway (Automatic for self-hosted / private MinIO / VPS):**
+   - If `SUITEST_S3_PUBLIC_ENDPOINT` is unset and `SUITEST_S3_ENDPOINT` points to an internal address (e.g. `http://minio:9000`, `127.0.0.1`, Docker DNS `*.local`, `*.internal`), the API automatically routes artifact requests through the API streaming gateway:
+     `GET /api/v1/runs/:id/artifacts/:artId/raw?workspaceId=...&token=...&expires=...`
+   - **Capability Token Auth:** URLs are authenticated with time-limited signed HMAC tokens (domain-separated key from `SUITEST_AUTH_SECRET`). Standard requests also accept session cookies or `X-API-Key`.
+   - **Range Requests & Video Streaming:** Full support for HTTP 206 partial content range requests (`Range: bytes=start-end`) for video scrubbing.
+   - **ETag & Caching:** Immutable caching (`Cache-Control: private, max-age=86400, immutable`) for completed runs with ETag validation.
+   - **MIME & Anti-XSS Sanitization:** Potentially executable MIME types (SVG, HTML) are forced to `attachment` with sandbox CSP (`media-src 'self' blob:`).
+
+#### Configuration Variables
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SUITEST_S3_ENDPOINT` | `http://minio:9000` | Internal S3/MinIO endpoint used by backend services. |
+| `SUITEST_S3_PUBLIC_ENDPOINT` | *(empty)* | Optional public URL of S3/MinIO accessible to user browsers. If set, direct presigned URLs are issued. |
+| `SUITEST_S3_FORCE_GATEWAY` | `false` | When `true`, forces the streaming gateway for all artifact requests even if a public endpoint exists. |
+| `SUITEST_S3_ENFORCE_PRIVATE` | `true` | When `true`, `minio-init` executes `mc anonymous set none` to prevent public data exposure. |
+
+#### MinIO Bucket Hardening & Migration
+Earlier versions configured demo buckets with `mc anonymous set download`. MinIO buckets are now strictly private. During stack upgrade, `minio-init` will automatically enforce `mc anonymous set none`. If upgrading an existing custom bucket manually, execute:
+```bash
+mc anonymous set none local/${SUITEST_S3_BUCKET}
+```
+
 ---
+
 
 ## 2. Mode 2 — Docker standalone (all-in-one)
 

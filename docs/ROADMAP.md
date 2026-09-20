@@ -85,7 +85,7 @@ Cross-reference: [PRODUCT.md](./PRODUCT.md), [ARCHITECTURE.md](./ARCHITECTURE.md
 - [x] **M1-16** `packages/mcp` registry + client + connection pool
 - [x] **M1-17** Bundled MCP providers (minimum 3 for v1.0 M1): `playwright-mcp`, `api-http-mcp`, `postgres-mcp`
 - [x] **M1-18** ARQ worker (`apps/runner`) pulls run jobs, dispatches each step to the correct MCP based on `step.mcp_provider`
-- [x] **M1-19** WebSocket log streaming + screenshot capture per step + MinIO artifact upload
+- [x] **M1-19** WebSocket log streaming + screenshot capture per step + MinIO artifact upload (closes #221: adaptive S3/MinIO streaming gateway for self-hosted and VPS deployments with dual-auth capability tokens, HTTP 206 range scrubbing, and immutable caching)
 - [x] **M1-20** Run cancel + rerun (scheduled cron runs deferred to M1d)
 
 ### M1d — manual TCM writes + integrations
