@@ -46,6 +46,11 @@ const EMAIL_LOOKUP_DEBOUNCE_MS = 400;
 
 /** Invite creation is limited to ADMIN/QA/VIEWER — OWNER stays a separate action. */
 const INVITE_ROLES: Role[] = ["ADMIN", "QA", "VIEWER"];
+const ROLE_OPTIONS = INVITE_ROLES.map((r) => (
+  <option key={r} value={r}>
+    {r}
+  </option>
+));
 
 /** Roles allowed to manage invitations (OWNER + ADMIN). */
 function canManageInvites(role: string | undefined): boolean {
@@ -523,11 +528,7 @@ export function MembersPanel({
                               className="rounded border border-border bg-bg-base px-2 py-1 font-mono text-[12px] text-fg-1 outline-none focus:border-accent disabled:opacity-50"
                               data-testid={`invite-role-select-${inv.id}`}
                             >
-                              {INVITE_ROLES.map((r) => (
-                                <option key={r} value={r}>
-                                  {r}
-                                </option>
-                              ))}
+                              {ROLE_OPTIONS}
                             </select>
                           ) : (
                             inv.role
@@ -792,11 +793,7 @@ function InviteModal({
               onChange={(e) => setRole(e.target.value as Role)}
               className="w-full rounded-md border border-border bg-bg-base px-3 py-2 text-[13px] text-fg-1 outline-none focus:border-accent"
             >
-              {INVITE_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
+              {ROLE_OPTIONS}
             </select>
           </div>
 
