@@ -8107,6 +8107,8 @@ export interface components {
              * @default false
              */
             is_verified: boolean;
+            /** Name */
+            name: string;
         };
         /**
          * UserUpdate
@@ -8121,6 +8123,8 @@ export interface components {
             is_superuser?: boolean | null;
             /** Is Verified */
             is_verified?: boolean | null;
+            /** Name */
+            name?: string | null;
             /** Password */
             password?: string | null;
         };

@@ -333,12 +333,14 @@ export function Sidebar({
             out of the rail, making it unclickable). */}
         <div className="flex shrink-0 items-center gap-2 border-t border-border-subtle px-3 py-3">
           <div className={cn("flex items-center gap-2", !isOpen ? "md:hidden" : "")}>
-            <span
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-elev-3 font-mono text-[11px] font-semibold text-fg-1"
-              aria-hidden="true"
+            <Link
+              to="/profile"
+              aria-label="Profile"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-elev-3 font-mono text-[11px] font-semibold text-fg-1 hover:opacity-80"
+              data-testid="user-avatar-link"
             >
               {userName.slice(0, 2).toUpperCase()}
-            </span>
+            </Link>
             <div className="flex-1 overflow-hidden">
               <div className="truncate text-[12.5px] font-medium text-fg-1">{userName}</div>
               <div

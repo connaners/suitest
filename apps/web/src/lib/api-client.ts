@@ -986,6 +986,25 @@ export async function changeOwnPassword(input: ChangePasswordRequest): Promise<v
   await api.patch("/users/me/password", input);
 }
 
+/**
+ * ``PATCH /users/me`` — FastAPI-Users' own route, mounted at the application
+ * root (NOT under ``/api/v1``, same as ``/auth/cookie/login`` — see that
+ * route's comment). Renames the signed-in user; the workspace-scoped ``api``
+ * axios client would 404 here since it always prefixes ``/api/v1``.
+ */
+export async function updateOwnName(name: string): Promise<{ name: string }> {
+  const res = await fetch("/users/me", {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    throw new Error(`update_name_failed_${res.status}`);
+  }
+  return (await res.json()) as { name: string };
+}
+
 /** ``POST /workspaces/:id/invitations`` — create invite, returns copyable link. */
 export async function createInvitation(
   workspaceId: string,

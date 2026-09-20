@@ -10665,11 +10665,16 @@
             "default": false,
             "title": "Is Verified",
             "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
           }
         },
         "required": [
           "id",
-          "email"
+          "email",
+          "name"
         ],
         "title": "UserRead",
         "type": "object"
@@ -10721,6 +10726,19 @@
               }
             ],
             "title": "Is Verified"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           },
           "password": {
             "anyOf": [

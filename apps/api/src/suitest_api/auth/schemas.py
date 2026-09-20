@@ -3,10 +3,13 @@
 import uuid
 
 from fastapi_users import schemas
+from pydantic import Field
 
 
 class UserRead(schemas.BaseUser[uuid.UUID]):
     """Outbound user representation."""
+
+    name: str
 
 
 class UserCreate(schemas.BaseUserCreate):
@@ -15,3 +18,5 @@ class UserCreate(schemas.BaseUserCreate):
 
 class UserUpdate(schemas.BaseUserUpdate):
     """Inbound payload for PATCH /users/me."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
