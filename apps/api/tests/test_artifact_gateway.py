@@ -1212,8 +1212,8 @@ async def test_token_stream_audit_log_created(api_db: ApiDb, mock_s3: _MockS3Cli
         res = await s.execute(stmt)
         logs = res.scalars().all()
         assert len(logs) == 1
-        assert logs[0].metadata["token_auth"] is True
-        assert logs[0].metadata["run_id"] == run.id
+        assert logs[0].metadata_json["token_auth"] is True
+        assert logs[0].metadata_json["run_id"] == run.id
 
 
 @pytest.mark.asyncio
