@@ -137,3 +137,8 @@ class InvitationRepository:
     async def mark_accepted(self, invitation: Invitation) -> None:
         invitation.accepted_at = datetime.now(tz=UTC)
         await self.session.flush()
+
+    async def update_role(self, invitation: Invitation, role: Role) -> Invitation:
+        invitation.role = role
+        await self.session.flush()
+        return invitation

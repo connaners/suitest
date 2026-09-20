@@ -292,6 +292,19 @@ def cleanup_transient_media(paths: Paths) -> None:
     _remove_empty_directories(paths.tmp_dir)
 
 
+def _format_publish_error(exc: Exception, *, prefix: str) -> str:
+    from suitest_lifecycle.http_client import SuitestAPIError
+
+    if isinstance(exc, SuitestAPIError):
+        if exc.status_code in (401, 403):
+            return (
+                f"authorization error: SUITEST_API_KEY is invalid or lacks the "
+                f"QA role required to publish test results (HTTP {exc.status_code}): {exc.body}"
+            )
+        return f"Suitest API error {exc.status_code}: {exc.body}"
+    return f"{prefix}: {type(exc).__name__}: {exc}"
+
+
 class PublishSession:
     """Case-first, per-test publisher backed by one durable Suitest run."""
 
@@ -387,7 +400,7 @@ class PublishSession:
             if not self.run_id:
                 raise RuntimeError("server did not return a runId")
         except Exception as exc:
-            self.reason = f"connection error: {type(exc).__name__}: {exc}"
+            self.reason = _format_publish_error(exc, prefix="connection error")
             self.close()
             return {"started": False, "reason": self.reason}
 
@@ -420,7 +433,7 @@ class PublishSession:
         except Exception as exc:
             # Keep local scratch: the result row did not commit, so the publish
             # is not durable even if its blob upload happened to finish.
-            self.reason = f"incremental publish failed: {type(exc).__name__}: {exc}"
+            self.reason = _format_publish_error(exc, prefix="incremental publish failed")
             return False
         self.run_status = str(response.get("status", "RUNNING") or "RUNNING")
         self.appended += 1
@@ -466,7 +479,7 @@ class PublishSession:
             )
             self.run_status = str(run.get("status", "") or "")
         except Exception as exc:
-            self.reason = f"finalize publish failed: {type(exc).__name__}: {exc}"
+            self.reason = _format_publish_error(exc, prefix="finalize publish failed")
             self.close()
             return {
                 "published": False,

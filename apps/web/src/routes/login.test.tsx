@@ -265,4 +265,18 @@ describe("<LoginRoute>", () => {
     await screen.findByRole("textbox", { name: /email/i });
     expect(authHit).toBe(false);
   });
+
+  it("displays removed reason banner when ?reason=removed", async () => {
+    renderLogin("/login?reason=removed");
+    const banner = await screen.findByTestId("login-reason-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent("Akses Anda ke workspace telah dicabut oleh administrator.");
+  });
+
+  it("displays left reason banner when ?reason=left", async () => {
+    renderLogin("/login?reason=left");
+    const banner = await screen.findByTestId("login-reason-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent("Anda telah keluar dari workspace.");
+  });
 });

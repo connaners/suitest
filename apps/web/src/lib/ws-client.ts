@@ -31,6 +31,7 @@ export class WsClient {
   private socket: WebSocket | null = null;
   private listeners = new Map<Topic, Set<Listener>>();
   private subscribed = new Set<Topic>();
+  private reconnectListeners = new Set<() => void>();
   private reconnectAttempts = 0;
   private connecting = false;
   private url: string;
@@ -44,10 +45,16 @@ export class WsClient {
     this.connecting = true;
     this.socket = new WebSocket(this.url);
     this.socket.onopen = () => {
+      const isReconnecting = this.reconnectAttempts > 0;
       this.connecting = false;
       this.reconnectAttempts = 0;
       for (const t of this.subscribed) {
         this.socket?.send(JSON.stringify({ action: "subscribe", topic: t }));
+      }
+      if (isReconnecting) {
+        this.reconnectListeners.forEach((cb) => {
+          cb();
+        });
       }
     };
     this.socket.onmessage = (ev: MessageEvent<string>) => {
@@ -106,6 +113,13 @@ export class WsClient {
           }
         }
       }
+    };
+  }
+
+  onReconnect(cb: () => void): () => void {
+    this.reconnectListeners.add(cb);
+    return () => {
+      this.reconnectListeners.delete(cb);
     };
   }
 
@@ -192,6 +206,34 @@ export type WorkspaceEvent =
       // reload (mirrors `mcp.provider.health`).
       event: "invitation.resolved";
       data: { invitationId: string; status: "approved" | "declined"; email: string };
+    }
+  | {
+      event: "workspace.member.role_changed";
+      data: { workspaceId: string; userId: string; from: string; to: string; by: string };
+    }
+  | {
+      event: "workspace.member.removed";
+      data: { workspaceId: string; userId: string; role: string; by: string };
+    }
+  | {
+      event: "workspace.member.joined";
+      data: { workspaceId: string; userId: string; email: string; role: string };
+    }
+  | {
+      event: "workspace.invitation.created";
+      data: { workspaceId: string; invitationId: string; email: string; role: string };
+    }
+  | {
+      event: "workspace.invitation.updated";
+      data: { workspaceId: string; invitationId: string; email: string; role?: string };
+    }
+  | {
+      event: "workspace.invitation.revoked";
+      data: { workspaceId: string; invitationId: string; email: string };
+    }
+  | {
+      event: "workspace.invitation.accepted";
+      data: { workspaceId: string; invitationId: string; email: string };
     };
 
 /**
@@ -218,6 +260,7 @@ export interface RecorderLiveEvent {
 
 export interface WsTransportLike {
   subscribe(topic: Topic, cb: Listener): () => void;
+  onReconnect?: (cb: () => void) => () => void;
 }
 
 let activeTransport: WsTransportLike = wsClient;
@@ -261,7 +304,14 @@ function isWorkspaceEvent(raw: { event: string; payload: unknown }): raw is {
     raw.event === "mcp.provider.health" ||
     raw.event === "capability.changed" ||
     raw.event === "agent.tool.call" ||
-    raw.event === "invitation.resolved"
+    raw.event === "invitation.resolved" ||
+    raw.event === "workspace.member.role_changed" ||
+    raw.event === "workspace.member.removed" ||
+    raw.event === "workspace.member.joined" ||
+    raw.event === "workspace.invitation.created" ||
+    raw.event === "workspace.invitation.updated" ||
+    raw.event === "workspace.invitation.revoked" ||
+    raw.event === "workspace.invitation.accepted"
   );
 }
 
@@ -300,10 +350,15 @@ export function useRunStream(runId: string, onEvent: (e: RunEvent) => void): voi
  * the workspace switches, so health / capability events always reflect the
  * currently-active tenant.
  */
-export function useWorkspaceStream(onEvent: (e: WorkspaceEvent) => void): void {
+export function useWorkspaceStream(
+  onEvent: (e: WorkspaceEvent) => void,
+  onReconnect?: () => void,
+): void {
   const workspaceId = useActiveWorkspace((s) => s.workspaceId);
   const cbRef = useRef(onEvent);
   cbRef.current = onEvent;
+  const reconRef = useRef(onReconnect);
+  reconRef.current = onReconnect;
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -315,6 +370,17 @@ export function useWorkspaceStream(onEvent: (e: WorkspaceEvent) => void): void {
         data: msg.payload,
       } as WorkspaceEvent);
     });
-    return unsubscribe;
+
+    let unsubReconnect: (() => void) | undefined;
+    if (typeof transport.onReconnect === "function") {
+      unsubReconnect = transport.onReconnect(() => {
+        reconRef.current?.();
+      });
+    }
+
+    return () => {
+      unsubscribe();
+      unsubReconnect?.();
+    };
   }, [workspaceId]);
 }

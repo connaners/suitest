@@ -1,5 +1,7 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, createFileRoute, isRedirect, redirect } from "@tanstack/react-router";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { AiPanel } from "@/components/shell/AiPanel";
 import { CreateWorkspaceDialog } from "@/components/shell/CreateWorkspaceDialog";
@@ -7,6 +9,8 @@ import { Sidebar } from "@/components/shell/Sidebar";
 import { Topbar } from "@/components/shell/Topbar";
 import { useCurrentUser, type CurrentUser } from "@/hooks/use-current-user";
 import { api } from "@/lib/api-client";
+import { broadcastWorkspaceSwitch, initAuthBroadcastSync, logoutAndRedirect } from "@/lib/auth-session";
+import { useWorkspaceStream, type WorkspaceEvent } from "@/lib/ws-client";
 import { useActiveProject } from "@/stores/use-active-project";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
 import { useCapabilities } from "@/stores/use-capabilities";
@@ -132,10 +136,118 @@ function AppLayout(): React.ReactElement {
   const llmReady = useCapabilities((s) => s.capabilities?.llm.status === "ready");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
+  const queryClient = useQueryClient();
   const { data: user } = useCurrentUser();
   const activeWorkspaceId = useActiveWorkspace((s) => s.workspaceId);
   const setWorkspaceId = useActiveWorkspace((s) => s.setWorkspaceId);
   const setProjectId = useActiveProject((s) => s.setProjectId);
+
+  // Cross-tab logout and workspace switch listener (tab sync via BroadcastChannel)
+  useEffect(() => {
+    return initAuthBroadcastSync((_newWsId) => {
+      void queryClient.cancelQueries();
+      void queryClient.invalidateQueries();
+      void useCapabilities.getState().fetch();
+      try {
+        window.location.assign("/dashboard");
+      } catch {
+        // jsdom in tests
+      }
+    });
+  }, [queryClient]);
+
+  const handleWorkspaceFallback = useCallback(
+    async (removedWorkspaceId: string, reason: "removed" | "left", removedWsName?: string) => {
+      // Idempotency check: if we already switched away from this workspace, ignore
+      const currentWsId = useActiveWorkspace.getState().workspaceId;
+      if (currentWsId && currentWsId !== removedWorkspaceId) {
+        return;
+      }
+
+      // Stop any background live polling spam
+      void queryClient.cancelQueries();
+
+      try {
+        const freshMe = (await api.get<CurrentUser>("/auth/me")).data;
+        queryClient.setQueryData<CurrentUser>(["auth", "me"], freshMe);
+        const remaining = freshMe.memberships.filter((m) => m.workspace_id !== removedWorkspaceId);
+
+        if (remaining.length > 0) {
+          const nextWs = remaining[0]!;
+          setWorkspaceId(nextWs.workspace_id);
+          setProjectId(null);
+          broadcastWorkspaceSwitch(nextWs.workspace_id);
+
+          void queryClient.invalidateQueries();
+          void useCapabilities.getState().fetch();
+
+          const prevName = removedWsName || "workspace";
+          if (reason === "removed") {
+            toast.warning("Akses workspace dicabut", {
+              description: `Akses Anda ke ${prevName} telah dicabut oleh administrator. Anda dialihkan ke ${nextWs.workspace.name}.`,
+              duration: 6000,
+            });
+          } else {
+            toast.info("Keluar dari workspace", {
+              description: `Anda telah keluar dari ${prevName}. Dialihkan ke ${nextWs.workspace.name}.`,
+              duration: 5000,
+            });
+          }
+
+          try {
+            window.location.assign("/dashboard");
+          } catch {
+            // jsdom in tests
+          }
+          const safeReason: "removed" | "left" = reason === "left" ? "left" : "removed";
+          void logoutAndRedirect(safeReason);
+        }
+      } catch {
+        const safeReason: "removed" | "left" = reason === "left" ? "left" : "removed";
+        void logoutAndRedirect(safeReason);
+      }
+    },
+    [queryClient, setProjectId, setWorkspaceId],
+  );
+
+  // Real-time workspace events (role demotion/promotion and member removal)
+  const handleWorkspaceEvent = useCallback(
+    (event: WorkspaceEvent) => {
+      if (event.event === "workspace.member.role_changed") {
+        const payload = event.data;
+        if (payload?.userId === user.id) {
+          const newRole = payload.to;
+          if (newRole) {
+            queryClient.setQueryData<CurrentUser>(["auth", "me"], (old) => {
+              if (!old) return old;
+              return {
+                ...old,
+                memberships: old.memberships.map((m) =>
+                  m.workspace_id === (payload.workspaceId ?? activeWorkspaceId)
+                    ? { ...m, role: newRole }
+                    : m,
+                ),
+              };
+            });
+            void queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
+            if (activeWorkspaceId) {
+              void queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "members"] });
+            }
+            toast.info(`Peran Anda di workspace ini telah diubah menjadi ${newRole}`);
+          }
+        }
+      } else if (event.event === "workspace.member.removed") {
+        const payload = event.data as { userId?: string; workspaceId?: string; workspaceName?: string };
+        if (payload?.userId === user.id) {
+          const removedWsId = payload.workspaceId ?? activeWorkspaceId ?? "";
+          void handleWorkspaceFallback(removedWsId, "removed", payload.workspaceName);
+        }
+      }
+    },
+    [user.id, activeWorkspaceId, queryClient, handleWorkspaceFallback],
+  );
+
+  useWorkspaceStream(handleWorkspaceEvent);
   // Auto-open the create-workspace flow for a user with zero workspaces (fresh
   // register / invite) so onboarding starts immediately instead of landing on a
   // workspace-less shell.

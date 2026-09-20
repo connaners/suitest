@@ -29,7 +29,9 @@ from suitest_shared.domain.enums import Role
 from suitest_api.deps.scope import TenantContext, require_workspace_membership
 
 
-def require_role(allowed: set[Role]) -> Callable[[TenantContext], TenantContext]:
+def require_role(
+    allowed: set[Role] | frozenset[Role], message: str | None = None
+) -> Callable[[TenantContext], TenantContext]:
     """Return a FastAPI dependency that enforces ``ctx.role in allowed``.
 
     Raises ``403 Forbidden`` when the membership role is not permitted. Returns
@@ -42,9 +44,10 @@ def require_role(allowed: set[Role]) -> Callable[[TenantContext], TenantContext]
         ctx: TenantContext = Depends(require_workspace_membership),
     ) -> TenantContext:
         if ctx.role not in frozen_allowed:
+            detail = message or f"role '{ctx.role.value}' is not permitted on this endpoint"
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"role '{ctx.role.value}' is not permitted on this endpoint",
+                detail=detail,
             )
         return ctx
 

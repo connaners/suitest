@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import uuid
 
+from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, Index, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from suitest_shared.domain.enums import Role
 
@@ -28,7 +28,7 @@ class Membership(Base, TimestampMixin):
         ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     role: Mapped[Role] = mapped_column(SAEnum(Role, name="role"), default=Role.QA, nullable=False)
 

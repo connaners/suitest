@@ -213,6 +213,7 @@ async def list_workspace_members(
             joined_at=m.created_at,
         )
         for m in members
+        if m.user is not None
     ]
 
 
@@ -405,6 +406,9 @@ async def remove_workspace_member(
     svc = _build_service(session, workspace_id=workspace_id, user_id=str(user.id), role=role)
     try:
         outcome = await svc.remove_member(workspace_id, user_id)
+    except OwnerGrantRequiresOwnerError as exc:
+        await session.rollback()
+        _raise_service_error(exc, status_code=status.HTTP_403_FORBIDDEN)
     except SoleOwnerProtectedError as exc:
         await session.rollback()
         _raise_service_error(exc, status_code=status.HTTP_400_BAD_REQUEST)

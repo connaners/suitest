@@ -35,6 +35,7 @@ function SettingsScreen(): React.ReactElement {
     user.memberships.find((m) => m.workspace_id === activeWorkspaceId) ?? user.memberships[0];
   const role = activeMembership?.role;
   const workspaceId = activeMembership?.workspace_id ?? activeWorkspaceId;
+  const workspaceName = activeMembership?.workspace.name;
 
   const forcePassword = search.force_password === "1" || user.must_change_password === true;
   const showMembers = canSeeMembers(role);
@@ -65,7 +66,7 @@ function SettingsScreen(): React.ReactElement {
           {showMembers ? <TabsTrigger value="members">Members</TabsTrigger> : null}
           {workspaceId ? <TabsTrigger value="llm">LLM</TabsTrigger> : null}
           {workspaceId ? <TabsTrigger value="automation">Automation</TabsTrigger> : null}
-          {workspaceId ? <TabsTrigger value="api-keys">API Keys</TabsTrigger> : null}
+          {showMembers && workspaceId ? <TabsTrigger value="api-keys">API Keys</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="account" className="pt-4">
@@ -74,7 +75,7 @@ function SettingsScreen(): React.ReactElement {
 
         {showMembers && workspaceId ? (
           <TabsContent value="members" className="pt-4">
-            <MembersPanel workspaceId={workspaceId} currentRole={role} />
+            <MembersPanel workspaceId={workspaceId} workspaceName={workspaceName} currentRole={role} />
           </TabsContent>
         ) : null}
 
@@ -93,7 +94,7 @@ function SettingsScreen(): React.ReactElement {
           </TabsContent>
         ) : null}
 
-        {workspaceId ? (
+        {showMembers && workspaceId ? (
           <TabsContent value="api-keys" className="pt-4">
             <ApiKeysSettingsPanel canWrite={canWriteApiKeys} />
           </TabsContent>

@@ -6,6 +6,7 @@ import { ProviderModal } from "@/components/mcp/ProviderModal";
 import { RegisterMcpModal } from "@/components/mcp/RegisterMcpModal";
 import { RoutingEditor } from "@/components/mcp/RoutingEditor";
 import { Button } from "@/components/ui/button";
+import { usePermissions } from "@/hooks/use-permissions";
 import { fetchMcpProviders, type McpProviderSummary } from "@/lib/api-client";
 import { useWorkspaceStream } from "@/lib/ws-client";
 
@@ -20,6 +21,7 @@ function coerceHealth(raw: string): HealthStatus {
  * ``mcp.provider.health`` event on the active workspace channel.
  */
 export function McpServersPanel(): React.ReactElement {
+  const { canManageWorkspace } = usePermissions();
   const { data, refetch, isLoading, isError } = useQuery({
     queryKey: ["mcp-providers"] as const,
     queryFn: fetchMcpProviders,
@@ -44,28 +46,32 @@ export function McpServersPanel(): React.ReactElement {
           <span className="font-mono text-[10.5px] text-fg-5">
             {providers.length.toString()} provider{providers.length === 1 ? "" : "s"}
           </span>
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            data-testid="mcp-routing"
-            onClick={() => {
-              setRoutingOpen(true);
-            }}
-          >
-            Routing
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            data-testid="mcp-add-custom"
-            onClick={() => {
-              setRegisterOpen(true);
-            }}
-          >
-            Add Custom MCP
-          </Button>
+          {canManageWorkspace ? (
+            <>
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                data-testid="mcp-routing"
+                onClick={() => {
+                  setRoutingOpen(true);
+                }}
+              >
+                Routing
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                data-testid="mcp-add-custom"
+                onClick={() => {
+                  setRegisterOpen(true);
+                }}
+              >
+                Add Custom MCP
+              </Button>
+            </>
+          ) : null}
         </div>
       </header>
 

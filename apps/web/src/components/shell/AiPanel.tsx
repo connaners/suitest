@@ -20,6 +20,7 @@ import {
   type ChatToolEvent,
 } from "@/lib/chat-client";
 import { providerLabel } from "@/lib/llm-vendors";
+import { usePermissions } from "@/hooks/use-permissions";
 import { isEditable } from "@/lib/utils";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
 import { useAiPanel } from "@/stores/use-ai-panel";
@@ -121,6 +122,7 @@ function AiPanelInner(): React.ReactElement {
   const providerKey = capabilities?.llm?.provider ?? null;
   const workspaceId = useActiveWorkspace((s) => s.workspaceId);
   const autonomy = capabilities?.autonomy?.default ?? "manual";
+  const { canWriteTests } = usePermissions();
 
   const isOpen = useAiPanel((s) => s.isOpen);
   const toggle = useAiPanel((s) => s.toggle);
@@ -624,18 +626,20 @@ function AiPanelInner(): React.ReactElement {
                       : "."}
                   </p>
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      data-testid="ai-tool-approve"
-                      disabled={streaming}
-                      onClick={() => {
-                        const t = turn.tool;
-                        if (t) void approveTool(t);
-                      }}
-                      className="rounded-md bg-accent px-2.5 py-1 text-[11.5px] font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
-                    >
-                      Approve &amp; run
-                    </button>
+                    {canWriteTests ? (
+                      <button
+                        type="button"
+                        data-testid="ai-tool-approve"
+                        disabled={streaming}
+                        onClick={() => {
+                          const t = turn.tool;
+                          if (t) void approveTool(t);
+                        }}
+                        className="rounded-md bg-accent px-2.5 py-1 text-[11.5px] font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
+                      >
+                        Approve &amp; run
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       data-testid="ai-tool-reject"
@@ -691,23 +695,25 @@ function AiPanelInner(): React.ReactElement {
             className="flex-1 resize-none rounded-md border border-border bg-bg-elev-2 px-2 py-1.5 text-[12.5px] text-fg-1 placeholder:text-fg-5 outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
             data-testid="ai-panel-composer-input"
           />
-          <Button
-            type="button"
-            size="icon-sm"
-            variant={autoApprove ? "default" : "outline"}
-            aria-pressed={autoApprove}
-            aria-label="Auto-approve agent edits"
-            title={
-              autoApprove
-                ? "Auto-approve is ON — proposed edits apply without asking"
-                : "Auto-approve agent edits"
-            }
-            onClick={toggleAutoApprove}
-            className={autoApprove ? "" : "border-border bg-bg-elev-2 text-fg-1"}
-            data-testid="ai-panel-autoapprove"
-          >
-            <Zap className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
+          {canWriteTests ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant={autoApprove ? "default" : "outline"}
+              aria-pressed={autoApprove}
+              aria-label="Auto-approve agent edits"
+              title={
+                autoApprove
+                  ? "Auto-approve is ON — proposed edits apply without asking"
+                  : "Auto-approve agent edits"
+              }
+              onClick={toggleAutoApprove}
+              className={autoApprove ? "" : "border-border bg-bg-elev-2 text-fg-1"}
+              data-testid="ai-panel-autoapprove"
+            >
+              <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="icon-sm"

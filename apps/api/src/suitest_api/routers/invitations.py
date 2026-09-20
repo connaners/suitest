@@ -96,6 +96,7 @@ def _service(session: AsyncSession) -> InvitationService:
 async def create_invitation(
     workspace_id: str,
     body: InvitationCreateRequest,
+    request: Request,
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ) -> InvitationOut:
@@ -114,6 +115,17 @@ async def create_invitation(
         ) from exc
     await session.commit()
     inv = outcome.invitation
+    await publish_event(
+        request,
+        topic=f"workspace:{workspace_id}",
+        event="workspace.invitation.created",
+        data={
+            "workspaceId": workspace_id,
+            "invitationId": inv.id,
+            "email": inv.email,
+            "role": inv.role.value,
+        },
+    )
     return InvitationOut(
         id=inv.id,
         email=inv.email,
@@ -202,11 +214,12 @@ async def validate_invitation(
 @router.post("/invitations/{invitation_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_invitation(
     invitation_id: str,
+    request: Request,
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     try:
-        await _service(session).revoke(invitation_id=invitation_id, actor=user)
+        inv = await _service(session).revoke(invitation_id=invitation_id, actor=user)
     except InvitationForbiddenError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden") from exc
     except InvitationNotFoundError as exc:
@@ -214,12 +227,23 @@ async def revoke_invitation(
             status_code=status.HTTP_404_NOT_FOUND, detail="invite not found"
         ) from exc
     await session.commit()
+    await publish_event(
+        request,
+        topic=f"workspace:{inv.workspace_id}",
+        event="workspace.invitation.revoked",
+        data={
+            "workspaceId": inv.workspace_id,
+            "invitationId": inv.id,
+            "email": inv.email,
+        },
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/invitations/{invitation_id}/resend", response_model=InvitationOut)
 async def resend_invitation(
     invitation_id: str,
+    request: Request,
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ) -> InvitationOut:
@@ -233,6 +257,17 @@ async def resend_invitation(
         ) from exc
     await session.commit()
     inv = outcome.invitation
+    await publish_event(
+        request,
+        topic=f"workspace:{inv.workspace_id}",
+        event="workspace.invitation.updated",
+        data={
+            "workspaceId": inv.workspace_id,
+            "invitationId": inv.id,
+            "email": inv.email,
+            "role": inv.role.value,
+        },
+    )
     return InvitationOut(
         id=inv.id,
         email=inv.email,
@@ -245,12 +280,59 @@ async def resend_invitation(
     )
 
 
+class InvitationRoleUpdate(BaseModel):
+    role: Role
+
+
+@router.patch("/invitations/{invitation_id}", response_model=InvitationOut)
+async def update_invitation_role(
+    invitation_id: str,
+    body: InvitationRoleUpdate,
+    request: Request,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+) -> InvitationOut:
+    try:
+        inv = await _service(session).update_role(
+            invitation_id=invitation_id, role=body.role, actor=user
+        )
+    except InvitationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="invite not found"
+        ) from exc
+    except InvitationForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden") from exc
+    await session.commit()
+    await publish_event(
+        request,
+        topic=f"workspace:{inv.workspace_id}",
+        event="workspace.invitation.updated",
+        data={
+            "workspaceId": inv.workspace_id,
+            "invitationId": inv.id,
+            "email": inv.email,
+            "role": inv.role.value,
+        },
+    )
+    return InvitationOut(
+        id=inv.id,
+        email=inv.email,
+        role=inv.role,
+        expires_at=inv.expires_at,
+        accepted_at=inv.accepted_at,
+        revoked_at=inv.revoked_at,
+        declined_at=inv.declined_at,
+        link=None,
+    )
+
+
 @router.post(
     "/auth/accept-invite",
     response_model=AcceptInviteResponse,
 )
 async def accept_invitation(
     body: AcceptInviteRequest,
+    request: Request,
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     try:
@@ -270,6 +352,29 @@ async def accept_invitation(
             detail="This invitation was issued to a different email address.",
         ) from exc
     await session.commit()
+    if outcome.invitation is not None:
+        ws_id = outcome.invitation.workspace_id
+        await publish_event(
+            request,
+            topic=f"workspace:{ws_id}",
+            event="workspace.member.joined",
+            data={
+                "workspaceId": ws_id,
+                "userId": str(outcome.user.id),
+                "email": outcome.user.email,
+                "role": outcome.invitation.role.value,
+            },
+        )
+        await publish_event(
+            request,
+            topic=f"workspace:{ws_id}",
+            event="workspace.invitation.accepted",
+            data={
+                "workspaceId": ws_id,
+                "invitationId": outcome.invitation.id,
+                "email": outcome.invitation.email,
+            },
+        )
     if not outcome.issues_session:
         # The invited email already owns an active account. The membership is
         # attached, but no session cookie is issued: the invitee signs in with
@@ -315,13 +420,33 @@ async def approve_invitation(
             detail="This invitation was issued to a different email address.",
         ) from exc
     await session.commit()
-    # Out-of-band, post-commit: the Members panel refetches on this event
-    # instead of waiting for the admin's next manual reload.
+    ws_id = membership.workspace_id
     await publish_event(
         request,
-        topic=f"workspace:{membership.workspace_id}",
+        topic=f"workspace:{ws_id}",
         event="invitation.resolved",
         data={"invitationId": invitation_id, "status": "approved", "email": user.email},
+    )
+    await publish_event(
+        request,
+        topic=f"workspace:{ws_id}",
+        event="workspace.member.joined",
+        data={
+            "workspaceId": ws_id,
+            "userId": str(user.id),
+            "email": user.email,
+            "role": membership.role.value,
+        },
+    )
+    await publish_event(
+        request,
+        topic=f"workspace:{ws_id}",
+        event="workspace.invitation.accepted",
+        data={
+            "workspaceId": ws_id,
+            "invitationId": invitation_id,
+            "email": user.email,
+        },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -333,6 +458,8 @@ async def decline_invitation(
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
+    inv = await _service(session).repo.get_by_id(invitation_id)
+    ws_id = inv.workspace_id if inv else None
     try:
         invitation = await _service(session).decline(invitation_id=invitation_id, actor=user)
     except InvitationNotFoundError as exc:
@@ -351,4 +478,15 @@ async def decline_invitation(
         event="invitation.resolved",
         data={"invitationId": invitation_id, "status": "declined", "email": invitation.email},
     )
+    if ws_id:
+        await publish_event(
+            request,
+            topic=f"workspace:{ws_id}",
+            event="workspace.invitation.updated",
+            data={
+                "workspaceId": ws_id,
+                "invitationId": invitation_id,
+                "email": user.email,
+            },
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -4,6 +4,7 @@ import { Check, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api-client";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useActiveProject } from "@/stores/use-active-project";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
 
@@ -48,6 +49,7 @@ function StepNumber({ n }: { n: number }): React.ReactElement {
 export function OnboardingCard(): React.ReactElement | null {
   const projectId = useActiveProject((s) => s.projectId);
   const workspaceId = useActiveWorkspace((s) => s.workspaceId);
+  const { canManageWorkspace } = usePermissions();
   const [dismissed, setDismissed] = useState(() => isDismissed(workspaceId));
 
   // Re-read the per-workspace flag when the active workspace changes.
@@ -82,7 +84,7 @@ export function OnboardingCard(): React.ReactElement | null {
       const res = await api.get<{ items: unknown[] }>(`/workspaces/${workspaceId}/api-keys`);
       return res.data.items.length;
     },
-    enabled: workspaceId !== null,
+    enabled: workspaceId !== null && canManageWorkspace,
   });
 
   const steps: OnboardingStep[] = [
@@ -112,15 +114,19 @@ export function OnboardingCard(): React.ReactElement | null {
       to: "/cases",
       action: "Open cases",
     },
-    {
-      key: "apikey",
-      title: "Create an API key",
-      hint: "Connect the MCP server, CLI, or CI to this workspace.",
-      done: (keysQuery.data ?? 0) > 0,
-      to: "/settings",
-      search: { tab: "api-keys" },
-      action: "Open settings",
-    },
+    ...(canManageWorkspace
+      ? [
+          {
+            key: "apikey",
+            title: "Create an API key",
+            hint: "Connect the MCP server, CLI, or CI to this workspace.",
+            done: (keysQuery.data ?? 0) > 0,
+            to: "/settings",
+            search: { tab: "api-keys" },
+            action: "Open settings",
+          },
+        ]
+      : []),
   ];
 
   if (dismissed || steps.every((s) => s.done)) return null;

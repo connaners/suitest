@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "@/mocks/server";
 import { routeTree } from "@/routeTree.gen";
 import { CLOUD_CAPS, resetCaps, setCaps } from "@/test/capabilities";
+import { useActiveWorkspace } from "@/stores/use-active-workspace";
+import { useActiveProject } from "@/stores/use-active-project";
 
 function renderInbox() {
   const queryClient = new QueryClient({
@@ -242,5 +244,55 @@ describe("Inbox screen", () => {
 
     await waitFor(() => expect(screen.queryByTestId("inbox-card")).not.toBeInTheDocument());
     expect(await screen.findByText(/Inbox is empty/i)).toBeInTheDocument();
+  });
+
+  it("approves a WORKSPACE_INVITE with ref and switches active workspace to target workspace", async () => {
+    let approved = false;
+    useActiveWorkspace.getState().setWorkspaceId("ws_old");
+    useActiveProject.getState().setProjectId("proj_old");
+
+    const inviteWithRef = {
+      unreadCount: 1,
+      items: [
+        {
+          id: "inv_target",
+          kind: "WORKSPACE_INVITE",
+          title: "Admin invited you to Acme",
+          body: "Join as QA — approve or decline below.",
+          createdAt: "2026-05-27T11:13:40Z",
+          status: "unread",
+          ref: "ws_acme_new",
+        },
+      ],
+    };
+
+    server.use(
+      http.get("*/api/v1/auth/me", () =>
+        HttpResponse.json({
+          id: "u_demo",
+          email: "demo@suitest.dev",
+          name: "Maya",
+          memberships: [
+            { workspace_id: "ws_old", role: "VIEWER", workspace: { id: "ws_old", slug: "old", name: "Old" } },
+            { workspace_id: "ws_acme_new", role: "QA", workspace: { id: "ws_acme_new", slug: "acme", name: "Acme" } },
+          ],
+        }),
+      ),
+      http.get("*/api/v1/inbox", () =>
+        HttpResponse.json(approved ? { unreadCount: 0, items: [] } : inviteWithRef),
+      ),
+      http.post("*/api/v1/invitations/inv_target/approve", () => {
+        approved = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderInbox();
+    await screen.findByTestId("inbox-card", undefined, { timeout: 3000 });
+
+    await userEvent.click(screen.getByTestId("inbox-invite-approve"));
+
+    await waitFor(() => expect(screen.queryByTestId("inbox-card")).not.toBeInTheDocument());
+    expect(useActiveWorkspace.getState().workspaceId).toBe("ws_acme_new");
+    expect(useActiveProject.getState().projectId).toBeNull();
   });
 });
