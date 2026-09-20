@@ -124,8 +124,9 @@ async def tenant_via_api_key_or_session(
         )
 
     path_ws = request.path_params.get("workspaceId")
+    query_ws = request.query_params.get("workspaceId")
     workspace_id = _resolve_workspace_id(
-        x_workspace_id, path_ws if isinstance(path_ws, str) else None
+        x_workspace_id, path_ws if isinstance(path_ws, str) else None, query_ws
     )
     membership = await session.scalar(
         select(Membership).where(

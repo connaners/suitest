@@ -9,18 +9,24 @@ aioboto3 (object store) or a placeholder for ``file://`` artifacts.
 
 from __future__ import annotations
 
+import logging
+import time
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
+import anyio
 from arq.connections import ArqRedis
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_db.audit import write_audit
 from suitest_db.models.case import TestCase, TestStep
-from suitest_db.models.run import Run, RunStep
+from suitest_db.models.run import Artifact, Run, RunStep
+from suitest_db.models.user import User
 from suitest_db.repositories.projects import ProjectRepo
 from suitest_db.repositories.run_step_logs import RunStepLogRepo
 from suitest_db.repositories.runs import RunRepo
@@ -29,6 +35,8 @@ from suitest_shared.domain.enums import RunStatus
 from suitest_shared.schemas.pagination import Page, PageMeta
 
 from suitest_api.auth.db import get_async_session
+from suitest_api.auth.manager import current_active_user_optional
+from suitest_api.deps.api_key import tenant_via_api_key_or_session
 from suitest_api.deps.arq import get_arq
 from suitest_api.deps.run_dispatch import dispatch_run
 from suitest_api.deps.scope import TenantContext, require_workspace_membership
@@ -56,7 +64,14 @@ from suitest_api.schemas.runs import (
     RerunRunBody,
     RunPublic,
 )
-from suitest_api.services.file_storage import presign_s3_get
+from suitest_api.services.file_storage import (
+    create_media_token,
+    get_s3_object_meta,
+    is_internal_s3_endpoint,
+    presign_s3_get,
+    stream_s3_artifact,
+    verify_media_token,
+)
 from suitest_api.services.junit_report_service import render_junit
 from suitest_api.services.replay_service import StateChange, compute_state_delta
 from suitest_api.services.run_service import RunService
@@ -67,6 +82,7 @@ from suitest_api.settings import get_settings
 # — runner is a separate process and its settings module pulls a redis client
 # on import. Keep in sync with ``suitest_runner.worker.WorkerSettings.queue_name``.
 _RUNS_QUEUE = "suitest:runs"
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["runs"])
 
@@ -578,23 +594,126 @@ async def get_run_artifacts(
 
 _ARTIFACT_SIGNED_URL_TTL_SECONDS = 3600
 
+_SAFE_INLINE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/gif",
+    "video/webm",
+    "video/mp4",
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/wav",
+    "audio/ogg",
+    "audio/webm",
+    "text/plain",
+}
+
+
+def _safe_filename(url_or_name: str) -> str:
+    unquoted = unquote(url_or_name)
+    base = unquoted.replace("\\", "/").split("/")[-1].split("?")[0]
+    cleaned = "".join(c for c in base if c.isascii() and (c.isalnum() or c in "._- "))
+    cleaned = cleaned.strip()[:128]
+    return cleaned or "artifact"
+
+
+def _parse_http_range(range_header: str | None, file_size: int) -> tuple[int, int] | None:
+    """Parse HTTP Range header (bytes=start-end).
+
+    Returns (start, end) inclusive, or None if no valid/supported range requested.
+    Raises HTTPException(416) if range is unsatisfiable or multipart.
+    """
+    if not range_header or file_size <= 0:
+        return None
+    range_str = range_header.strip()
+    if len(range_str) > 512:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Range header too long",
+        )
+    prefix, sep, val = range_str.partition("=")
+    if not sep or prefix.strip().lower() != "bytes":
+        return None
+    val = val.strip()
+    if "," in val:
+        # Multipart ranges rejected to protect against DoS
+        raise HTTPException(
+            status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+    parts = val.split("-", 1)
+    if len(parts) != 2:
+        return None
+    start_str, end_str = parts[0].strip(), parts[1].strip()
+
+    if not start_str and not end_str:
+        return None
+
+    try:
+        if not start_str:
+            # Suffix range: bytes=-200
+            suffix = int(end_str)
+            if suffix <= 0 or file_size == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                    headers={"Content-Range": f"bytes */{file_size}"},
+                )
+            start = max(0, file_size - suffix)
+            end = file_size - 1
+            return start, end
+        elif not end_str:
+            # Open-ended: bytes=500-
+            start = int(start_str)
+            if start < 0 or start >= file_size:
+                raise HTTPException(
+                    status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                    headers={"Content-Range": f"bytes */{file_size}"},
+                )
+            return start, file_size - 1
+        else:
+            # Slice: bytes=0-499
+            start = int(start_str)
+            end = int(end_str)
+            if start < 0 or start > end or start >= file_size:
+                raise HTTPException(
+                    status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                    headers={"Content-Range": f"bytes */{file_size}"},
+                )
+            end = min(end, file_size - 1)
+            return start, end
+    except ValueError:
+        # Malformed integer (e.g. bytes=foo-bar): fallback to full content (200 OK)
+        return None
+
+
+async def _stream_file_range(
+    path: Path, start: int, length: int, chunk_size: int = 64 * 1024
+) -> AsyncIterator[bytes]:
+    file = await anyio.open_file(path, "rb")
+    try:
+        await file.seek(start)
+        remaining = length
+        while remaining > 0:
+            to_read = min(remaining, chunk_size)
+            chunk = await file.read(to_read)
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+    finally:
+        await file.aclose()
+
 
 @router.get("/runs/{run_id}/artifacts/{artifact_id}", response_model=ArtifactSignedUrl)
 async def get_artifact_signed_url(
     run_id: str,
     artifact_id: str,
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
     session: AsyncSession = Depends(get_async_session),
 ) -> ArtifactSignedUrl:
-    """Return a real S3/MinIO presigned download URL for one artifact (M1c Task 18).
-
-    Replaces the M1a stub presigner with an :mod:`aioboto3` ``generate_presigned_url``
-    call against the configured bucket. Only ``s3://...`` artifacts are presigned —
-    legacy ``file://`` artifacts (dev fixtures) return 404 here, the client should
-    fall back to the static ``/artifacts/raw/`` route the static server exposes.
-    Emits an ``artifact.signed_url`` audit row so download attribution is
-    captured even though the actual fetch happens directly against S3.
-    """
+    """Return a real S3/MinIO presigned download URL or streaming gateway URL for one artifact."""
     run_id = await _run_in_scope_or_404(session, run_id, ctx.workspace_id)
     repo = RunRepo(session)
     artifacts = await repo.get_artifacts(run_id)
@@ -603,10 +722,6 @@ async def get_artifact_signed_url(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="artifact not found")
 
     if artifact.url.startswith("local://"):
-        # Local mode: no presigning — point the client at the raw streaming
-        # endpoint on this same API. The workspace rides as a query param
-        # because the raw URL is loaded as a browser <img>/<video> src, which
-        # cannot send the X-Workspace-Id header (membership is still enforced).
         return ArtifactSignedUrl(
             url=f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/raw?workspaceId={ctx.workspace_id}",
             expires_in_seconds=0,
@@ -614,13 +729,52 @@ async def get_artifact_signed_url(
             mime_type=artifact.mime_type,
         )
 
-    bucket, key = artifact.url.removeprefix("s3://").split("/", 1)
+    settings = get_settings()
+    s3_path = artifact.url.removeprefix("s3://")
+    if "/" not in s3_path:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid s3 url")
+    bucket, key = s3_path.split("/", 1)
+    if bucket != settings.s3_bucket:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="access to external bucket forbidden",
+        )
+    unquoted_key = unquote(key).replace("\\", "/")
+    normalized_key = key.replace("\\", "/")
+    if (
+        not key
+        or not key.strip()
+        or ".." in normalized_key
+        or ".." in unquoted_key
+        or "\x00" in key
+        or "\x00" in unquoted_key
+        or "%00" in key
+        or normalized_key.startswith("/")
+        or unquoted_key.startswith("/")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid key path",
+        )
 
-    url = await presign_s3_get(
-        bucket,
-        key,
-        expires_in=_ARTIFACT_SIGNED_URL_TTL_SECONDS,
+    use_gateway = settings.s3_force_gateway or (
+        not settings.s3_public_endpoint and is_internal_s3_endpoint(settings.s3_endpoint)
     )
+
+    if use_gateway:
+        now = int(time.time())
+        expires_at = now + _ARTIFACT_SIGNED_URL_TTL_SECONDS
+        token = create_media_token(run_id, artifact_id, ctx.workspace_id, expires_at)
+        url = (
+            f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/raw"
+            f"?workspaceId={ctx.workspace_id}&token={token}&expires={expires_at}"
+        )
+    else:
+        url = await presign_s3_get(
+            bucket,
+            key,
+            expires_in=_ARTIFACT_SIGNED_URL_TTL_SECONDS,
+        )
 
     await write_audit(
         session,
@@ -640,27 +794,408 @@ async def get_artifact_signed_url(
     )
 
 
-@router.get("/runs/{run_id}/artifacts/{artifact_id}/raw")
-async def get_artifact_raw(
+async def _authenticate_raw_request(
+    request: Request,
     run_id: str,
     artifact_id: str,
-    ctx: TenantContext = Depends(require_workspace_membership),
-    session: AsyncSession = Depends(get_async_session),
-) -> FileResponse:
-    """Stream one ``local://`` artifact from ``SUITEST_ARTIFACTS_DIR`` (local mode)."""
-    run_id = await _run_in_scope_or_404(session, run_id, ctx.workspace_id)
-    repo = RunRepo(session)
-    artifacts = await repo.get_artifacts(run_id)
-    artifact = next((a for a in artifacts if a.id == artifact_id), None)
-    if artifact is None or not artifact.url.startswith("local://"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="artifact not found")
+    workspace_id: str | None,
+    token: str | None,
+    expires: int | None,
+    user: User | None,
+    session: AsyncSession,
+) -> str:
+    """Authenticate via HMAC media token OR active session/API key; returns resolved workspace_id."""
+    if token:
+        candidate_ws = workspace_id or request.headers.get("X-Workspace-Id")
+        if not candidate_ws:
+            _log.warning(
+                "artifact.access_rejected: workspace not specified for media token (run_id=%s, artifact_id=%s)",
+                run_id,
+                artifact_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="workspace not specified",
+            )
+        if not verify_media_token(token, run_id, artifact_id, candidate_ws, expires_at=expires):
+            _log.warning(
+                "artifact.access_rejected: invalid or expired media token (run_id=%s, artifact_id=%s, ws=%s)",
+                run_id,
+                artifact_id,
+                candidate_ws,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="invalid or expired media token",
+            )
+        return candidate_ws
 
-    root = Path(get_settings().artifacts_dir).resolve()  # noqa: ASYNC240 — metadata-only, local FS
-    path = (root / artifact.url.removeprefix("local://")).resolve()
-    # Path-traversal guard: the file must live inside artifacts_dir.
-    if not path.is_relative_to(root) or not path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="artifact not found")
-    return FileResponse(path, media_type=artifact.mime_type)
+    ctx = await tenant_via_api_key_or_session(
+        request=request,
+        session=session,
+        x_workspace_id=request.headers.get("X-Workspace-Id"),
+        x_api_key=request.headers.get("X-API-Key"),
+        user=user,
+    )
+    return ctx.workspace_id
+
+
+async def _resolve_artifact_meta_and_source(
+    artifact: Artifact,
+) -> tuple[int, str, str | None, Path | None, str, str]:
+    """Validate artifact scheme, enforce anti-SSRF/path-traversal, and fetch metadata.
+
+    Returns: (file_size, mime_type, etag, local_path, s3_bucket, s3_key)
+    """
+    settings = get_settings()
+    if artifact.url.startswith("s3://"):
+        s3_path = artifact.url.removeprefix("s3://")
+        if "/" not in s3_path:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid s3 url")
+        bucket, key = s3_path.split("/", 1)
+        if bucket != settings.s3_bucket:
+            _log.warning(
+                "artifact.access_rejected: external bucket %s forbidden (expected %s)",
+                bucket,
+                settings.s3_bucket,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="access to external bucket forbidden",
+            )
+        unquoted_key = unquote(key).replace("\\", "/")
+        normalized_key = key.replace("\\", "/")
+        if (
+            not key
+            or not key.strip()
+            or ".." in normalized_key
+            or ".." in unquoted_key
+            or "\x00" in key
+            or "\x00" in unquoted_key
+            or "%00" in key
+            or normalized_key.startswith("/")
+            or unquoted_key.startswith("/")
+        ):
+            _log.warning(
+                "artifact.access_rejected: path traversal or invalid key blocked (key=%r)",
+                key,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid key path",
+            )
+        try:
+            meta_size, meta_mime, s3_etag = await get_s3_object_meta(bucket, key)
+        except Exception as exc:
+            err_code = ""
+            if hasattr(exc, "response") and isinstance(exc.response, dict):
+                err_code = str(exc.response.get("Error", {}).get("Code", ""))
+            if err_code in ("404", "NoSuchKey", "NotFound"):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="artifact not found in storage",
+                ) from exc
+            meta_size, meta_mime, s3_etag = 0, None, None
+
+        file_size = meta_size if meta_size > 0 else (artifact.size_bytes or 0)
+        mime_type = artifact.mime_type or meta_mime or "application/octet-stream"
+        etag = s3_etag or f"{artifact.id}-{file_size}"
+        return file_size, mime_type, etag, None, bucket, key
+
+    if artifact.url.startswith("local://"):
+        root = Path(settings.artifacts_dir).resolve()  # noqa: ASYNC240 — metadata-only, local FS
+        local_rel = artifact.url.removeprefix("local://")
+        unquoted_local = unquote(local_rel).replace("\\", "/")
+        normalized_local = local_rel.replace("\\", "/")
+        if (
+            ".." in normalized_local
+            or ".." in unquoted_local
+            or "\x00" in normalized_local
+            or "\x00" in unquoted_local
+            or "%00" in normalized_local
+        ):
+            _log.warning(
+                "artifact.access_rejected: local path traversal attempted in %r",
+                artifact.url,
+            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="artifact not found")
+        path = (root / unquoted_local).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="artifact not found",
+            )
+        stat = path.stat()
+        mime = artifact.mime_type or "application/octet-stream"
+        return stat.st_size, mime, f"{stat.st_mtime_ns}-{stat.st_size}", path, "", ""
+
+    if artifact.url.startswith("file://"):
+        raw_path = artifact.url.removeprefix("file://")
+        unquoted_raw = unquote(raw_path)
+        if "\x00" in raw_path or "\x00" in unquoted_raw or "%00" in raw_path:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid file path")
+        path = Path(unquoted_raw).resolve()  # noqa: ASYNC240 — metadata-only, local FS
+        if not path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="artifact not found",
+            )
+        stat = path.stat()
+        mime = artifact.mime_type or "application/octet-stream"
+        return stat.st_size, mime, f"{stat.st_mtime_ns}-{stat.st_size}", path, "", ""
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unsupported artifact scheme")
+
+
+def _check_if_none_match(request: Request, etag: str | None) -> Response | None:
+    if_none_match = request.headers.get("if-none-match")
+    if not (if_none_match and etag):
+        return None
+    normalized_server = etag.strip().strip('"').removeprefix("W/")
+    client_etags = {
+        t.strip().strip('"').removeprefix("W/") for t in if_none_match.split(",") if t.strip()
+    }
+    if "*" in client_etags or normalized_server in client_etags:
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers={"ETag": f'"{normalized_server}"'},
+        )
+    return None
+
+
+def _build_raw_headers(
+    artifact_url: str,
+    mime_type: str,
+    etag: str | None,
+    download: bool,
+    is_terminal: bool = False,
+) -> dict[str, str]:
+    ascii_filename = _safe_filename(artifact_url)
+    unquoted = (
+        unquote(artifact_url).replace("\\", "/").split("/")[-1].split("?")[0].strip() or "artifact"
+    )
+    rfc5987_filename = quote(unquoted, safe=".-_")
+    mime_lower = mime_type.lower()
+    disposition_type = (
+        "attachment" if (download or mime_lower not in _SAFE_INLINE_MIME_TYPES) else "inline"
+    )
+    disposition = (
+        f"{disposition_type}; filename=\"{ascii_filename}\"; filename*=UTF-8''{rfc5987_filename}"
+    )
+
+    if mime_lower in _SAFE_INLINE_MIME_TYPES and not download:
+        if mime_lower.startswith(("video/", "audio/")):
+            csp = "default-src 'none'; media-src 'self' blob: data:; style-src 'unsafe-inline'"
+        elif mime_lower.startswith("image/"):
+            csp = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"
+        else:
+            csp = "default-src 'none'; style-src 'unsafe-inline'"
+    else:
+        csp = "default-src 'none'; sandbox"
+
+    cache_control = "private, max-age=86400, immutable" if is_terminal else "private, max-age=3600"
+
+    headers = {
+        "Content-Security-Policy": csp,
+        "X-Content-Type-Options": "nosniff",
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, ETag",
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": disposition,
+        "Cache-Control": cache_control,
+    }
+    if etag:
+        headers["ETag"] = f'"{etag.strip()}"'
+    return headers
+
+
+def _stream_artifact_payload(
+    request: Request,
+    artifact_url: str,
+    mime_type: str,
+    headers: dict[str, str],
+    file_size: int,
+    byte_range: tuple[int, int] | None,
+    path: Path | None,
+    bucket: str,
+    key: str,
+) -> Response:
+    if byte_range is not None:
+        start_byte, end_byte = byte_range
+        content_length = end_byte - start_byte + 1
+        range_headers = {
+            **headers,
+            "Content-Range": f"bytes {start_byte}-{end_byte}/{file_size}",
+            "Content-Length": str(content_length),
+        }
+        if request.method == "HEAD":
+            return Response(
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                media_type=mime_type,
+                headers=range_headers,
+            )
+        if artifact_url.startswith("s3://"):
+            stream = stream_s3_artifact(bucket, key, start_byte=start_byte, end_byte=end_byte)
+            return StreamingResponse(
+                stream,
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                media_type=mime_type,
+                headers=range_headers,
+            )
+        if path is not None:
+            stream = _stream_file_range(path, start=start_byte, length=content_length)
+            return StreamingResponse(
+                stream,
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                media_type=mime_type,
+                headers=range_headers,
+            )
+
+    resp_headers = {**headers, "Content-Length": str(file_size)}
+    if request.method == "HEAD":
+        return Response(status_code=status.HTTP_200_OK, media_type=mime_type, headers=resp_headers)
+    if artifact_url.startswith("s3://"):
+        stream = stream_s3_artifact(bucket, key)
+        return StreamingResponse(
+            stream, status_code=status.HTTP_200_OK, media_type=mime_type, headers=resp_headers
+        )
+    if path is not None:
+        return FileResponse(path, media_type=mime_type, headers=headers)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="artifact not found")
+
+
+@router.get(
+    "/runs/{run_id}/artifacts/{artifact_id}/raw",
+    operation_id="get_artifact_raw",
+)
+async def get_artifact_raw(
+    request: Request,
+    run_id: str,
+    artifact_id: str,
+    workspaceId: str | None = Query(default=None),
+    token: str | None = Query(default=None),
+    expires: int | None = Query(default=None),
+    download: bool = Query(default=False),
+    user: User | None = Depends(current_active_user_optional),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    """Stream one artifact (s3://, local://, file://) with dual-auth, range requests, ETag, and MIME sanitization."""
+    return await _handle_artifact_raw(
+        request=request,
+        run_id=run_id,
+        artifact_id=artifact_id,
+        workspaceId=workspaceId,
+        token=token,
+        expires=expires,
+        download=download,
+        user=user,
+        session=session,
+    )
+
+
+@router.head(
+    "/runs/{run_id}/artifacts/{artifact_id}/raw",
+    operation_id="head_artifact_raw",
+)
+async def head_artifact_raw(
+    request: Request,
+    run_id: str,
+    artifact_id: str,
+    workspaceId: str | None = Query(default=None),
+    token: str | None = Query(default=None),
+    expires: int | None = Query(default=None),
+    download: bool = Query(default=False),
+    user: User | None = Depends(current_active_user_optional),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    """Retrieve metadata headers for one artifact without downloading the payload body."""
+    return await _handle_artifact_raw(
+        request=request,
+        run_id=run_id,
+        artifact_id=artifact_id,
+        workspaceId=workspaceId,
+        token=token,
+        expires=expires,
+        download=download,
+        user=user,
+        session=session,
+    )
+
+
+async def _handle_artifact_raw(
+    request: Request,
+    run_id: str,
+    artifact_id: str,
+    workspaceId: str | None = Query(default=None),
+    token: str | None = Query(default=None),
+    expires: int | None = Query(default=None),
+    download: bool = Query(default=False),
+    user: User | None = Depends(current_active_user_optional),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    """Stream one artifact (s3://, local://, file://) with dual-auth, range requests, ETag, and MIME sanitization."""
+    resolved_ws_id = await _authenticate_raw_request(
+        request, run_id, artifact_id, workspaceId, token, expires, user, session
+    )
+
+    run_db_id = await _run_in_scope_or_404(session, run_id, resolved_ws_id)
+    repo = RunRepo(session)
+    run = await repo.get_by_id(run_db_id)
+    is_terminal = bool(
+        run is not None
+        and run.status
+        in {
+            RunStatus.PASS,
+            RunStatus.FAIL,
+            RunStatus.ERROR,
+            RunStatus.CANCELLED,
+            RunStatus.INTERRUPTED,
+        }
+    )
+
+    artifacts = await repo.get_artifacts(run_db_id)
+    artifact = next((a for a in artifacts if a.id == artifact_id), None)
+    if artifact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="artifact not found",
+        )
+
+    file_size, mime_type, etag, path, bucket, key = await _resolve_artifact_meta_and_source(
+        artifact
+    )
+
+    cached_resp = _check_if_none_match(request, etag)
+    if cached_resp is not None:
+        return cached_resp
+
+    base_headers = _build_raw_headers(
+        artifact.url, mime_type, etag, download, is_terminal=is_terminal
+    )
+
+    range_header = request.headers.get("range")
+    byte_range = _parse_http_range(range_header, file_size)
+
+    # RFC 9110 Section 13.1.8: If-Range conditional evaluation
+    if_range = request.headers.get("if-range")
+    if byte_range is not None and if_range and etag:
+        norm_if_range = if_range.strip().strip('"').removeprefix("W/")
+        norm_etag = etag.strip().strip('"').removeprefix("W/")
+        if norm_if_range != norm_etag:
+            # Representation changed: ignore Range header and serve full content (200 OK)
+            byte_range = None
+
+    return _stream_artifact_payload(
+        request=request,
+        artifact_url=artifact.url,
+        mime_type=mime_type,
+        headers=base_headers,
+        file_size=file_size,
+        byte_range=byte_range,
+        path=path,
+        bucket=bucket,
+        key=key,
+    )
 
 
 @router.get("/runs/{run_id}/network", response_model=RunNetworkResponse)
