@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 from io import BytesIO
 from pathlib import Path
 from typing import Any, BinaryIO
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import aioboto3
 import anyio
@@ -70,6 +70,11 @@ def is_internal_s3_endpoint(endpoint_url: str) -> bool:
         return False
 
 
+def _derive_media_token_key(secret: str) -> bytes:
+    """Derive a domain-separated HMAC key for media tokens from auth_secret."""
+    return hmac.new(secret.encode(), b"suitest-media-token-v1", hashlib.sha256).digest()
+
+
 def create_media_token(
     run_id: str,
     artifact_id: str,
@@ -79,7 +84,8 @@ def create_media_token(
     secret: str | None = None,
 ) -> str:
     """Create a tamper-proof HMAC token for raw artifact streaming."""
-    key = (secret if secret is not None else get_settings().auth_secret).encode()
+    raw_secret = secret if secret is not None else get_settings().auth_secret
+    key = _derive_media_token_key(raw_secret)
     payload = (
         f"{len(run_id)}:{run_id}:{len(artifact_id)}:{artifact_id}:"
         f"{len(workspace_id)}:{workspace_id}:{expires_at}"
@@ -118,7 +124,8 @@ def verify_media_token(
         if current_ts > exp:
             return False
 
-        key = (secret if secret is not None else get_settings().auth_secret).encode()
+        raw_secret = secret if secret is not None else get_settings().auth_secret
+        key = _derive_media_token_key(raw_secret)
         expected_payload = (
             f"{len(run_id)}:{run_id}:{len(artifact_id)}:{artifact_id}:"
             f"{len(workspace_id)}:{workspace_id}:{exp}"
@@ -135,7 +142,11 @@ def local_path(key: str) -> Path:
     Uploads share the runner's artifacts root so the existing ``local://``
     read paths (``GET /runs/:id/artifacts/:id/raw``) serve them unchanged.
     """
-    return Path(get_settings().artifacts_dir).resolve() / key
+    root = Path(get_settings().artifacts_dir).resolve()
+    target = (root / key).resolve()
+    if not target.is_relative_to(root):
+        raise ValueError(f"Key {key!r} escapes artifacts directory")
+    return target
 
 
 def workspace_prefix(workspace_id: str) -> str:
@@ -145,7 +156,16 @@ def workspace_prefix(workspace_id: str) -> str:
 
 def key_in_workspace(key: str, workspace_id: str) -> bool:
     """True iff ``key`` is a well-formed object under the workspace's prefix."""
-    return key.startswith(workspace_prefix(workspace_id)) and ".." not in key
+    prefix = workspace_prefix(workspace_id)
+    if not key.startswith(prefix):
+        return False
+    unquoted = key
+    for _ in range(3):
+        next_unquoted = unquote(unquoted)
+        if next_unquoted == unquoted:
+            break
+        unquoted = next_unquoted
+    return ".." not in unquoted and "\\" not in unquoted and "\x00" not in unquoted
 
 
 def object_id(key: str) -> str:
@@ -299,6 +319,12 @@ async def stream_s3_artifact(
         region_name=settings.s3_region,
     ) as client:
         resp = await client.get_object(**get_kwargs)
+        if "Range" in get_kwargs and "ContentRange" in resp:
+            content_range = str(resp["ContentRange"])
+            if not content_range.startswith(f"bytes {start_byte}-"):
+                raise RuntimeError(
+                    f"S3 ContentRange mismatch: expected bytes {start_byte}-..., got {content_range}"
+                )
         stream = resp["Body"]
         async with stream:
             while True:
@@ -316,15 +342,45 @@ async def read_bytes(url: str) -> bytes | None:
     (object store). Returns ``None`` when the object is missing — a caller
     embedding evidence should degrade to "no screenshot", never 500.
     """
+    settings = get_settings()
+    root = Path(settings.artifacts_dir).resolve()  # noqa: ASYNC240 — metadata-only, local FS
+
     if url.startswith("file://"):
-        path = Path(url[len("file://") :])
-        return await _read_local(path)
+        raw_path = url[len("file://") :]
+        for _ in range(3):
+            next_unquoted = unquote(raw_path)
+            if next_unquoted == raw_path:
+                break
+            raw_path = next_unquoted
+        if "\x00" in raw_path:
+            return None
+        target = Path(raw_path).resolve()  # noqa: ASYNC240 — metadata-only, local FS
+        if not target.is_relative_to(root):
+            return None
+        return await _read_local(target)
+
     if url.startswith("local://"):
-        return await _read_local(local_path(url[len("local://") :]))
+        raw_key = url[len("local://") :]
+        for _ in range(3):
+            next_unquoted = unquote(raw_key)
+            if next_unquoted == raw_key:
+                break
+            raw_key = next_unquoted
+        if "\x00" in raw_key:
+            return None
+        try:
+            target = local_path(raw_key)
+        except ValueError:
+            return None
+        return await _read_local(target)
+
     if url.startswith("s3://"):
         _, _, rest = url.partition("s3://")
         bucket, _, key = rest.partition("/")
-        settings = get_settings()
+        if bucket != settings.s3_bucket:
+            return None
+        if ".." in key or "\\" in key or not key.startswith(("runs/", "uploads/")):
+            return None
         async with aioboto3.Session().client(
             "s3",
             endpoint_url=settings.s3_endpoint,

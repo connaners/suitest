@@ -27,6 +27,7 @@ producers can lazily yield artifacts without us materialising the whole list
 from __future__ import annotations
 
 import mimetypes
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
@@ -89,7 +90,8 @@ async def upload_artifacts(
     repo = ArtifactRepo(session)
     storage = make_storage(settings)
     for art in pending:
-        key = f"runs/{run_id}/step-{step_order}/{art.kind.lower()}/{art.filename}"
+        safe_filename = Path(art.filename.replace("\\", "/")).name or "artifact"
+        key = f"runs/{run_id}/step-{step_order}/{art.kind.lower()}/{safe_filename}"
         body = _body_bytes(art)
         content_type = (
             art.content_type or mimetypes.guess_type(art.filename)[0] or "application/octet-stream"

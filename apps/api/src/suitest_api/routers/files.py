@@ -97,7 +97,12 @@ async def get_file_raw(
     """Stream one owned object from disk (local mode — the signed-url target)."""
     if not file_storage.key_in_workspace(key, ctx.workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found")
-    path = file_storage.local_path(key)
+    try:
+        path = file_storage.local_path(key)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="file not found"
+        ) from None
     if not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found")
     mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -113,7 +118,12 @@ async def delete_file(
     """Delete an object the caller owns (no-op-safe; 404 for out-of-scope keys)."""
     if not file_storage.key_in_workspace(key, ctx.workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found")
-    await file_storage.delete(key)
+    try:
+        await file_storage.delete(key)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="file not found"
+        ) from None
     await write_audit(
         session,
         workspace_id=ctx.workspace_id,

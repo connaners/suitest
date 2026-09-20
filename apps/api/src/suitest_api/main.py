@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -45,12 +46,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from suitest_api.integrations.jira_adapter import _IdentityCrypto
     from suitest_api.integrations.registry import adapter_registry, notifier_factories
     from suitest_api.integrations.slack_adapter import SlackAdapter
+    from suitest_api.services.file_storage import is_internal_s3_endpoint
     from suitest_api.ws.manager import WsConnectionManager
 
     if not getattr(app.state, "settings", None):
         app.state.settings = get_settings()
     app.state.started_at = time.monotonic()
     app.state.capabilities = build_base_capabilities()
+
+    settings = app.state.settings
+    use_gateway = settings.s3_force_gateway or (
+        not settings.s3_public_endpoint and is_internal_s3_endpoint(settings.s3_endpoint)
+    )
+    delivery_mode = "gateway" if use_gateway else "presign"
+    structlog.get_logger(__name__).info(
+        "artifact_delivery.startup",
+        mode=delivery_mode,
+        s3_endpoint=settings.s3_endpoint,
+        s3_public_endpoint=settings.s3_public_endpoint,
+        force_gateway=settings.s3_force_gateway,
+    )
+    if settings.auth_secret == "dev-secret-change-me" and settings.mode != "local":
+        structlog.get_logger(__name__).warning(
+            "security.default_auth_secret",
+            detail="SUITEST_AUTH_SECRET is using default insecure value; configure a unique secret in production",
+        )
 
     if app.state.settings.database_url.startswith("sqlite"):
         from suitest_db.bootstrap import create_local_schema

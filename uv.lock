@@ -2712,6 +2712,7 @@ version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "aioboto3" },
+    { name = "anyio" },
     { name = "arq" },
     { name = "fastapi" },
     { name = "fastapi-users", extra = ["oauth", "sqlalchemy"] },
@@ -2741,6 +2742,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aioboto3", specifier = ">=12.4" },
+    { name = "anyio", specifier = ">=4" },
     { name = "arq", specifier = ">=0.26" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "fastapi-users", extras = ["sqlalchemy", "oauth"], specifier = ">=15.0.5" },
