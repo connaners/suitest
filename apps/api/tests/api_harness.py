@@ -28,7 +28,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from suitest_api.auth.db import get_async_session
-from suitest_api.auth.manager import current_active_user
+from suitest_api.auth.manager import current_active_user, current_active_user_optional
 from suitest_api.main import create_app
 from suitest_db.base import Base
 from suitest_db.models.llm_config import LLMConfig
@@ -64,6 +64,7 @@ class ApiDb:
         app.dependency_overrides[get_async_session] = _override_session
         if user is not None:
             app.dependency_overrides[current_active_user] = lambda: user
+            app.dependency_overrides[current_active_user_optional] = lambda: user
         return app
 
     @asynccontextmanager
