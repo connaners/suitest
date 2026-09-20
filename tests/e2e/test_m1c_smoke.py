@@ -115,4 +115,9 @@ async def test_full_run_lifecycle(
     assert signed_resp.status_code == 200, signed_resp.text
     signed_url = signed_resp.json().get("url")
     assert isinstance(signed_url, str), signed_url
-    assert signed_url.startswith(("http://", "https://")), signed_url
+    assert signed_url.startswith(("http://", "https://", "/api/v1/")), signed_url
+
+    # --- 5. Verify artifact is reachable via signed URL / streaming gateway -
+    raw_resp = await api_client.get(signed_url)
+    assert raw_resp.status_code == 200, raw_resp.text
+    assert len(raw_resp.content) > 0
