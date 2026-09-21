@@ -1,10 +1,10 @@
 """Pydantic schemas exposed by FastAPI-Users routes."""
 
 import uuid
+from typing import Annotated
 
 from fastapi_users import schemas
 from pydantic import BaseModel, Field, StringConstraints
-from typing import Annotated
 
 
 class UserRead(schemas.BaseUser[uuid.UUID]):

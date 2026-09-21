@@ -988,30 +988,8 @@ export async function changeOwnPassword(input: ChangePasswordRequest): Promise<v
 export async function updateOwnName(
   name: string,
 ): Promise<components["schemas"]["MeResponse"]> {
-  const response = await fetch("/auth/me", {
-    method: "PATCH",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-
-  const payload = response.headers.get("content-type")?.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    const message =
-      typeof payload === "object" && payload && "detail" in payload
-        ? String((payload as { detail?: string }).detail ?? "Update failed")
-        : typeof payload === "string"
-          ? payload
-          : "Update failed";
-    throw new ApiError(response.status, "UNKNOWN", message, response.status >= 500, {
-      payload,
-    });
-  }
-
-  return payload as components["schemas"]["MeResponse"];
+  const { data } = await api.patch<components["schemas"]["MeResponse"]>("/auth/me", { name });
+  return data;
 }
 
 /** ``POST /workspaces/:id/invitations`` — create invite, returns copyable link. */

@@ -7,7 +7,7 @@ I see", so it depends only on ``current_active_user`` + a DB session, never on
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_db.audit import write_audit
 from suitest_db.models.user import User
@@ -92,6 +92,8 @@ async def update_own_name(
         workspace_id="",
         user_id=str(user.id),
         action="user.rename",
+        resource_type="user",
+        resource_id=str(user.id),
         metadata={"old_name": old_name, "new_name": body.name},
     )
     await session.commit()
