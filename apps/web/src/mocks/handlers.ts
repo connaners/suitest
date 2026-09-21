@@ -222,46 +222,74 @@ export const handlers: HttpHandler[] = [
 
   // Test cases
   http.get(`${BASE}/test-cases`, () => HttpResponse.json(cases)),
+  http.post(`${BASE}/test-cases`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { suiteId?: string; name?: string };
+    const publicId = "TC-NEW-99";
+    return HttpResponse.json(
+      {
+        id: `case_${publicId}`,
+        public_id: publicId,
+        name: body.name ?? "New test case",
+        description: null,
+        preconditions: null,
+        priority: "P2",
+        status: "ACTIVE",
+        source: "MANUAL",
+        suite_id: body.suiteId ?? "ste_smoke",
+        owner_id: null,
+        tags: [],
+        steps: [],
+        last_run_id: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { status: 201 },
+    );
+  }),
   http.get(`${BASE}/test-cases/:caseId`, ({ params }) => {
     const publicId = String(params["caseId"]);
+    const isNewOrEmpty = publicId === "TC-EMPTY" || publicId.startsWith("TC-NEW");
     return HttpResponse.json({
       id: `case_${publicId}`,
       public_id: publicId,
-      name: "Checkout flow rejects expired cards",
-      description: "Verify expired card path returns a friendly error.",
-      preconditions: "User signed in with no saved payment method.",
-      priority: "P1",
+      name: isNewOrEmpty ? "Newly created test case" : "Checkout flow rejects expired cards",
+      description: isNewOrEmpty ? null : "Verify expired card path returns a friendly error.",
+      preconditions: isNewOrEmpty ? null : "User signed in with no saved payment method.",
+      priority: isNewOrEmpty ? "P2" : "P1",
       status: "ACTIVE",
       source: "MANUAL",
       suite_id: "ste_smoke",
       owner_id: null,
-      tags: ["checkout", "billing"],
-      steps: [
-        {
-          id: "stp_01",
-          case_id: `case_${publicId}`,
-          order: 1,
-          action: "Navigate to /checkout",
-          expected: "Checkout page loads",
-          executable: true,
-          mcp_provider: "playwright-mcp",
-          target_kind: "FE_WEB",
-          code: null,
-          data: null,
-        },
-        {
-          id: "stp_02",
-          case_id: `case_${publicId}`,
-          order: 2,
-          action: "Enter card 4000 0000 0000 0002 (expired)",
-          expected: "Form shows 'expired card' error",
-          executable: true,
-          mcp_provider: "playwright-mcp",
-          target_kind: "FE_WEB",
-          code: "await page.fill('#card', '4000000000000002')",
-          data: null,
-        },
-      ],
+      tags: isNewOrEmpty ? [] : ["checkout", "billing"],
+      last_run_id: isNewOrEmpty ? null : "run_01",
+      steps: isNewOrEmpty
+        ? []
+        : [
+            {
+              id: "stp_01",
+              case_id: `case_${publicId}`,
+              order: 1,
+              action: "Navigate to /checkout",
+              expected: "Checkout page loads",
+              executable: true,
+              mcp_provider: "playwright-mcp",
+              target_kind: "FE_WEB",
+              code: null,
+              data: null,
+            },
+            {
+              id: "stp_02",
+              case_id: `case_${publicId}`,
+              order: 2,
+              action: "Enter card 4000 0000 0000 0002 (expired)",
+              expected: "Form shows 'expired card' error",
+              executable: true,
+              mcp_provider: "playwright-mcp",
+              target_kind: "FE_WEB",
+              code: "await page.fill('#card', '4000000000000002')",
+              data: null,
+            },
+          ],
       created_at: "2026-05-01T08:00:00Z",
       updated_at: "2026-05-25T14:30:00Z",
     });

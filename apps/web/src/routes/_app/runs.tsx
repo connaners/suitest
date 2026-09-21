@@ -718,6 +718,7 @@ function RunsBody(): React.ReactElement {
           data-testid="runs-right-pane"
         >
           <RunDetailPanel
+            key={selected ?? "empty"}
             runId={selected}
             onNavigateToRun={(publicId) => {
               void navigate({ search: publicId ? { run: publicId } : {} });
