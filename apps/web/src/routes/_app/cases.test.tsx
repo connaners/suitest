@@ -722,6 +722,128 @@ describe("Test Cases screen", () => {
     expect(group1236).toBeInTheDocument();
     expect(within(group1236).getByText(/1 artifact/i)).toBeInTheDocument();
   });
+
+  it("prevents draft steps from leaking when creating a new case from an edited case", async () => {
+    const user = userEvent.setup();
+    setCaps(CLOUD_CAPS); // Enable AI diagnose to also check callout behavior
+
+    renderCases("/cases?case=TC-101");
+
+    // 1. Go to Steps tab on TC-101
+    const stepsTab = await screen.findByTestId("case-tab-steps", undefined, { timeout: 3000 });
+    await user.click(stepsTab);
+
+    // Verify existing steps are rendered
+    expect((await screen.findAllByTestId("step-row")).length).toBe(2);
+
+    // 2. Add an uncommitted draft step to TC-101
+    const addBtn = await screen.findByTestId("step-add-btn");
+    await user.click(addBtn);
+    expect((await screen.findAllByTestId("step-row")).length).toBe(3);
+
+    // 3. Create a new case
+    const newCaseBtn = await screen.findByTestId("new-case-btn");
+    await user.click(newCaseBtn);
+
+    const nameInput = await screen.findByTestId("create-case-name");
+    await user.type(nameInput, "Brand New Case");
+    const submitBtn = await screen.findByTestId("create-case-submit");
+    await user.click(submitBtn);
+
+    // 4. Detail panel switches to new case (TC-NEW-99)
+    expect(await screen.findByTestId("case-detail", undefined, { timeout: 3000 })).toBeInTheDocument();
+
+    // 5. Navigate to Steps tab of the new case
+    const newStepsTab = await screen.findByTestId("case-tab-steps");
+    await user.click(newStepsTab);
+
+    // 6. Verify: No leaked steps from TC-101! Empty state is shown cleanly
+    expect(await screen.findByText(/No steps yet/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("step-row")).not.toBeInTheDocument();
+
+    // 7. Verify: No ghost Agent diagnosis is displayed for this new case (0 runs)
+    expect(screen.queryByText(/Agent diagnosis/i)).not.toBeInTheDocument();
+  });
+
+  it("prunes deleted case from selectedIds when single-case delete occurs", async () => {
+    const user = userEvent.setup();
+    let currentCases = [
+      {
+        id: "case_TC-101",
+        public_id: "TC-101",
+        suite_id: "ste_smoke",
+        name: "Checkout flow rejects expired cards",
+        priority: "P1",
+        status: "ACTIVE",
+        source: "MANUAL",
+        effective_testing_approach: "BLACK_BOX",
+        last_run: null,
+      },
+      {
+        id: "case_TC-102",
+        public_id: "TC-102",
+        suite_id: "ste_smoke",
+        name: "Second case",
+        priority: "P2",
+        status: "ACTIVE",
+        source: "MANUAL",
+        effective_testing_approach: "BLACK_BOX",
+        last_run: null,
+      },
+    ];
+    server.use(
+      http.get("*/api/v1/test-cases", () =>
+        HttpResponse.json({ items: currentCases, total: currentCases.length }),
+      ),
+      http.delete("*/api/v1/test-cases/:caseId", ({ params }) => {
+        currentCases = currentCases.filter((c) => c.public_id !== params["caseId"]);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    renderCases("/cases?case=TC-101");
+
+    // Select TC-101 checkbox in tree
+    const rows = await screen.findAllByTestId("case-row-checkbox");
+    await user.click(rows[0] as HTMLElement);
+
+    // Bulk action bar should be visible
+    expect(await screen.findByTestId("bulk-action-bar")).toBeInTheDocument();
+
+    // Delete TC-101 via detail toolbar
+    const deleteBtn = await screen.findByTestId("case-delete-btn");
+    await user.click(deleteBtn);
+
+    // Once deleted and navigated back, bulk action bar should be dismissed (selectedIds pruned)
+    await waitFor(() => {
+      expect(screen.queryByTestId("bulk-action-bar")).not.toBeInTheDocument();
+    });
+  });
+
+  it("resets active tab to 'all' when a new manual case is created under a non-matching filter", async () => {
+    const user = userEvent.setup();
+    renderCases("/cases");
+
+    // Switch to Failing tab filter
+    const failingTab = await screen.findByTestId("cases-tab-failing");
+    await user.click(failingTab);
+    expect(failingTab).toHaveAttribute("data-active", "true");
+
+    // Create a new case
+    const newCaseBtn = await screen.findByTestId("new-case-btn");
+    await user.click(newCaseBtn);
+
+    const nameInput = await screen.findByTestId("create-case-name");
+    await user.type(nameInput, "Manual Case From Failing View");
+    const submitBtn = await screen.findByTestId("create-case-submit");
+    await user.click(submitBtn);
+
+    // Active tab should now be reset to 'all' so the new manual case is visible in tree
+    await waitFor(() => {
+      const allTab = screen.getByTestId("cases-tab-all");
+      expect(allTab).toHaveAttribute("data-active", "true");
+    });
+  });
 });
 
 

@@ -810,6 +810,16 @@ function CaseDetailPanel({
   // reset the draft. We compare by serialised IDs only to avoid infinite loops.
   const serverStepIds = serverSteps.map((s) => s.id).join(",");
 
+  // Reset local draft whenever server data updates (different step IDs or updated timestamp)
+  const lastDetailVersionRef = useRef(detail?.updated_at ?? serverStepIds);
+  useEffect(() => {
+    const currentVersion = detail?.updated_at ?? serverStepIds;
+    if (lastDetailVersionRef.current !== currentVersion) {
+      lastDetailVersionRef.current = currentVersion;
+      setDraftSteps([]);
+    }
+  }, [detail?.updated_at, serverStepIds]);
+
   // We need a stable reference to avoid re-creating on every render
   const syncedRef = useMemo(() => serverStepIds, [serverStepIds]);
 
@@ -1119,18 +1129,21 @@ function CaseDetailPanel({
           {/* Outcome badges per step (from the last run) map onto the editor
               rows by order, so editing and evidence share one view. */}
           <StepEditor
+            key={detail.public_id}
             caseId={detail.public_id}
             steps={stepsToShow}
             onStepsChange={handleStepsChange}
             outcomeByOrder={outcomeByOrder}
           />
-          <Gated feature="ai_diagnose" fallback={null}>
-            <AgentInsightCallout
-              title="Agent diagnosis"
-              confidence="High"
-              body={`Last run on ${detail.public_id} suggests stable behaviour. No outstanding flake signals.`}
-            />
-          </Gated>
+          {lastRunId ? (
+            <Gated feature="ai_diagnose" fallback={null}>
+              <AgentInsightCallout
+                title="Agent diagnosis"
+                confidence="High"
+                body={`Last run on ${detail.public_id} suggests stable behaviour. No outstanding flake signals.`}
+              />
+            </Gated>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="preview">
@@ -2345,6 +2358,24 @@ function CasesBody(): React.ReactElement {
     setSelectedIds(new Set());
   }, []);
 
+  // Prune any selected case IDs that no longer exist (e.g. deleted via toolbar or bulk ops)
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const validIds = new Set(cases.items.map((c) => c.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (validIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [cases.items, selectedIds.size]);
+
   return (
     <>
       <CasesHeader
@@ -2390,6 +2421,9 @@ function CasesBody(): React.ReactElement {
         }}
         suites={suites.items}
         onCreated={(publicId) => {
+          if (active !== "all" && active !== "manual") {
+            setActive("all");
+          }
           void navigate({ search: { case: publicId } });
         }}
       />
@@ -2543,7 +2577,7 @@ function CasesBody(): React.ReactElement {
             )}
             data-testid="cases-right-pane"
           >
-            <CaseDetailPanel publicId={selectedId} suites={suites.items} />
+            <CaseDetailPanel key={selectedId ?? "empty"} publicId={selectedId} suites={suites.items} />
           </section>
         </div>
       )}
