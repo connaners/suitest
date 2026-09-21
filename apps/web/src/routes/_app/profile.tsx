@@ -1,11 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { updateOwnName } from "@/lib/api-client";
 
 function ProfileScreen(): React.ReactElement {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: user } = useCurrentUser();
   const [name, setName] = useState(user.name ?? "");
@@ -22,7 +24,7 @@ function ProfileScreen(): React.ReactElement {
     },
     onError: () => {
       setSuccess(false);
-      setError("Couldn't update your name. Please try again.");
+      setError(t("profile.updateError"));
     },
   });
 
@@ -31,7 +33,7 @@ function ProfileScreen(): React.ReactElement {
     setSuccess(false);
     const trimmed = name.trim();
     if (trimmed.length === 0) {
-      setError("Name can't be empty.");
+      setError(t("profile.nameEmpty"));
       return;
     }
     setError(null);
@@ -41,16 +43,16 @@ function ProfileScreen(): React.ReactElement {
   return (
     <div className="mx-auto max-w-lg space-y-6">
       <div className="space-y-1">
-        <h1 className="text-[20px] font-semibold text-fg-1">Profile</h1>
+        <h1 className="text-[20px] font-semibold text-fg-1">{t("profile.title")}</h1>
         <p className="text-[13px] text-fg-3">{user.email}</p>
       </div>
 
       <section className="space-y-4 rounded-lg border border-border bg-bg-elev-1 p-5">
-        <h2 className="text-[15px] font-semibold text-fg-1">Display name</h2>
+        <h2 className="text-[15px] font-semibold text-fg-1">{t("profile.displayName")}</h2>
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
             <label htmlFor="profile-name" className="text-[12.5px] font-medium text-fg-1">
-              Name
+              {t("profile.nameLabel")}
             </label>
             <input
               id="profile-name"
@@ -60,6 +62,7 @@ function ProfileScreen(): React.ReactElement {
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
+                if (success) setSuccess(false);
               }}
               className="w-full rounded-md border border-border bg-bg-base px-3 py-2 text-[13px] text-fg-1 outline-none focus:border-accent"
               data-testid="profile-name-input"
@@ -80,7 +83,7 @@ function ProfileScreen(): React.ReactElement {
               role="status"
               className="rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-[12.5px] text-accent"
             >
-              Name updated.
+              {t("profile.nameUpdated")}
             </p>
           ) : null}
 
@@ -90,7 +93,7 @@ function ProfileScreen(): React.ReactElement {
             className="inline-flex h-9 w-full items-center justify-center rounded-md bg-accent px-4 text-[13px] font-medium text-accent-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             data-testid="profile-name-submit"
           >
-            {renameMutation.isPending ? "Saving…" : "Save name"}
+            {renameMutation.isPending ? t("profile.saving") : t("profile.saveName")}
           </button>
         </form>
       </section>

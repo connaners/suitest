@@ -43,5 +43,13 @@
   "members.statusAccepted": "accepted",
   "members.statusRevoked": "revoked",
   "members.statusDeclined": "declined",
-  "members.statusExpired": "expired"
+  "members.statusExpired": "expired",
+  "profile.title": "Profile",
+  "profile.displayName": "Display name",
+  "profile.nameLabel": "Name",
+  "profile.nameEmpty": "Name can't be empty.",
+  "profile.updateError": "Couldn't update your name. Please try again.",
+  "profile.nameUpdated": "Name updated.",
+  "profile.saving": "Saving…",
+  "profile.saveName": "Save name"
 }

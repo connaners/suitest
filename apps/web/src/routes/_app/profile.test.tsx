@@ -65,7 +65,7 @@ describe("Profile", () => {
   it("saves a new name and confirms", async () => {
     let body: unknown = null;
     server.use(
-      http.patch("*/users/me", async ({ request }) => {
+      http.patch("*/api/v1/auth/me", async ({ request }) => {
         body = await request.json();
         return HttpResponse.json({ name: "New Name" });
       }),
@@ -85,7 +85,7 @@ describe("Profile", () => {
   it("rejects an empty name without calling the API", async () => {
     let called = false;
     server.use(
-      http.patch("*/users/me", () => {
+      http.patch("*/api/v1/auth/me", () => {
         called = true;
         return HttpResponse.json({ name: "" });
       }),
@@ -100,7 +100,7 @@ describe("Profile", () => {
   });
 
   it("surfaces a server error", async () => {
-    server.use(http.patch("*/users/me", () => new HttpResponse(null, { status: 500 })));
+    server.use(http.patch("*/api/v1/auth/me", () => new HttpResponse(null, { status: 500 })));
     renderAt("/profile");
     const user = userEvent.setup();
     const input = await screen.findByTestId("profile-name-input");

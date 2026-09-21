@@ -43,5 +43,13 @@
   "members.statusAccepted": "diterima",
   "members.statusRevoked": "dicabut",
   "members.statusDeclined": "ditolak",
-  "members.statusExpired": "kedaluwarsa"
+  "members.statusExpired": "kedaluwarsa",
+  "profile.title": "Profil",
+  "profile.displayName": "Nama tampilan",
+  "profile.nameLabel": "Nama",
+  "profile.nameEmpty": "Nama tidak boleh kosong.",
+  "profile.updateError": "Gagal memperbarui nama. Coba lagi.",
+  "profile.nameUpdated": "Nama berhasil diperbarui.",
+  "profile.saving": "Menyimpan…",
+  "profile.saveName": "Simpan nama"
 }
