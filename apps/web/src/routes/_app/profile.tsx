@@ -10,7 +10,8 @@ function ProfileScreen(): React.ReactElement {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: user } = useCurrentUser();
-  const [name, setName] = useState(user.name ?? "");
+  const safeUser = user ?? { email: "", name: "" };
+  const [name, setName] = useState(safeUser.name);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
@@ -18,6 +19,7 @@ function ProfileScreen(): React.ReactElement {
     mutationFn: (value: string) => updateOwnName(value),
     onSuccess: async () => {
       setSuccess(true);
+      setError(null);
       // The Sidebar footer, dashboard greeting, and every other reader of
       // the signed-in name all key off this cache entry.
       await queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
@@ -44,7 +46,7 @@ function ProfileScreen(): React.ReactElement {
     <div className="mx-auto max-w-lg space-y-6">
       <div className="space-y-1">
         <h1 className="text-[20px] font-semibold text-fg-1">{t("profile.title")}</h1>
-        <p className="text-[13px] text-fg-3">{user.email}</p>
+        <p className="text-[13px] text-fg-3">{safeUser.email}</p>
       </div>
 
       <section className="space-y-4 rounded-lg border border-border bg-bg-elev-1 p-5">

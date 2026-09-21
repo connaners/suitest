@@ -1,8 +1,6 @@
 import axios, { type AxiosError, type AxiosInstance } from "axios";
 
 import type { components, paths } from "@/lib/api-types";
-
-type MeResponse = components["schemas"]["MeResponse"];
 import { parseUtcDate } from "@/lib/date";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
 
@@ -198,7 +196,6 @@ export async function fetchCaseRuns(
   );
   return { items: Array.isArray(res.data) ? res.data : (res.data.items ?? []) };
 }
-
 
 // ---------------------------------------------------------------------------
 // Screenshot diff threshold (M12-3 — per-case pixel-diff threshold override).
@@ -988,9 +985,33 @@ export async function changeOwnPassword(input: ChangePasswordRequest): Promise<v
   await api.patch("/users/me/password", input);
 }
 
-export async function updateOwnName(name: string): Promise<MeResponse> {
-  const { data } = await api.patch<MeResponse>("/auth/me", { name });
-  return data;
+export async function updateOwnName(
+  name: string,
+): Promise<components["schemas"]["MeResponse"]> {
+  const response = await fetch("/auth/me", {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  const payload = response.headers.get("content-type")?.includes("application/json")
+    ? await response.json()
+    : await response.text();
+
+  if (!response.ok) {
+    const message =
+      typeof payload === "object" && payload && "detail" in payload
+        ? String((payload as { detail?: string }).detail ?? "Update failed")
+        : typeof payload === "string"
+          ? payload
+          : "Update failed";
+    throw new ApiError(response.status, "UNKNOWN", message, response.status >= 500, {
+      payload,
+    });
+  }
+
+  return payload as components["schemas"]["MeResponse"];
 }
 
 /** ``POST /workspaces/:id/invitations`` — create invite, returns copyable link. */
