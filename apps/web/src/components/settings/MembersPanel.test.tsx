@@ -722,7 +722,6 @@ describe("MembersPanel", () => {
     await waitFor(() => {
       expect(useActiveWorkspace.getState().workspaceId).toBe("ws_2");
     });
->>>>>>> f7d6ba0 (feat(web): full CRUD for workspace member management, real-time sync, and multi-workspace fallback (closes #224))
   });
 });
 

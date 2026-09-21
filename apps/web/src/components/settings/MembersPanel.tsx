@@ -38,7 +38,6 @@ import {
   type Role,
   type WorkspaceMemberPublic,
 } from "@/lib/api-client";
-import { useWorkspaceStream } from "@/lib/ws-client";
 
 /** Debounce delay before an in-flight email is checked against existing
  * accounts (M1e-9 autocomplete chip) — long enough to skip mid-typing. */
@@ -94,12 +93,16 @@ export function MembersPanel({
   const membersQuery = useQuery({
     queryKey: ["workspace", workspaceId, "members"],
     queryFn: () => listMembers(workspaceId),
+    staleTime: 5_000,
+    refetchInterval: 10_000,
   });
 
   const invitesQuery = useQuery({
     queryKey: ["workspace", workspaceId, "invitations"],
     queryFn: () => listInvitations(workspaceId),
     enabled: isAdmin,
+    staleTime: 5_000,
+    refetchInterval: 10_000,
   });
 
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -252,7 +255,6 @@ export function MembersPanel({
       const msg = err instanceof ApiError ? err.message : "Failed to update invitation role.";
       toast.error("Role update failed", { description: msg });
     },
->>>>>>> f7d6ba0 (feat(web): full CRUD for workspace member management, real-time sync, and multi-workspace fallback (closes #224))
   });
 
   const revokeMutation = useMutation({
@@ -535,7 +537,7 @@ export function MembersPanel({
                           )}
                         </td>
                         <td className={`px-3 py-2 font-medium ${STATUS_STYLE[status]}`}>
-                          {status === "accepted" && !isMemberNow ? "accepted (past)" : status}
+                          {status === "accepted" && !isMemberNow ? "accepted (past)" : t(STATUS_KEY[status])}
                         </td>
                         <td className="px-3 py-2 text-right">
                           {isPending ? (

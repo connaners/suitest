@@ -117,3 +117,33 @@ describe("Settings → Account", () => {
     expect(await screen.findByTestId("force-password-banner")).toBeInTheDocument();
   });
 });
+
+describe("Settings → Permissions & Tabs", () => {
+  beforeEach(() => {
+    useActiveWorkspace.setState({ workspaceId: "ws_1" });
+    useCapabilities.setState({ capabilities: ZERO_CAPS, loading: false, error: null });
+    vi.stubGlobal("location", { pathname: "/settings", assign: vi.fn(), origin: "http://localhost" });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useActiveWorkspace.setState({ workspaceId: null });
+  });
+
+  it("shows the API Keys tab for QA role while hiding Members tab", async () => {
+    server.use(
+      meHandler({
+        memberships: [
+          {
+            workspace_id: "ws_1",
+            role: "QA",
+            workspace: { id: "ws_1", slug: "nusantara", name: "Nusantara Retail" },
+          },
+        ],
+      }),
+    );
+    renderAt("/settings");
+
+    expect(await screen.findByRole("tab", { name: "API Keys" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Members" })).not.toBeInTheDocument();
+  });
+});

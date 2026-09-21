@@ -1,7 +1,6 @@
 import axios, { type AxiosError, type AxiosInstance } from "axios";
 
 import type { components, paths } from "@/lib/api-types";
-import { logoutAndRedirect } from "@/lib/auth-session";
 import { parseUtcDate } from "@/lib/date";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
 
@@ -103,7 +102,12 @@ function createClient(): AxiosInstance {
         !window.location.pathname.startsWith("/login") &&
         !window.location.pathname.startsWith("/accept-invite")
       ) {
-        void logoutAndRedirect("removed");
+        const currentWsId = useActiveWorkspace.getState().workspaceId;
+        window.dispatchEvent(
+          new CustomEvent("suitest:workspace_membership_revoked", {
+            detail: { workspaceId: currentWsId },
+          }),
+        );
       }
       const retryable = status === 0 || status >= 500;
       throw new ApiError(status, code, message, retryable, details);

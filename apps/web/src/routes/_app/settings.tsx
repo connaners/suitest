@@ -66,7 +66,7 @@ function SettingsScreen(): React.ReactElement {
           {showMembers ? <TabsTrigger value="members">Members</TabsTrigger> : null}
           {workspaceId ? <TabsTrigger value="llm">LLM</TabsTrigger> : null}
           {workspaceId ? <TabsTrigger value="automation">Automation</TabsTrigger> : null}
-          {showMembers && workspaceId ? <TabsTrigger value="api-keys">API Keys</TabsTrigger> : null}
+          {workspaceId ? <TabsTrigger value="api-keys">API Keys</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="account" className="pt-4">
@@ -94,7 +94,7 @@ function SettingsScreen(): React.ReactElement {
           </TabsContent>
         ) : null}
 
-        {showMembers && workspaceId ? (
+        {workspaceId ? (
           <TabsContent value="api-keys" className="pt-4">
             <ApiKeysSettingsPanel canWrite={canWriteApiKeys} />
           </TabsContent>

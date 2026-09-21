@@ -8,6 +8,18 @@ import { server } from "@/mocks/server";
 import { routeTree } from "@/routeTree.gen";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
 import { useCapabilities } from "@/stores/use-capabilities";
+import type * as AuthSession from "@/lib/auth-session";
+import { setWsTransport } from "@/lib/ws-client";
+import { MockWs } from "@/test/mock-ws";
+
+const mockLogoutAndRedirect = vi.fn();
+vi.mock("@/lib/auth-session", async () => {
+  const actual = await vi.importActual<typeof AuthSession>("@/lib/auth-session");
+  return {
+    ...actual,
+    logoutAndRedirect: (...args: unknown[]) => mockLogoutAndRedirect(...args),
+  };
+});
 
 function renderAt(path: string) {
   const queryClient = new QueryClient({
@@ -205,5 +217,176 @@ describe("<index> redirect", () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/dashboard");
     });
+  });
+});
+
+describe("<_app> workspace fallback and real-time events", () => {
+  let mockWs: MockWs;
+  let restoreWs: () => void;
+
+  beforeEach(() => {
+    mockLogoutAndRedirect.mockReset();
+    mockWs = new MockWs();
+    restoreWs = setWsTransport(mockWs);
+    useActiveWorkspace.setState({ workspaceId: "ws_1" });
+    useCapabilities.setState({ capabilities: null, loading: true, error: null });
+    vi.stubGlobal("location", {
+      pathname: "/dashboard",
+      assign: vi.fn(),
+      origin: "http://localhost",
+    });
+  });
+
+  afterEach(() => {
+    restoreWs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    useActiveWorkspace.setState({ workspaceId: null });
+  });
+
+  it("switches to the next workspace without calling logoutAndRedirect when remaining workspaces > 0", async () => {
+    let callCount = 0;
+    server.use(
+      http.get("*/api/v1/auth/me", () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return HttpResponse.json({
+            id: "u_demo",
+            email: "demo@suitest.dev",
+            name: "Demo",
+            avatar_url: null,
+            memberships: [
+              { workspace_id: "ws_1", role: "MEMBER", workspace: { id: "ws_1", name: "Workspace 1" } },
+              { workspace_id: "ws_2", role: "MEMBER", workspace: { id: "ws_2", name: "Workspace 2" } },
+            ],
+          });
+        }
+        return HttpResponse.json({
+          id: "u_demo",
+          email: "demo@suitest.dev",
+          name: "Demo",
+          avatar_url: null,
+          memberships: [
+            { workspace_id: "ws_2", role: "MEMBER", workspace: { id: "ws_2", name: "Workspace 2" } },
+          ],
+        });
+      }),
+      http.get("*/api/v1/workspaces/ws_1/projects", () => HttpResponse.json([])),
+      http.get("*/api/v1/workspaces/ws_2/projects", () => HttpResponse.json([])),
+    );
+
+    renderAt("/dashboard");
+
+    await waitFor(() => {
+      expect(useActiveWorkspace.getState().workspaceId).toBe("ws_1");
+    });
+
+    // Simulate WS event: user removed from ws_1
+    mockWs.emit({
+      topic: "workspace:ws_1",
+      event: "workspace.member.removed",
+      data: { userId: "u_demo", workspaceId: "ws_1", workspaceName: "Workspace 1" },
+    });
+
+    await waitFor(() => {
+      expect(useActiveWorkspace.getState().workspaceId).toBe("ws_2");
+    });
+
+    expect(mockLogoutAndRedirect).not.toHaveBeenCalled();
+    expect(window.location.assign).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("calls logoutAndRedirect('removed') when 0 workspaces remain", async () => {
+    let callCount = 0;
+    server.use(
+      http.get("*/api/v1/auth/me", () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return HttpResponse.json({
+            id: "u_demo",
+            email: "demo@suitest.dev",
+            name: "Demo",
+            avatar_url: null,
+            memberships: [
+              { workspace_id: "ws_1", role: "MEMBER", workspace: { id: "ws_1", name: "Workspace 1" } },
+            ],
+          });
+        }
+        return HttpResponse.json({
+          id: "u_demo",
+          email: "demo@suitest.dev",
+          name: "Demo",
+          avatar_url: null,
+          memberships: [],
+        });
+      }),
+      http.get("*/api/v1/workspaces/ws_1/projects", () => HttpResponse.json([])),
+    );
+
+    renderAt("/dashboard");
+
+    await waitFor(() => {
+      expect(useActiveWorkspace.getState().workspaceId).toBe("ws_1");
+    });
+
+    mockWs.emit({
+      topic: "workspace:ws_1",
+      event: "workspace.member.removed",
+      data: { userId: "u_demo", workspaceId: "ws_1" },
+    });
+
+    await waitFor(() => {
+      expect(mockLogoutAndRedirect).toHaveBeenCalledWith("removed");
+    });
+  });
+
+  it("handles suitest:workspace_membership_revoked custom event through fallback flow", async () => {
+    let callCount = 0;
+    server.use(
+      http.get("*/api/v1/auth/me", () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return HttpResponse.json({
+            id: "u_demo",
+            email: "demo@suitest.dev",
+            name: "Demo",
+            avatar_url: null,
+            memberships: [
+              { workspace_id: "ws_1", role: "MEMBER", workspace: { id: "ws_1", name: "Workspace 1" } },
+              { workspace_id: "ws_2", role: "MEMBER", workspace: { id: "ws_2", name: "Workspace 2" } },
+            ],
+          });
+        }
+        return HttpResponse.json({
+          id: "u_demo",
+          email: "demo@suitest.dev",
+          name: "Demo",
+          avatar_url: null,
+          memberships: [
+            { workspace_id: "ws_2", role: "MEMBER", workspace: { id: "ws_2", name: "Workspace 2" } },
+          ],
+        });
+      }),
+      http.get("*/api/v1/workspaces/ws_1/projects", () => HttpResponse.json([])),
+      http.get("*/api/v1/workspaces/ws_2/projects", () => HttpResponse.json([])),
+    );
+
+    renderAt("/dashboard");
+
+    await waitFor(() => {
+      expect(useActiveWorkspace.getState().workspaceId).toBe("ws_1");
+    });
+
+    window.dispatchEvent(
+      new CustomEvent("suitest:workspace_membership_revoked", {
+        detail: { workspaceId: "ws_1" },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(useActiveWorkspace.getState().workspaceId).toBe("ws_2");
+    });
+
+    expect(mockLogoutAndRedirect).not.toHaveBeenCalled();
   });
 });

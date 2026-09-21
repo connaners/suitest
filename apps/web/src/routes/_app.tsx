@@ -199,9 +199,11 @@ function AppLayout(): React.ReactElement {
           } catch {
             // jsdom in tests
           }
-          const safeReason: "removed" | "left" = reason === "left" ? "left" : "removed";
-          void logoutAndRedirect(safeReason);
+          return;
         }
+
+        const safeReason: "removed" | "left" = reason === "left" ? "left" : "removed";
+        void logoutAndRedirect(safeReason);
       } catch {
         const safeReason: "removed" | "left" = reason === "left" ? "left" : "removed";
         void logoutAndRedirect(safeReason);
@@ -210,7 +212,7 @@ function AppLayout(): React.ReactElement {
     [queryClient, setProjectId, setWorkspaceId],
   );
 
-  // Real-time workspace events (role demotion/promotion and member removal)
+  // Real-time workspace events (role demotion/promotion, member add/remove/join, and invitation sync)
   const handleWorkspaceEvent = useCallback(
     (event: WorkspaceEvent) => {
       if (event.event === "workspace.member.role_changed") {
@@ -235,12 +237,32 @@ function AppLayout(): React.ReactElement {
             }
             toast.info(`Peran Anda di workspace ini telah diubah menjadi ${newRole}`);
           }
+        } else if (activeWorkspaceId) {
+          void queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "members"] });
         }
       } else if (event.event === "workspace.member.removed") {
         const payload = event.data as { userId?: string; workspaceId?: string; workspaceName?: string };
         if (payload?.userId === user.id) {
           const removedWsId = payload.workspaceId ?? activeWorkspaceId ?? "";
           void handleWorkspaceFallback(removedWsId, "removed", payload.workspaceName);
+        } else if (activeWorkspaceId) {
+          void queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "members"] });
+        }
+      } else if (
+        event.event === "workspace.member.joined" ||
+        event.event === "workspace.invitation.accepted"
+      ) {
+        if (activeWorkspaceId) {
+          void queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "members"] });
+          void queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "invitations"] });
+        }
+      } else if (
+        event.event === "workspace.invitation.created" ||
+        event.event === "workspace.invitation.updated" ||
+        event.event === "workspace.invitation.revoked"
+      ) {
+        if (activeWorkspaceId) {
+          void queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "invitations"] });
         }
       }
     },
@@ -248,6 +270,20 @@ function AppLayout(): React.ReactElement {
   );
 
   useWorkspaceStream(handleWorkspaceEvent);
+
+  // Reconcile tenant 403 revocations dispatched from API client
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onMembershipRevoked = (e: Event) => {
+      const customEvent = e as CustomEvent<{ workspaceId?: string }>;
+      const revokedId = customEvent.detail?.workspaceId ?? activeWorkspaceId ?? "";
+      void handleWorkspaceFallback(revokedId, "removed");
+    };
+    window.addEventListener("suitest:workspace_membership_revoked", onMembershipRevoked);
+    return () => {
+      window.removeEventListener("suitest:workspace_membership_revoked", onMembershipRevoked);
+    };
+  }, [activeWorkspaceId, handleWorkspaceFallback]);
   // Auto-open the create-workspace flow for a user with zero workspaces (fresh
   // register / invite) so onboarding starts immediately instead of landing on a
   // workspace-less shell.
