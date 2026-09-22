@@ -16,6 +16,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppTraceRouteImport } from './routes/_app/trace'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppRunsRouteImport } from './routes/_app/runs'
+import { Route as AppProfileRouteImport } from './routes/_app/profile'
 import { Route as AppIntegrationsRouteImport } from './routes/_app/integrations'
 import { Route as AppInboxRouteImport } from './routes/_app/inbox'
 import { Route as AppEvalRouteImport } from './routes/_app/eval'
@@ -60,6 +61,11 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
 const AppRunsRoute = AppRunsRouteImport.update({
   id: '/runs',
   path: '/runs',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProfileRoute = AppProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => AppRoute,
 } as any)
 const AppIntegrationsRoute = AppIntegrationsRouteImport.update({
@@ -131,6 +137,7 @@ export interface FileRoutesByFullPath {
   '/eval': typeof AppEvalRoute
   '/inbox': typeof AppInboxRoute
   '/integrations': typeof AppIntegrationsRoute
+  '/profile': typeof AppProfileRoute
   '/runs': typeof AppRunsRoute
   '/settings': typeof AppSettingsRoute
   '/trace': typeof AppTraceRoute
@@ -150,6 +157,7 @@ export interface FileRoutesByTo {
   '/eval': typeof AppEvalRoute
   '/inbox': typeof AppInboxRoute
   '/integrations': typeof AppIntegrationsRoute
+  '/profile': typeof AppProfileRoute
   '/runs': typeof AppRunsRoute
   '/settings': typeof AppSettingsRoute
   '/trace': typeof AppTraceRoute
@@ -171,6 +179,7 @@ export interface FileRoutesById {
   '/_app/eval': typeof AppEvalRoute
   '/_app/inbox': typeof AppInboxRoute
   '/_app/integrations': typeof AppIntegrationsRoute
+  '/_app/profile': typeof AppProfileRoute
   '/_app/runs': typeof AppRunsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/trace': typeof AppTraceRoute
@@ -192,6 +201,7 @@ export interface FileRouteTypes {
     | '/eval'
     | '/inbox'
     | '/integrations'
+    | '/profile'
     | '/runs'
     | '/settings'
     | '/trace'
@@ -211,6 +221,7 @@ export interface FileRouteTypes {
     | '/eval'
     | '/inbox'
     | '/integrations'
+    | '/profile'
     | '/runs'
     | '/settings'
     | '/trace'
@@ -231,6 +242,7 @@ export interface FileRouteTypes {
     | '/_app/eval'
     | '/_app/inbox'
     | '/_app/integrations'
+    | '/_app/profile'
     | '/_app/runs'
     | '/_app/settings'
     | '/_app/trace'
@@ -294,6 +306,13 @@ declare module '@tanstack/react-router' {
       path: '/runs'
       fullPath: '/runs'
       preLoaderRoute: typeof AppRunsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/profile': {
+      id: '/_app/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof AppProfileRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/integrations': {
@@ -398,6 +417,7 @@ interface AppRouteChildren {
   AppEvalRoute: typeof AppEvalRoute
   AppInboxRoute: typeof AppInboxRoute
   AppIntegrationsRoute: typeof AppIntegrationsRoute
+  AppProfileRoute: typeof AppProfileRoute
   AppRunsRoute: typeof AppRunsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTraceRoute: typeof AppTraceRoute
@@ -414,6 +434,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppEvalRoute: AppEvalRoute,
   AppInboxRoute: AppInboxRoute,
   AppIntegrationsRoute: AppIntegrationsRoute,
+  AppProfileRoute: AppProfileRoute,
   AppRunsRoute: AppRunsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTraceRoute: AppTraceRoute,

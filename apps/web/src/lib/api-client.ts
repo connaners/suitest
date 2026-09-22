@@ -197,7 +197,6 @@ export async function fetchCaseRuns(
   return { items: Array.isArray(res.data) ? res.data : (res.data.items ?? []) };
 }
 
-
 // ---------------------------------------------------------------------------
 // Screenshot diff threshold (M12-3 — per-case pixel-diff threshold override).
 // ---------------------------------------------------------------------------
@@ -984,6 +983,13 @@ export function invitationStatus(inv: InvitationOut): InvitationStatus {
 /** ``PATCH /users/me/password`` — change the current user's own password. */
 export async function changeOwnPassword(input: ChangePasswordRequest): Promise<void> {
   await api.patch("/users/me/password", input);
+}
+
+export async function updateOwnName(
+  name: string,
+): Promise<components["schemas"]["MeResponse"]> {
+  const { data } = await api.patch<components["schemas"]["MeResponse"]>("/auth/me", { name });
+  return data;
 }
 
 /** ``POST /workspaces/:id/invitations`` — create invite, returns copyable link. */

@@ -356,7 +356,15 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update Own Name
+         * @description Update the current user's display name.
+         *
+         *     This route lives under ``/api/v1/auth/me`` (not fastapi-users'
+         *     unproxied ``/users/me``) so it is reachable through Nginx and Vite
+         *     proxies without additional configuration.
+         */
+        patch: operations["update_own_name_api_v1_auth_me_patch"];
         trace?: never;
     };
     "/api/v1/defects": {
@@ -1936,14 +1944,7 @@ export interface paths {
         };
         /**
          * Get Artifact Signed Url
-         * @description Return a real S3/MinIO presigned download URL for one artifact (M1c Task 18).
-         *
-         *     Replaces the M1a stub presigner with an :mod:`aioboto3` ``generate_presigned_url``
-         *     call against the configured bucket. Only ``s3://...`` artifacts are presigned —
-         *     legacy ``file://`` artifacts (dev fixtures) return 404 here, the client should
-         *     fall back to the static ``/artifacts/raw/`` route the static server exposes.
-         *     Emits an ``artifact.signed_url`` audit row so download attribution is
-         *     captured even though the actual fetch happens directly against S3.
+         * @description Return a real S3/MinIO presigned download URL or streaming gateway URL for one artifact.
          */
         get: operations["get_artifact_signed_url_api_v1_runs__run_id__artifacts__artifact_id__get"];
         put?: never;
@@ -1963,14 +1964,18 @@ export interface paths {
         };
         /**
          * Get Artifact Raw
-         * @description Stream one ``local://`` artifact from ``SUITEST_ARTIFACTS_DIR`` (local mode).
+         * @description Stream one artifact (s3://, local://, file://) with dual-auth, range requests, ETag, and MIME sanitization.
          */
-        get: operations["get_artifact_raw_api_v1_runs__run_id__artifacts__artifact_id__raw_get"];
+        get: operations["get_artifact_raw"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
-        head?: never;
+        /**
+         * Head Artifact Raw
+         * @description Retrieve metadata headers for one artifact without downloading the payload body.
+         */
+        head: operations["head_artifact_raw"];
         patch?: never;
         trace?: never;
     };
@@ -6121,6 +6126,14 @@ export interface components {
             workspace_id: string;
         };
         /**
+         * NameUpdateRequest
+         * @description Inbound payload for ``PATCH /api/v1/auth/me`` (name only).
+         */
+        NameUpdateRequest: {
+            /** Name */
+            name: string;
+        };
+        /**
          * NetworkEvent
          * @description One network event captured during a run (HAR-derived, M1c).
          */
@@ -8107,22 +8120,31 @@ export interface components {
              * @default false
              */
             is_verified: boolean;
+            /** Name */
+            name: string;
         };
         /**
          * UserUpdate
-         * @description Inbound payload for PATCH /users/me.
+         * @description Inbound payload for fastapi-users' built-in ``PATCH /users/me``.
+         *
+         *     Only ``name`` is exposed — ``email``, ``password``, and the ``is_*``
+         *     flags are excluded to prevent unauthorised changes via the public
+         *     self-service endpoint.  ``create_update_dict()`` only forwards fields
+         *     defined in the subclass, so hiding them here is sufficient.
          */
         UserUpdate: {
             /** Email */
-            email?: string | null;
+            email?: null;
             /** Is Active */
             is_active?: boolean | null;
             /** Is Superuser */
             is_superuser?: boolean | null;
             /** Is Verified */
             is_verified?: boolean | null;
+            /** Name */
+            name?: string | null;
             /** Password */
-            password?: string | null;
+            password?: null;
         };
         /** ValidationError */
         ValidationError: {
@@ -9101,6 +9123,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+        };
+    };
+    update_own_name_api_v1_auth_me_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NameUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12150,6 +12205,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Workspace-Id"?: string | null;
+                "X-API-Key"?: string | null;
             };
             path: {
                 run_id: string;
@@ -12179,12 +12235,52 @@ export interface operations {
             };
         };
     };
-    get_artifact_raw_api_v1_runs__run_id__artifacts__artifact_id__raw_get: {
+    get_artifact_raw: {
         parameters: {
-            query?: never;
-            header?: {
-                "X-Workspace-Id"?: string | null;
+            query?: {
+                workspaceId?: string | null;
+                token?: string | null;
+                expires?: number | null;
+                download?: boolean;
             };
+            header?: never;
+            path: {
+                run_id: string;
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    head_artifact_raw: {
+        parameters: {
+            query?: {
+                workspaceId?: string | null;
+                token?: string | null;
+                expires?: number | null;
+                download?: boolean;
+            };
+            header?: never;
             path: {
                 run_id: string;
                 artifact_id: string;

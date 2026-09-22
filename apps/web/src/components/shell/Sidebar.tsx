@@ -332,14 +332,19 @@ export function Sidebar({
             row fits 64px (previously 4 icons overflowed and pushed the toggle
             out of the rail, making it unclickable). */}
         <div className="flex shrink-0 items-center gap-2 border-t border-border-subtle px-3 py-3">
-          <div className={cn("flex items-center gap-2", !isOpen ? "md:hidden" : "")}>
-            <span
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-elev-3 font-mono text-[11px] font-semibold text-fg-1"
-              aria-hidden="true"
+          <div className="flex items-center gap-2">
+            <Link
+              to="/profile"
+              aria-label="Profile"
+              className={cn(
+                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-elev-3 font-mono text-[11px] font-semibold text-fg-1 hover:opacity-80",
+                !isOpen && "md:mx-auto",
+              )}
+              data-testid="user-avatar-link"
             >
               {userName.slice(0, 2).toUpperCase()}
-            </span>
-            <div className="flex-1 overflow-hidden">
+            </Link>
+            <div className={cn("flex-1 overflow-hidden", !isOpen && "md:hidden")}>
               <div className="truncate text-[12.5px] font-medium text-fg-1">{userName}</div>
               <div
                 className="mt-0.5 inline-flex h-[15px] items-center rounded-sm bg-bg-elev-3 px-1.5 text-[10px] font-medium uppercase tracking-wide text-fg-3"
@@ -351,7 +356,10 @@ export function Sidebar({
             <Link
               to="/settings"
               aria-label="Settings"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-fg-3 hover:bg-bg-elev-2 hover:text-fg-1"
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-md text-fg-3 hover:bg-bg-elev-2 hover:text-fg-1",
+                !isOpen && "md:hidden",
+              )}
               data-testid="user-settings-link"
             >
               <Settings className="h-4 w-4" aria-hidden="true" />
@@ -361,7 +369,10 @@ export function Sidebar({
               aria-label="Log out"
               title="Log out"
               data-testid="user-logout-button"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-fg-3 hover:bg-bg-elev-2 hover:text-red"
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-md text-fg-3 hover:bg-bg-elev-2 hover:text-red",
+                !isOpen && "md:hidden",
+              )}
               onClick={() => {
                 // fastapi-users cookie backend: POST clears the session cookie.
                 // NOTE: raw fetch, NOT `api.post` — the client prepends /api/v1
