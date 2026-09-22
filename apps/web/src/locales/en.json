@@ -51,5 +51,13 @@
   "profile.updateError": "Couldn't update your name. Please try again.",
   "profile.nameUpdated": "Name updated.",
   "profile.saving": "Saving…",
-  "profile.saveName": "Save name"
+  "profile.saveName": "Save name",
+  "workspace.accessRevokedTitle": "Workspace access revoked",
+  "workspace.accessRevokedDesc": "Your access to {{prev}} was revoked by an administrator. Switched to {{next}}.",
+  "workspace.leftTitle": "Left workspace",
+  "workspace.leftDesc": "You left {{prev}}. Switched to {{next}}.",
+  "workspace.roleChanged": "Your role in this workspace has been changed to {{role}}",
+  "cases.roleDemotedViewer": "Your role has been changed to VIEWER. Unsaved step drafts have been discarded.",
+  "auth.reasonRemoved": "Your access to the workspace was revoked by an administrator.",
+  "auth.reasonLeft": "You have left the workspace."
 }

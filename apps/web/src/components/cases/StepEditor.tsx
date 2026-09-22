@@ -36,6 +36,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Code, GripVertical, Plus, Trash2, Wrench } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { SelectorRepairDialog } from "@/components/cases/SelectorRepairDialog";
@@ -140,6 +141,7 @@ export function StepEditor({
   outcomeByOrder,
   canWrite = true,
 }: StepEditorProps): React.ReactElement {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<StepEditorError | null>(null);
   const [repairStep, setRepairStep] = useState<DraftStep | null>(null);
@@ -164,11 +166,14 @@ export function StepEditor({
       setError(null);
       // Notify user
       toast.warning(
-        "Peran Anda telah diubah menjadi VIEWER. Draf langkah yang belum disimpan telah dibatalkan.",
+        t(
+          "cases.roleDemotedViewer",
+          "Your role has been changed to VIEWER. Unsaved step drafts have been discarded.",
+        ),
       );
     }
     prevCanWriteRef.current = canWrite;
-  }, [canWrite, onStepsChange]);
+  }, [canWrite, onStepsChange, t]);
 
   // ------------------------------------------------------------------
   // PATCH /test-cases/:id/steps — bulk replace (save edits / remove)

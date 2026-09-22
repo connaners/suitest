@@ -6,6 +6,7 @@ import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from fastapi_users.password import PasswordHelper
 from sqlalchemy import func, select
@@ -208,6 +209,14 @@ class InvitationService:
         invitation = await self.repo.get_by_id(invitation_id)
         if invitation is None:
             raise InvitationNotFoundError
+        now = datetime.now(tz=UTC)
+        if (
+            invitation.accepted_at is not None
+            or invitation.revoked_at is not None
+            or invitation.declined_at is not None
+            or invitation.expires_at <= now
+        ):
+            raise InvitationConflictError("Invitation is no longer pending.")
         membership = await self._ensure_manager(invitation.workspace_id, actor)
         if (
             role is Role.OWNER
@@ -216,6 +225,16 @@ class InvitationService:
         ):
             raise InvitationForbiddenError
         await self.repo.update_role(invitation, role)
+        await write_audit(
+            self.session,
+            workspace_id=invitation.workspace_id,
+            user_id=str(actor.id),
+            action="invitation.update_role",
+            resource_type="invitation",
+            resource_id=invitation.id,
+            metadata={"role": role.value, "email": invitation.email},
+        )
+        await self.session.flush()
         return invitation
 
     async def accept(self, *, token: str, email: str, name: str, password: str) -> AcceptOutcome:

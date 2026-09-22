@@ -9,7 +9,6 @@
  * In an npm-installed copy (no monorepo around it) the source dir does not
  * exist — that's fine: ./python was already bundled in the tarball, so the
  * script becomes a no-op instead of failing postinstall-style.
- * (Synced with workspace member management lifecycle update)
  */
 
 "use strict";

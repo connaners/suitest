@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useCapabilities } from "@/stores/use-capabilities";
 
@@ -24,6 +25,7 @@ interface AuthorizeResponse {
  * `/auth/*` to the backend (see `apps/web/vite.config.ts`).
  */
 function Login(): React.ReactElement {
+  const { t } = useTranslation();
   const search = Route.useSearch();
   const nextPath = search.next ?? "/dashboard";
   const reason = search.reason;
@@ -101,7 +103,7 @@ function Login(): React.ReactElement {
           data-testid="login-reason-banner"
           className="rounded-lg border border-red/30 bg-red/10 p-3 text-center text-[12.5px] text-red"
         >
-          Akses Anda ke workspace telah dicabut oleh administrator.
+          {t("auth.reasonRemoved", "Your access to the workspace was revoked by an administrator.")}
         </div>
       ) : reason === "left" ? (
         <div
@@ -109,7 +111,7 @@ function Login(): React.ReactElement {
           data-testid="login-reason-banner"
           className="rounded-lg border border-border bg-elev-1 p-3 text-center text-[12.5px] text-fg-2"
         >
-          Anda telah keluar dari workspace.
+          {t("auth.reasonLeft", "You have left the workspace.")}
         </div>
       ) : null}
 

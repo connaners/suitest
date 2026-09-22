@@ -161,7 +161,7 @@ function NotificationCard({ item }: { item: InboxItem }): React.ReactElement {
         <div className="mt-1 flex items-center justify-between">
           <span className="font-mono text-[10.5px] text-fg-5">
             {meta.label}
-            {item.ref ? ` · ${item.ref}` : ""}
+            {item.ref && item.kind !== "WORKSPACE_INVITE" ? ` · ${item.ref}` : ""}
           </span>
           {item.kind === "WORKSPACE_INVITE" ? (
             <InviteActions invitationId={item.id} targetWorkspaceId={item.ref} />

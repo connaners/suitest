@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, createFileRoute, isRedirect, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { AiPanel } from "@/components/shell/AiPanel";
@@ -133,6 +134,7 @@ export const Route = createFileRoute("/_app")({
  * Below `md:` the sidebar becomes an overlay drawer toggled from the Topbar.
  */
 function AppLayout(): React.ReactElement {
+  const { t } = useTranslation();
   const llmReady = useCapabilities((s) => s.capabilities?.llm.status === "ready");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -183,13 +185,21 @@ function AppLayout(): React.ReactElement {
 
           const prevName = removedWsName || "workspace";
           if (reason === "removed") {
-            toast.warning("Akses workspace dicabut", {
-              description: `Akses Anda ke ${prevName} telah dicabut oleh administrator. Anda dialihkan ke ${nextWs.workspace.name}.`,
+            toast.warning(t("workspace.accessRevokedTitle", "Workspace access revoked"), {
+              description: t(
+                "workspace.accessRevokedDesc",
+                "Your access to {{prev}} was revoked by an administrator. Switched to {{next}}.",
+                { prev: prevName, next: nextWs.workspace.name },
+              ),
               duration: 6000,
             });
           } else {
-            toast.info("Keluar dari workspace", {
-              description: `Anda telah keluar dari ${prevName}. Dialihkan ke ${nextWs.workspace.name}.`,
+            toast.info(t("workspace.leftTitle", "Left workspace"), {
+              description: t(
+                "workspace.leftDesc",
+                "You left {{prev}}. Switched to {{next}}.",
+                { prev: prevName, next: nextWs.workspace.name },
+              ),
               duration: 5000,
             });
           }
@@ -209,7 +219,7 @@ function AppLayout(): React.ReactElement {
         void logoutAndRedirect(safeReason);
       }
     },
-    [queryClient, setProjectId, setWorkspaceId],
+    [queryClient, setProjectId, setWorkspaceId, t],
   );
 
   // Real-time workspace events (role demotion/promotion, member add/remove/join, and invitation sync)
@@ -235,7 +245,13 @@ function AppLayout(): React.ReactElement {
             if (activeWorkspaceId) {
               void queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "members"] });
             }
-            toast.info(`Peran Anda di workspace ini telah diubah menjadi ${newRole}`);
+            toast.info(
+              t(
+                "workspace.roleChanged",
+                "Your role in this workspace has been changed to {{role}}",
+                { role: newRole },
+              ),
+            );
           }
         } else if (activeWorkspaceId) {
           void queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "members"] });
@@ -266,7 +282,7 @@ function AppLayout(): React.ReactElement {
         }
       }
     },
-    [user.id, activeWorkspaceId, queryClient, handleWorkspaceFallback],
+    [user.id, activeWorkspaceId, queryClient, handleWorkspaceFallback, t],
   );
 
   useWorkspaceStream(handleWorkspaceEvent);

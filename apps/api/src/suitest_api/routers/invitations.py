@@ -302,6 +302,11 @@ async def update_invitation_role(
         ) from exc
     except InvitationForbiddenError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden") from exc
+    except InvitationConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc) or "Invitation is no longer pending.",
+        ) from exc
     await session.commit()
     await publish_event(
         request,
@@ -458,8 +463,6 @@ async def decline_invitation(
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
-    inv = await _service(session).repo.get_by_id(invitation_id)
-    ws_id = inv.workspace_id if inv else None
     try:
         invitation = await _service(session).decline(invitation_id=invitation_id, actor=user)
     except InvitationNotFoundError as exc:
@@ -472,21 +475,21 @@ async def decline_invitation(
             detail="This invitation was issued to a different email address.",
         ) from exc
     await session.commit()
+    ws_id = invitation.workspace_id
     await publish_event(
         request,
-        topic=f"workspace:{invitation.workspace_id}",
+        topic=f"workspace:{ws_id}",
         event="invitation.resolved",
         data={"invitationId": invitation_id, "status": "declined", "email": invitation.email},
     )
-    if ws_id:
-        await publish_event(
-            request,
-            topic=f"workspace:{ws_id}",
-            event="workspace.invitation.updated",
-            data={
-                "workspaceId": ws_id,
-                "invitationId": invitation_id,
-                "email": user.email,
-            },
-        )
+    await publish_event(
+        request,
+        topic=f"workspace:{ws_id}",
+        event="workspace.invitation.updated",
+        data={
+            "workspaceId": ws_id,
+            "invitationId": invitation_id,
+            "email": user.email,
+        },
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -204,8 +204,12 @@ export function MembersPanel({
             void queryClient.cancelQueries();
             void queryClient.invalidateQueries();
             void useCapabilities.getState().fetch();
-            toast.info("Keluar dari workspace", {
-              description: `Anda telah keluar dari ${workspaceName || "workspace"}. Dialihkan ke ${nextWs.workspace.name}.`,
+            toast.info(t("workspace.leftTitle", "Left workspace"), {
+              description: t(
+                "workspace.leftDesc",
+                "You left {{prev}}. Switched to {{next}}.",
+                { prev: workspaceName || "workspace", next: nextWs.workspace.name },
+              ),
               duration: 5000,
             });
             try {

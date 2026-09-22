@@ -270,13 +270,13 @@ describe("<LoginRoute>", () => {
     renderLogin("/login?reason=removed");
     const banner = await screen.findByTestId("login-reason-banner");
     expect(banner).toBeInTheDocument();
-    expect(banner).toHaveTextContent("Akses Anda ke workspace telah dicabut oleh administrator.");
+    expect(banner).toHaveTextContent("Your access to the workspace was revoked by an administrator.");
   });
 
   it("displays left reason banner when ?reason=left", async () => {
     renderLogin("/login?reason=left");
     const banner = await screen.findByTestId("login-reason-banner");
     expect(banner).toBeInTheDocument();
-    expect(banner).toHaveTextContent("Anda telah keluar dari workspace.");
+    expect(banner).toHaveTextContent("You have left the workspace.");
   });
 });

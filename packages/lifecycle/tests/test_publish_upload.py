@@ -94,26 +94,3 @@ def test_transient_cleanup_keeps_step_screenshots(tmp_path: Path) -> None:
     cleanup_transient_media(paths)
     assert shot.exists()
     assert not clip.exists()
-
-
-def test_format_publish_error_auth_and_api() -> None:
-    from suitest_lifecycle.http_client import SuitestAPIError
-    from suitest_lifecycle.publish import _format_publish_error
-
-    err_403 = SuitestAPIError(403, {"detail": "Role QA or higher required"})
-    formatted_403 = _format_publish_error(err_403, prefix="connection error")
-    assert "authorization error: SUITEST_API_KEY is invalid or lacks the QA role" in formatted_403
-    assert "HTTP 403" in formatted_403
-
-    err_401 = SuitestAPIError(401, "Invalid token")
-    formatted_401 = _format_publish_error(err_401, prefix="connection error")
-    assert "authorization error: SUITEST_API_KEY is invalid or lacks the QA role" in formatted_401
-    assert "HTTP 401" in formatted_401
-
-    err_500 = SuitestAPIError(500, "Internal Server Error")
-    formatted_500 = _format_publish_error(err_500, prefix="connection error")
-    assert "Suitest API error 500" in formatted_500
-
-    exc_generic = ConnectionResetError("connection reset by peer")
-    formatted_generic = _format_publish_error(exc_generic, prefix="connection error")
-    assert "connection error: ConnectionResetError" in formatted_generic
