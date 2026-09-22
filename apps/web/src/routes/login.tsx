@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useCapabilities } from "@/stores/use-capabilities";
 
 interface LoginSearch {
   next?: string;
+  reason?: string;
 }
 
 interface AuthorizeResponse {
@@ -23,8 +25,10 @@ interface AuthorizeResponse {
  * `/auth/*` to the backend (see `apps/web/vite.config.ts`).
  */
 function Login(): React.ReactElement {
+  const { t } = useTranslation();
   const search = Route.useSearch();
   const nextPath = search.next ?? "/dashboard";
+  const reason = search.reason;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -92,6 +96,24 @@ function Login(): React.ReactElement {
           <code className="font-mono text-[12px] text-fg-1">{nextPath}</code>.
         </p>
       </div>
+
+      {reason === "removed" ? (
+        <div
+          role="status"
+          data-testid="login-reason-banner"
+          className="rounded-lg border border-red/30 bg-red/10 p-3 text-center text-[12.5px] text-red"
+        >
+          {t("auth.reasonRemoved", "Your access to the workspace was revoked by an administrator.")}
+        </div>
+      ) : reason === "left" ? (
+        <div
+          role="status"
+          data-testid="login-reason-banner"
+          className="rounded-lg border border-border bg-elev-1 p-3 text-center text-[12.5px] text-fg-2"
+        >
+          {t("auth.reasonLeft", "You have left the workspace.")}
+        </div>
+      ) : null}
 
       <form
         onSubmit={(event) => {
@@ -177,7 +199,11 @@ function Login(): React.ReactElement {
 export const Route = createFileRoute("/login")({
   validateSearch: (search: Record<string, unknown>): LoginSearch => {
     const next = search["next"];
-    return typeof next === "string" ? { next } : {};
+    const reason = search["reason"];
+    return {
+      ...(typeof next === "string" ? { next } : {}),
+      ...(typeof reason === "string" ? { reason } : {}),
+    };
   },
   component: Login,
 });

@@ -110,7 +110,7 @@ async function streamGenerator(
     headers: streamHeaders(),
     credentials: "include",
     body: JSON.stringify(body),
-    signal: signal ?? null,
+    ...(isTestEnv ? {} : signal ? { signal } : {}),
   });
 
   if (!res.ok || res.body === null) {

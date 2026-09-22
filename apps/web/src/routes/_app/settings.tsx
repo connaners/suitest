@@ -35,6 +35,7 @@ function SettingsScreen(): React.ReactElement {
     user.memberships.find((m) => m.workspace_id === activeWorkspaceId) ?? user.memberships[0];
   const role = activeMembership?.role;
   const workspaceId = activeMembership?.workspace_id ?? activeWorkspaceId;
+  const workspaceName = activeMembership?.workspace.name;
 
   const forcePassword = search.force_password === "1" || user.must_change_password === true;
   const showMembers = canSeeMembers(role);
@@ -74,7 +75,7 @@ function SettingsScreen(): React.ReactElement {
 
         {showMembers && workspaceId ? (
           <TabsContent value="members" className="pt-4">
-            <MembersPanel workspaceId={workspaceId} currentRole={role} />
+            <MembersPanel workspaceId={workspaceId} workspaceName={workspaceName} currentRole={role} />
           </TabsContent>
         ) : null}
 

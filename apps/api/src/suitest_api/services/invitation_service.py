@@ -6,6 +6,7 @@ import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from fastapi_users.password import PasswordHelper
 from sqlalchemy import func, select
@@ -61,6 +62,8 @@ class AcceptOutcome:
     email already belongs to an active account: the invitee must sign in with
     their existing credentials instead."""
 
+    invitation: Invitation | None = None
+
 
 def hash_token(token: str) -> str:
     """Return SHA-256 hex digest for a bearer token."""
@@ -82,12 +85,13 @@ class InvitationService:
         self.repo = InvitationRepository(session)
         self.memberships = WorkspaceMembershipRepo(session)
 
-    async def _ensure_manager(self, workspace_id: str, user: User) -> None:
+    async def _ensure_manager(self, workspace_id: str, user: User) -> Membership | None:
         if user.is_superuser:
-            return
+            return None
         membership = await self.memberships.get(workspace_id, user.id)
         if membership is None or membership.role not in {Role.ADMIN, Role.OWNER}:
             raise InvitationForbiddenError
+        return membership
 
     @staticmethod
     def _is_placeholder_account(user: User) -> bool:
@@ -164,7 +168,7 @@ class InvitationService:
             raise InvitationNotFoundError
         return invitation
 
-    async def revoke(self, *, invitation_id: str, actor: User) -> None:
+    async def revoke(self, *, invitation_id: str, actor: User) -> Invitation:
         invitation = await self.repo.get_by_id(invitation_id)
         if invitation is None:
             raise InvitationNotFoundError
@@ -180,6 +184,7 @@ class InvitationService:
             metadata={"email": invitation.email},
         )
         await self.session.flush()
+        return invitation
 
     async def resend(self, *, invitation_id: str, actor: User) -> InvitationLink:
         invitation = await self.repo.get_by_id(invitation_id)
@@ -199,6 +204,38 @@ class InvitationService:
         )
         await self.session.flush()
         return InvitationLink(invitation=invitation, raw_token=token, link=self._link(token))
+
+    async def update_role(self, *, invitation_id: str, role: Role, actor: User) -> Invitation:
+        invitation = await self.repo.get_by_id(invitation_id)
+        if invitation is None:
+            raise InvitationNotFoundError
+        now = datetime.now(tz=UTC)
+        if (
+            invitation.accepted_at is not None
+            or invitation.revoked_at is not None
+            or invitation.declined_at is not None
+            or invitation.expires_at <= now
+        ):
+            raise InvitationConflictError("Invitation is no longer pending.")
+        membership = await self._ensure_manager(invitation.workspace_id, actor)
+        if (
+            role is Role.OWNER
+            and not actor.is_superuser
+            and (membership is None or membership.role is not Role.OWNER)
+        ):
+            raise InvitationForbiddenError
+        await self.repo.update_role(invitation, role)
+        await write_audit(
+            self.session,
+            workspace_id=invitation.workspace_id,
+            user_id=str(actor.id),
+            action="invitation.update_role",
+            resource_type="invitation",
+            resource_id=invitation.id,
+            metadata={"role": role.value, "email": invitation.email},
+        )
+        await self.session.flush()
+        return invitation
 
     async def accept(self, *, token: str, email: str, name: str, password: str) -> AcceptOutcome:
         """Accept a personal invitation.
@@ -277,7 +314,7 @@ class InvitationService:
             metadata={"role": invitation.role.value},
         )
         await self.session.flush()
-        return AcceptOutcome(user=user, issues_session=issues_session)
+        return AcceptOutcome(user=user, issues_session=issues_session, invitation=invitation)
 
     async def approve(self, *, invitation_id: str, actor: User) -> Membership:
         """Approve a pending invite as the already-authenticated invitee.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from api_harness import ApiDb
@@ -13,6 +14,7 @@ from suitest_api.auth.db import get_async_session
 from suitest_api.auth.manager import current_active_user
 from suitest_api.main import create_app
 from suitest_db.models.audit import AuditLog
+from suitest_db.models.invitation import Invitation
 from suitest_db.models.tenancy import Membership
 from suitest_db.models.user import User
 from suitest_shared.domain.enums import Role
@@ -659,3 +661,108 @@ async def test_decline_invitation_emits_ws_event(api_db: ApiDb) -> None:
     decoded = received[0].decode()
     assert "invitation.resolved" in decoded
     assert "declined" in decoded
+
+
+@pytest.mark.asyncio
+async def test_update_invitation_role_success_and_audit_log(api_db: ApiDb) -> None:
+    admin = await api_db.seed_user(email="patch-admin@example.com", name="Admin")
+    ws = await api_db.seed_workspace(slug="patch-ws", name="Acme")
+    await api_db.seed_membership(workspace_id=ws.id, user_id=admin.id, role=Role.ADMIN)
+
+    client = await _client_for(api_db, admin)
+    async with client:
+        created = await client.post(
+            f"/api/v1/workspaces/{ws.id}/invitations",
+            json={"email": "patch-target@example.com", "role": "QA"},
+        )
+        assert created.status_code == 201
+        invitation_id = created.json()["id"]
+
+        updated = await client.patch(
+            f"/api/v1/invitations/{invitation_id}",
+            json={"role": "VIEWER"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["role"] == "VIEWER"
+
+    async with api_db.maker() as session:
+        inv = await session.get(Invitation, invitation_id)
+        assert inv is not None
+        assert inv.role == Role.VIEWER
+
+        audit_row = await session.scalar(
+            select(AuditLog).where(
+                AuditLog.action == "invitation.update_role",
+                AuditLog.resource_id == invitation_id,
+            )
+        )
+        assert audit_row is not None
+        assert audit_row.user_id == admin.id
+        assert audit_row.workspace_id == ws.id
+        assert audit_row.metadata_json == {"role": "VIEWER", "email": "patch-target@example.com"}
+
+
+@pytest.mark.asyncio
+async def test_update_invitation_role_rejects_non_pending(api_db: ApiDb) -> None:
+    admin = await api_db.seed_user(email="patch-guard-admin@example.com", name="Admin")
+    target = await api_db.seed_user(email="patch-guard-target@example.com", name="Target")
+    ws = await api_db.seed_workspace(slug="patch-guard-ws", name="Acme")
+    await api_db.seed_membership(workspace_id=ws.id, user_id=admin.id, role=Role.ADMIN)
+
+    admin_client = await _client_for(api_db, admin)
+    target_client = await _client_for(api_db, target)
+
+    async with admin_client:
+        # Case 1: Revoked invite
+        rev_created = await admin_client.post(
+            f"/api/v1/workspaces/{ws.id}/invitations",
+            json={"email": "revoked@example.com", "role": "QA"},
+        )
+        rev_id = rev_created.json()["id"]
+        revoked = await admin_client.post(f"/api/v1/invitations/{rev_id}/revoke")
+        assert revoked.status_code == 204
+
+        patch_rev = await admin_client.patch(
+            f"/api/v1/invitations/{rev_id}",
+            json={"role": "VIEWER"},
+        )
+        assert patch_rev.status_code == 409
+        assert "no longer pending" in patch_rev.json()["detail"].lower()
+
+        # Case 2: Declined invite
+        dec_created = await admin_client.post(
+            f"/api/v1/workspaces/{ws.id}/invitations",
+            json={"email": "patch-guard-target@example.com", "role": "QA"},
+        )
+        dec_id = dec_created.json()["id"]
+
+        async with target_client:
+            declined = await target_client.post(f"/api/v1/invitations/{dec_id}/decline")
+            assert declined.status_code == 204
+
+        patch_dec = await admin_client.patch(
+            f"/api/v1/invitations/{dec_id}",
+            json={"role": "VIEWER"},
+        )
+        assert patch_dec.status_code == 409
+        assert "no longer pending" in patch_dec.json()["detail"].lower()
+
+        # Case 3: Expired invite
+        exp_created = await admin_client.post(
+            f"/api/v1/workspaces/{ws.id}/invitations",
+            json={"email": "expired@example.com", "role": "QA"},
+        )
+        exp_id = exp_created.json()["id"]
+
+        async with api_db.maker() as session:
+            exp_inv = await session.get(Invitation, exp_id)
+            assert exp_inv is not None
+            exp_inv.expires_at = datetime.now(tz=UTC) - timedelta(hours=1)
+            await session.commit()
+
+        patch_exp = await admin_client.patch(
+            f"/api/v1/invitations/{exp_id}",
+            json={"role": "VIEWER"},
+        )
+        assert patch_exp.status_code == 409
+        assert "no longer pending" in patch_exp.json()["detail"].lower()

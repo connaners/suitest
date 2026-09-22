@@ -64,9 +64,14 @@ function createClient(): AxiosInstance {
     (err: AxiosError<ApiErrorBody>) => {
       const status = err.response?.status ?? 0;
       const data = err.response?.data;
+      const detailObj =
+        typeof data?.detail === "object" && data.detail !== null
+          ? (data.detail as Record<string, unknown>)
+          : undefined;
       const errorObj =
-        (typeof data?.detail === "object" && data.detail !== null ? data.detail.error : undefined) ??
-        data?.error;
+        (typeof detailObj?.["error"] === "object" && detailObj["error"] !== null
+          ? (detailObj["error"] as ApiErrorEnvelope)
+          : (detailObj as ApiErrorEnvelope | undefined)) ?? data?.error;
       const code = errorObj?.code ?? data?.code ?? "UNKNOWN";
       const message =
         errorObj?.message ??
@@ -88,6 +93,21 @@ function createClient(): AxiosInstance {
       ) {
         const next = encodeURIComponent(window.location.pathname);
         window.location.assign(`/login?next=${next}`);
+      }
+      if (
+        status === 403 &&
+        (code === "WORKSPACE_MEMBERSHIP_REVOKED" ||
+          (typeof message === "string" && message.toLowerCase().includes("not a member of the requested workspace"))) &&
+        typeof window !== "undefined" &&
+        !window.location.pathname.startsWith("/login") &&
+        !window.location.pathname.startsWith("/accept-invite")
+      ) {
+        const currentWsId = useActiveWorkspace.getState().workspaceId;
+        window.dispatchEvent(
+          new CustomEvent("suitest:workspace_membership_revoked", {
+            detail: { workspaceId: currentWsId },
+          }),
+        );
       }
       const retryable = status === 0 || status >= 500;
       throw new ApiError(status, code, message, retryable, details);
@@ -1012,6 +1032,15 @@ export async function revokeInvitation(invitationId: string): Promise<void> {
   await api.post(`/invitations/${invitationId}/revoke`);
 }
 
+/** ``PATCH /invitations/:id`` — update role on a pending invite. */
+export async function updateInvitationRole(
+  invitationId: string,
+  role: Role,
+): Promise<InvitationOut> {
+  const res = await api.patch<InvitationOut>(`/invitations/${invitationId}`, { role });
+  return res.data;
+}
+
 /**
  * ``GET /workspaces/:id/invitations/lookup`` — does this email already have a
  * registered account? Backs the invite composer's autocomplete confirmation
@@ -1088,6 +1117,27 @@ export async function resendInvitation(invitationId: string): Promise<Invitation
 export async function listMembers(workspaceId: string): Promise<WorkspaceMemberPublic[]> {
   const res = await api.get<WorkspaceMemberPublic[]>(`/workspaces/${workspaceId}/members`);
   return res.data;
+}
+
+/** ``PATCH /workspaces/:id/members/:userId`` — change a member's role. */
+export async function changeWorkspaceMemberRole(
+  workspaceId: string,
+  userId: string,
+  role: Role,
+): Promise<WorkspaceMemberPublic> {
+  const res = await api.patch<WorkspaceMemberPublic>(
+    `/workspaces/${workspaceId}/members/${userId}`,
+    { role },
+  );
+  return res.data;
+}
+
+/** ``DELETE /workspaces/:id/members/:userId`` — remove a member or leave workspace. */
+export async function removeWorkspaceMember(
+  workspaceId: string,
+  userId: string,
+): Promise<void> {
+  await api.delete(`/workspaces/${workspaceId}/members/${userId}`);
 }
 
 /**

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_agent.providers.base import ChatMessage, ModelCall, ProviderError
 from suitest_db.repositories.llm_configs import LLMConfigRepo
+from suitest_shared.domain.enums import Role
 
 from suitest_api.auth.db import get_async_session
 from suitest_api.deps.api_key import tenant_via_api_key_or_session
@@ -23,6 +24,19 @@ from suitest_api.deps.scope import TenantContext
 from suitest_api.services.llm_credentials import provider_for_config
 
 router = APIRouter(prefix="/api/v1", tags=["llm"])
+
+_LLM_WRITER_ROLES: frozenset[Role] = frozenset({Role.QA, Role.ADMIN, Role.OWNER})
+
+
+def _require_llm_writer(
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
+) -> TenantContext:
+    if ctx.role not in _LLM_WRITER_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied: QA role or higher is required to access workspace LLM completions.",
+        )
+    return ctx
 
 
 class LlmCompleteRequest(BaseModel):
@@ -50,7 +64,7 @@ class LlmCompleteResponse(BaseModel):
 @router.post("/llm/complete", response_model=LlmCompleteResponse)
 async def llm_complete(
     body: LlmCompleteRequest,
-    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
+    ctx: TenantContext = Depends(_require_llm_writer),
     session: AsyncSession = Depends(get_async_session),
 ) -> LlmCompleteResponse:
     """Proxy one completion through the workspace's active LLM provider."""

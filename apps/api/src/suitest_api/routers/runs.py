@@ -31,13 +31,14 @@ from suitest_db.repositories.projects import ProjectRepo
 from suitest_db.repositories.run_step_logs import RunStepLogRepo
 from suitest_db.repositories.runs import RunRepo
 from suitest_db.repositories.runs import RunSummary as DbRunSummary
-from suitest_shared.domain.enums import RunStatus
+from suitest_shared.domain.enums import Role, RunStatus
 from suitest_shared.schemas.pagination import Page, PageMeta
 
 from suitest_api.auth.db import get_async_session
 from suitest_api.auth.manager import current_active_user_optional
 from suitest_api.deps.api_key import tenant_via_api_key_or_session
 from suitest_api.deps.arq import get_arq
+from suitest_api.deps.role import require_role
 from suitest_api.deps.run_dispatch import dispatch_run
 from suitest_api.deps.scope import TenantContext, require_workspace_membership
 from suitest_api.routers._pagination import decode_cursor_or_400, encode_next
@@ -76,6 +77,12 @@ from suitest_api.services.junit_report_service import render_junit
 from suitest_api.services.replay_service import StateChange, compute_state_delta
 from suitest_api.services.run_service import RunService
 from suitest_api.settings import get_settings
+
+_RUN_WRITER_ROLES: frozenset[Role] = frozenset({Role.QA, Role.ADMIN, Role.OWNER})
+_require_run_writer = require_role(
+    _RUN_WRITER_ROLES,
+    message="Permission denied: QA role or higher is required to execute, rerun, or cancel test runs.",
+)
 
 # ARQ queue name shared with the runner. Hardcoded here (vs. importing
 # ``RunnerSettings``) so the api package does not depend on the runner package
@@ -1273,7 +1280,7 @@ def _build_run_service(session: AsyncSession, ctx: TenantContext) -> RunService:
 @router.post("/runs", response_model=RunPublic, status_code=status.HTTP_202_ACCEPTED)
 async def create_run(
     body: CreateRunBody,
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(_require_run_writer),
     session: AsyncSession = Depends(get_async_session),
     arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:
@@ -1322,7 +1329,7 @@ async def create_run(
 async def create_suite_run(
     suite_id: str,
     body: CreateSuiteRunBody,
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(_require_run_writer),
     session: AsyncSession = Depends(get_async_session),
     arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:
@@ -1372,7 +1379,7 @@ _CANCELLABLE_STATUSES: frozenset[RunStatus] = frozenset({RunStatus.QUEUED, RunSt
 @router.post("/runs/{run_id}/cancel", response_model=RunPublic)
 async def cancel_run(
     run_id: str,
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(_require_run_writer),
     session: AsyncSession = Depends(get_async_session),
     arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:
@@ -1411,7 +1418,7 @@ async def rerun_run(
     run_id: str,
     body: RerunRunBody | None = None,
     failed_only: bool = Query(default=False, alias="failedOnly"),
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(_require_run_writer),
     session: AsyncSession = Depends(get_async_session),
     arq: ArqRedis | None = Depends(get_arq),
 ) -> RunPublic:

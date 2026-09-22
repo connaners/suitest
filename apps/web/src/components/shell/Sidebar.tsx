@@ -162,7 +162,7 @@ export function Sidebar({
       items: [
         { label: "Analytics", icon: BarChart3, to: "/analytics" },
         { label: "Traceability", icon: Network, to: "/trace" },
-        { label: "Eval", icon: FlaskConical, to: "/eval" },
+        ...(canManageProjects ? [{ label: "Eval", icon: FlaskConical, to: "/eval" }] : []),
       ],
     },
     {

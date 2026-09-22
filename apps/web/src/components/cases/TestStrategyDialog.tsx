@@ -23,11 +23,13 @@ export function TestStrategyDialog({
   onOpenChange,
   projectId,
   aiEnabled = false,
+  canWrite = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
   aiEnabled?: boolean;
+  canWrite?: boolean;
 }): React.ReactElement {
   const queryClient = useQueryClient();
   const [repository, setRepository] = useState(true);
@@ -107,39 +109,45 @@ export function TestStrategyDialog({
         </DialogHeader>
 
         {!current ? (
-          <div className="flex flex-col gap-4 text-[13px]">
-            <AccessCheck
-              label="Repository source is available"
-              checked={repository}
-              onChange={setRepository}
-            />
-            <AccessCheck
-              label="Logs, database, or internal observability is available"
-              checked={observability}
-              onChange={setObservability}
-            />
-            <AccessCheck
-              label="A white-box test provider is configured"
-              checked={internalProvider}
-              onChange={setInternalProvider}
-            />
-            <textarea
-              value={context}
-              onChange={(event) => {
-                setContext(event.target.value);
-              }}
-              placeholder="Product risks, constraints, and assumptions…"
-              className="min-h-24 rounded-md border border-border bg-bg-base p-3 text-fg-1 outline-none focus:border-accent"
-            />
-            <Button
-              onClick={() => {
-                createDraft.mutate();
-              }}
-              disabled={createDraft.isPending}
-            >
-              {createDraft.isPending ? "Creating…" : "Create deterministic draft"}
-            </Button>
-          </div>
+          canWrite ? (
+            <div className="flex flex-col gap-4 text-[13px]">
+              <AccessCheck
+                label="Repository source is available"
+                checked={repository}
+                onChange={setRepository}
+              />
+              <AccessCheck
+                label="Logs, database, or internal observability is available"
+                checked={observability}
+                onChange={setObservability}
+              />
+              <AccessCheck
+                label="A white-box test provider is configured"
+                checked={internalProvider}
+                onChange={setInternalProvider}
+              />
+              <textarea
+                value={context}
+                onChange={(event) => {
+                  setContext(event.target.value);
+                }}
+                placeholder="Product risks, constraints, and assumptions…"
+                className="min-h-24 rounded-md border border-border bg-bg-base p-3 text-fg-1 outline-none focus:border-accent"
+              />
+              <Button
+                onClick={() => {
+                  createDraft.mutate();
+                }}
+                disabled={createDraft.isPending}
+              >
+                {createDraft.isPending ? "Creating…" : "Create deterministic draft"}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-[13px] text-fg-4">
+              No test strategy has been configured for this project yet.
+            </p>
+          )
         ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -171,7 +179,7 @@ export function TestStrategyDialog({
                 ))}
               </ul>
             </section>
-            {current.status === "DRAFT" ? (
+            {canWrite && current.status === "DRAFT" ? (
               <details>
                 <summary className="cursor-pointer text-[12px] text-fg-3">
                   Edit strategy JSON
@@ -195,7 +203,7 @@ export function TestStrategyDialog({
           </p>
         ) : null}
         <DialogFooter>
-          {current?.status === "DRAFT" ? (
+          {canWrite && current?.status === "DRAFT" ? (
             <>
               {aiEnabled ? (
                 <Button

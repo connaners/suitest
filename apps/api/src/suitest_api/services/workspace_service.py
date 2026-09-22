@@ -421,6 +421,11 @@ class WorkspaceService:
         if membership is None:
             return None
         previous = membership.role
+        if previous is Role.OWNER and self._ctx.role is not Role.OWNER:
+            raise OwnerGrantRequiresOwnerError(
+                "Only an OWNER can change an OWNER's role",
+                details={"role": self._ctx.role.value},
+            )
         if previous is Role.OWNER and role is not Role.OWNER:
             owners = await self._member_repo.count_owners(workspace_id)
             if owners <= 1:
@@ -458,7 +463,9 @@ class WorkspaceService:
     async def remove_member(
         self, workspace_id: str, user_id: uuid.UUID
     ) -> MemberWriteResult | None:
-        self._require_admin()
+        is_self = str(user_id) == str(self._ctx.user_id)
+        if not is_self:
+            self._require_admin()
         ws = await self._load_active(workspace_id)
         if ws is None:
             return None
@@ -466,6 +473,11 @@ class WorkspaceService:
         membership: Membership | None = await self._member_repo.get(workspace_id, user_id)
         if membership is None:
             return None
+        if not is_self and membership.role is Role.OWNER and self._ctx.role is not Role.OWNER:
+            raise OwnerGrantRequiresOwnerError(
+                "Only an OWNER can remove another OWNER",
+                details={"role": self._ctx.role.value},
+            )
         if membership.role is Role.OWNER:
             owners = await self._member_repo.count_owners(workspace_id)
             if owners <= 1:
@@ -483,7 +495,13 @@ class WorkspaceService:
             action="workspace.member.removed",
             resource_type="membership",
             resource_id=str(user_id),
-            metadata={"userId": str(user_id), "role": previous.value, "email": email},
+            metadata={
+                "userId": str(user_id),
+                "role": previous.value,
+                "email": email,
+                "is_self": is_self,
+                "workspaceName": ws.name,
+            },
         )
         return MemberWriteResult(
             member_id=user_id,
@@ -492,9 +510,11 @@ class WorkspaceService:
             ws_event="workspace.member.removed",
             ws_payload={
                 "workspaceId": workspace_id,
+                "workspaceName": ws.name,
                 "userId": str(user_id),
                 "role": previous.value,
                 "by": self._ctx.user_id,
+                "is_self": is_self,
             },
         )
 

@@ -51,5 +51,13 @@
   "profile.updateError": "Gagal memperbarui nama. Coba lagi.",
   "profile.nameUpdated": "Nama berhasil diperbarui.",
   "profile.saving": "Menyimpan…",
-  "profile.saveName": "Simpan nama"
+  "profile.saveName": "Simpan nama",
+  "workspace.accessRevokedTitle": "Akses workspace dicabut",
+  "workspace.accessRevokedDesc": "Akses Anda ke {{prev}} telah dicabut oleh administrator. Anda dialihkan ke {{next}}.",
+  "workspace.leftTitle": "Keluar dari workspace",
+  "workspace.leftDesc": "Anda telah keluar dari {{prev}}. Dialihkan ke {{next}}.",
+  "workspace.roleChanged": "Peran Anda di workspace ini telah diubah menjadi {{role}}",
+  "cases.roleDemotedViewer": "Peran Anda telah diubah menjadi VIEWER. Draf langkah yang belum disimpan telah dibatalkan.",
+  "auth.reasonRemoved": "Akses Anda ke workspace telah dicabut oleh administrator.",
+  "auth.reasonLeft": "Anda telah keluar dari workspace."
 }

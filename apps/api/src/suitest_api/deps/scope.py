@@ -90,7 +90,10 @@ async def get_tenant_context(
     if membership is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="user is not a member of the requested workspace",
+            detail={
+                "code": "WORKSPACE_MEMBERSHIP_REVOKED",
+                "message": "user is not a member of the requested workspace",
+            },
         )
     return TenantContext(
         workspace_id=workspace_id,

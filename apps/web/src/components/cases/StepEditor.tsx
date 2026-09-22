@@ -35,7 +35,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Code, GripVertical, Plus, Trash2, Wrench } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 import { SelectorRepairDialog } from "@/components/cases/SelectorRepairDialog";
 import { Gated } from "@/components/gating/Gated";
@@ -129,16 +131,49 @@ interface StepEditorProps {
   onStepsChange: (steps: DraftStep[]) => void;
   /** Last-run outcome per step order — pass-through for the pass/fail badge. */
   outcomeByOrder?: Map<number, StepOutcome>;
+  /** When false (e.g. VIEWER role), all mutation affordances are hidden or disabled. */
+  canWrite?: boolean;
 }
 export function StepEditor({
   caseId,
   steps,
   onStepsChange,
   outcomeByOrder,
+  canWrite = true,
 }: StepEditorProps): React.ReactElement {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<StepEditorError | null>(null);
   const [repairStep, setRepairStep] = useState<DraftStep | null>(null);
+
+  const prevCanWriteRef = useRef(canWrite);
+  const lastPersistedStepsRef = useRef<DraftStep[]>(steps.filter((s) => isPersisted(s.id)));
+
+  // Keep lastPersistedStepsRef in sync whenever a fully-persisted step list is received
+  useEffect(() => {
+    if (steps.every((s) => isPersisted(s.id))) {
+      lastPersistedStepsRef.current = steps;
+    }
+  }, [steps]);
+
+  // If canWrite transitions from true -> false (demoted to VIEWER while editing):
+  useEffect(() => {
+    if (prevCanWriteRef.current && !canWrite) {
+      // Revert steps to last persisted state
+      onStepsChange(lastPersistedStepsRef.current);
+      // Close open modals & reset error
+      setRepairStep(null);
+      setError(null);
+      // Notify user
+      toast.warning(
+        t(
+          "cases.roleDemotedViewer",
+          "Your role has been changed to VIEWER. Unsaved step drafts have been discarded.",
+        ),
+      );
+    }
+    prevCanWriteRef.current = canWrite;
+  }, [canWrite, onStepsChange, t]);
 
   // ------------------------------------------------------------------
   // PATCH /test-cases/:id/steps — bulk replace (save edits / remove)
@@ -370,41 +405,43 @@ export function StepEditor({
     <section className="flex flex-col gap-2" data-testid="step-editor">
       <div className="flex items-center justify-between">
         <h4 className="text-[13px] font-semibold text-fg-1">Steps</h4>
-        <div className="flex items-center gap-1.5">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            data-testid="step-save-btn"
-            disabled={saving}
-            onClick={handleSave}
-          >
-            {replaceStepsMutation.isPending ? "Saving…" : "Save steps"}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            data-testid="step-add-btn"
-            onClick={() => {
-              // Client-side draft: no API call until "Save steps". The
-              // "__new__" id prefix marks it as unpersisted (drag-disabled,
-              // replaced wholesale by the PATCH on save).
-              const draft: DraftStep = {
-                id: `__new__${crypto.randomUUID()}`,
-                order: steps.length + 1,
-                action: "",
-                expected: "",
-                code: null,
-                mcp_provider: "playwright-mcp",
-                target_kind: "FE_WEB",
-              };
-              onStepsChange([...steps, draft]);
-            }}
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            New step
-          </Button>
-        </div>
+        {canWrite ? (
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              data-testid="step-save-btn"
+              disabled={saving}
+              onClick={handleSave}
+            >
+              {replaceStepsMutation.isPending ? "Saving…" : "Save steps"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              data-testid="step-add-btn"
+              onClick={() => {
+                // Client-side draft: no API call until "Save steps". The
+                // "__new__" id prefix marks it as unpersisted (drag-disabled,
+                // replaced wholesale by the PATCH on save).
+                const draft: DraftStep = {
+                  id: `__new__${crypto.randomUUID()}`,
+                  order: steps.length + 1,
+                  action: "",
+                  expected: "",
+                  code: null,
+                  mcp_provider: "playwright-mcp",
+                  target_kind: "FE_WEB",
+                };
+                onStepsChange([...steps, draft]);
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              New step
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {error ? (
@@ -424,7 +461,9 @@ export function StepEditor({
 
       {steps.length === 0 ? (
         <div className="rounded-md border border-border bg-bg-elev-2 px-4 py-6 text-center text-[12px] text-fg-4">
-          No steps yet. Click &quot;+ New step&quot; to add one.
+          {canWrite
+            ? 'No steps yet. Click "+ New step" to add one.'
+            : 'No steps defined for this test case.'}
         </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -435,7 +474,8 @@ export function StepEditor({
                   key={step.id}
                   step={step}
                   index={idx}
-                  disabled={saving}
+                  disabled={saving || !canWrite}
+                  canWrite={canWrite}
                   hasError={error?.stepIndex === idx}
                   outcome={outcomeByOrder?.get(idx + 1)}
                   onFieldChange={handleFieldChange}
@@ -477,6 +517,7 @@ interface StepRowProps {
   step: DraftStep;
   index: number;
   disabled: boolean;
+  canWrite?: boolean;
   hasError?: boolean | undefined;
   outcome?: StepOutcome | undefined;
   onFieldChange: (stepId: string, field: keyof DraftStep, value: string) => void;
@@ -488,6 +529,7 @@ function StepRow({
   step,
   index,
   disabled,
+  canWrite = true,
   hasError,
   outcome,
   onFieldChange,
@@ -496,7 +538,7 @@ function StepRow({
 }: StepRowProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: step.id,
-    disabled,
+    disabled: disabled || !canWrite,
   });
 
   const style: React.CSSProperties = {
@@ -519,19 +561,21 @@ function StepRow({
     >
       {/* Header row: drag handle + order badge + action input + outcome + remove */}
       <div className="mb-2 flex items-center gap-2">
-        <button
-          type="button"
-          data-testid="step-drag-handle"
-          className={cn(
-            "shrink-0 cursor-grab text-fg-4 hover:text-fg-3 active:cursor-grabbing",
-            disabled && "pointer-events-none opacity-50",
-          )}
-          aria-label="Drag to reorder"
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
-        </button>
+        {canWrite ? (
+          <button
+            type="button"
+            data-testid="step-drag-handle"
+            className={cn(
+              "shrink-0 cursor-grab text-fg-4 hover:text-fg-3 active:cursor-grabbing",
+              disabled && "pointer-events-none opacity-50",
+            )}
+            aria-label="Drag to reorder"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        ) : null}
         <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-bg-elev-2 font-mono text-[10.5px] text-fg-4">
           {index + 1}
         </span>
@@ -559,21 +603,23 @@ function StepRow({
             onFieldChange(step.id, "action", e.target.value);
           }}
         />
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          data-testid="step-remove-btn"
-          disabled={disabled}
-          className="shrink-0 text-fg-4 hover:text-red"
-          onClick={() => {
-            onRemove(step.id);
-          }}
-          aria-label="Remove step"
-        >
-          <Trash2 className="h-3 w-3" aria-hidden="true" />
-        </Button>
-        {step.target_kind === "FE_WEB" && step.code ? (
+        {canWrite ? (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            data-testid="step-remove-btn"
+            disabled={disabled}
+            className="shrink-0 text-fg-4 hover:text-red"
+            onClick={() => {
+              onRemove(step.id);
+            }}
+            aria-label="Remove step"
+          >
+            <Trash2 className="h-3 w-3" aria-hidden="true" />
+          </Button>
+        ) : null}
+        {canWrite && step.target_kind === "FE_WEB" && step.code ? (
           <Gated feature="autonomy_assist">
             <Button
               type="button"

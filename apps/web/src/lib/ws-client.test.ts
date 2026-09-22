@@ -202,4 +202,34 @@ describe("WsClient", () => {
     ws.triggerMessage({ topic: "runs.42", event: "log", payload: 2 });
     expect(cbB).toHaveBeenCalledTimes(1);
   });
+
+  it("fires onReconnect listeners when reconnecting after close", () => {
+    const client = new WsClient(WS_URL);
+    const onReconnectSpy = vi.fn();
+    const unsub = client.onReconnect(onReconnectSpy);
+
+    client.connect();
+    const ws1 = MockWebSocket.instances[0];
+    if (!ws1) throw new Error("no socket");
+    ws1.triggerOpen();
+    expect(onReconnectSpy).not.toHaveBeenCalled();
+
+    // Trigger disconnect
+    ws1.triggerClose();
+    vi.advanceTimersByTime(500);
+
+    const ws2 = MockWebSocket.instances[1];
+    if (!ws2) throw new Error("no socket 2");
+    ws2.triggerOpen();
+
+    expect(onReconnectSpy).toHaveBeenCalledTimes(1);
+
+    unsub();
+    ws2.triggerClose();
+    vi.advanceTimersByTime(500);
+    const ws3 = MockWebSocket.instances[2];
+    if (!ws3) throw new Error("no socket 3");
+    ws3.triggerOpen();
+    expect(onReconnectSpy).toHaveBeenCalledTimes(1);
+  });
 });

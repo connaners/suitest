@@ -24,6 +24,7 @@ import { RunInterruptedBanner } from "@/components/runs/RunInterruptedBanner";
 import { WakeLockIndicator } from "@/components/runs/WakeLockIndicator";
 import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunsSkeleton } from "@/components/runs/skeleton";
+import { usePermissions } from "@/hooks/use-permissions";
 import { CostChip } from "@/components/shared/CostChip";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
@@ -389,6 +390,7 @@ function RunDetailPanel({
 }): React.ReactElement {
   const activeProjectId = useActiveProject((s) => s.projectId);
   const { data: run, isLoading, isError } = useRun(runId ?? undefined);
+  const { canWriteTests } = usePermissions();
   const cancelMutation = useCancelRun();
   const rerunMutation = useRerunRun();
   const [selectedCasePublicId, setSelectedCasePublicId] = useState<string | null>(null);
@@ -528,7 +530,7 @@ function RunDetailPanel({
           />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {isLive ? (
+          {isLive && canWriteTests ? (
             <Button
               type="button"
               size="sm"
@@ -542,30 +544,32 @@ function RunDetailPanel({
               {cancelMutation.isPending ? "Cancelling…" : "Cancel run"}
             </Button>
           ) : null}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={rerunDisabled}
-            onClick={() => setRerunDialogOpen(true)}
-            className={cn(
-              hasActualFailures && "border-red/40 text-red hover:bg-red/10",
-              hasAbortedOnly && "border-amber-500/40 text-amber-500 hover:bg-amber-500/10",
-            )}
-            data-testid="run-rerun-button"
-          >
-            <RotateCw
-              className={cn("mr-1.5 h-3.5 w-3.5", rerunMutation.isPending && "animate-spin")}
-              aria-hidden="true"
-            />
-            {rerunMutation.isPending
-              ? "Queuing…"
-              : hasActualFailures
-                ? `Re-run (${failedCount} failed)`
-                : hasAbortedOnly
-                  ? `Resume (${abortedCasesCount} remaining)`
-                  : "Re-run"}
-          </Button>
+          {canWriteTests ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={rerunDisabled}
+              onClick={() => setRerunDialogOpen(true)}
+              className={cn(
+                hasActualFailures && "border-red/40 text-red hover:bg-red/10",
+                hasAbortedOnly && "border-amber-500/40 text-amber-500 hover:bg-amber-500/10",
+              )}
+              data-testid="run-rerun-button"
+            >
+              <RotateCw
+                className={cn("mr-1.5 h-3.5 w-3.5", rerunMutation.isPending && "animate-spin")}
+                aria-hidden="true"
+              />
+              {rerunMutation.isPending
+                ? "Queuing…"
+                : hasActualFailures
+                  ? `Re-run (${failedCount} failed)`
+                  : hasAbortedOnly
+                    ? `Resume (${abortedCasesCount} remaining)`
+                    : "Re-run"}
+            </Button>
+          ) : null}
           {targetCasePublicId ? (
             <Link
               to="/cases"
@@ -573,7 +577,13 @@ function RunDetailPanel({
               className="inline-flex h-8 items-center rounded-md border border-border bg-bg-elev-1 px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
               data-testid="run-edit-cases-link"
             >
-              {run.cases && run.cases.length > 1 ? "Edit selected case" : "Edit case"}
+              {canWriteTests
+                ? run.cases && run.cases.length > 1
+                  ? "Edit selected case"
+                  : "Edit case"
+                : run.cases && run.cases.length > 1
+                  ? "View selected case"
+                  : "View case"}
             </Link>
           ) : null}
           <Link
@@ -654,7 +664,7 @@ function RunDetailPanel({
         playwrightConfig={run.playwrightConfig ?? null}
         onSelectCasePublicId={setSelectedCasePublicId}
         onGroupsChange={setExplorerGroups}
-        onRerunCase={handleRerunCase}
+        {...(canWriteTests ? { onRerunCase: handleRerunCase } : {})}
         isRerunning={rerunMutation.isPending}
       />
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from suitest_db.audit import write_audit
+from suitest_shared.domain.enums import Role
 
 from suitest_api.auth.db import get_async_session
 from suitest_api.deps.api_key import tenant_via_api_key_or_session
@@ -31,6 +32,19 @@ from suitest_api.services.ingest_service import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["ingest"])
+
+_INGEST_WRITER_ROLES: frozenset[Role] = frozenset({Role.QA, Role.ADMIN, Role.OWNER})
+
+
+def _require_ingest_writer(
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
+) -> TenantContext:
+    if ctx.role not in _INGEST_WRITER_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied: QA role or higher is required to import test cases or ingest runs.",
+        )
+    return ctx
 
 
 @router.post(
@@ -54,7 +68,7 @@ async def resolve_project_binding(
 )
 async def bulk_import(
     body: BulkImportBody,
-    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
+    ctx: TenantContext = Depends(_require_ingest_writer),
     session: AsyncSession = Depends(get_async_session),
 ) -> BulkImportResult:
     """Upsert a suite's cases + steps from a lifecycle payload (idempotent by sourceRef)."""
@@ -84,7 +98,7 @@ async def bulk_import(
 )
 async def ingest_completed_run(
     body: RunIngestBody,
-    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
+    ctx: TenantContext = Depends(_require_ingest_writer),
     session: AsyncSession = Depends(get_async_session),
 ) -> RunIngestResult:
     """Start, append to, or finalize an externally-executed run. No ARQ enqueue."""

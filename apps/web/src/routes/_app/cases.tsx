@@ -31,6 +31,7 @@ import { ImageLightboxModal, type LightboxImage } from "@/components/runs/ImageL
 import { VideoPlayerModal } from "@/components/runs/VideoPlayerModal";
 import { loadSavedExecutionSettings } from "@/components/runs/execution-settings";
 import { useActiveWorkspace } from "@/stores/use-active-workspace";
+import { usePermissions } from "@/hooks/use-permissions";
 import { CreateCaseDialog } from "@/components/cases/CreateCaseDialog";
 import { CreateSuiteDialog } from "@/components/cases/CreateSuiteDialog";
 import { ExportUatDialog } from "@/components/cases/ExportUatDialog";
@@ -169,6 +170,7 @@ function CasesHeader({
   onStrategy: () => void;
 }): React.ReactElement {
   const { t } = useTranslation();
+  const { canWriteTests } = usePermissions();
   const tabs: Array<{ id: Tab; label: string; show?: boolean }> = [
     { id: "all", label: "All" },
     { id: "manual", label: "Manual" },
@@ -205,78 +207,83 @@ function CasesHeader({
           ))}
         </nav>
       </div>
-      <div className="flex items-center gap-2" data-testid="generate-split-button">
+      <div className="flex items-center gap-2">
         <Button type="button" size="sm" variant="outline" onClick={onStrategy}>
           Test strategy
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          data-testid="generate-btn"
-          onClick={() => {
-            onGenerate();
-          }}
-          className="rounded-r-none"
-        >
-          Generate
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        {canWriteTests ? (
+          <div className="flex items-center" data-testid="generate-split-button">
             <Button
               type="button"
               size="sm"
-              data-testid="generate-menu-trigger"
-              aria-label="Generate options"
-              className="rounded-l-none border-l border-bg-base px-1.5"
+              data-testid="generate-btn"
+              onClick={() => {
+                onGenerate();
+              }}
+              className="rounded-r-none"
             >
-              <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              Generate
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-55">
-            <DropdownMenuItem
-              data-testid="generate-menu-openapi"
-              onSelect={() => {
-                onGenerate("openapi");
-              }}
-            >
-              {"{ }"} Generate from OpenAPI
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid="generate-menu-recorder"
-              onSelect={() => {
-                onGenerate("recorder");
-              }}
-            >
-              ● Record from browser
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid="generate-menu-crawler"
-              onSelect={() => {
-                onGenerate("crawler");
-              }}
-            >
-              🔗 Crawl URL
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {aiEnabled ? (
-              <DropdownMenuItem data-testid="generate-menu-ai" disabled>
-                ✨ Generate (AI)
-              </DropdownMenuItem>
-            ) : (
-              <DisabledTooltip reason="LLM not configured. Settings → LLM">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="generate-menu-trigger"
+                  aria-label="Generate options"
+                  className="rounded-l-none border-l border-bg-base px-1.5"
+                >
+                  <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-55">
                 <DropdownMenuItem
-                  data-testid="generate-menu-ai"
-                  disabled
-                  onSelect={(e) => {
-                    e.preventDefault();
+                  data-testid="generate-menu-openapi"
+                  onSelect={() => {
+                    onGenerate("openapi");
                   }}
                 >
-                  ✨ Generate (AI)
+                  {"{ }"} Generate from OpenAPI
                 </DropdownMenuItem>
-              </DisabledTooltip>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                <DropdownMenuItem
+                  data-testid="generate-menu-recorder"
+                  onSelect={() => {
+                    onGenerate("recorder");
+                  }}
+                >
+                  <Video className="mr-2 h-3.5 w-3.5" />
+                  Generate from recording
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  data-testid="generate-menu-crawler"
+                  onSelect={() => {
+                    onGenerate("crawler");
+                  }}
+                >
+                  🔗 Crawl URL
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {aiEnabled ? (
+                  <DropdownMenuItem data-testid="generate-menu-ai" disabled>
+                    ✨ Generate (AI)
+                  </DropdownMenuItem>
+                ) : (
+                  <DisabledTooltip reason="LLM not configured. Settings → LLM">
+                    <DropdownMenuItem
+                      data-testid="generate-menu-ai"
+                      disabled
+                      onSelect={(e) => {
+                        e.preventDefault();
+                      }}
+                    >
+                      ✨ Generate (AI)
+                    </DropdownMenuItem>
+                  </DisabledTooltip>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : null}
       </div>
     </header>
   );
@@ -304,6 +311,7 @@ function BulkActionBar({
   const navigate = useNavigate();
   const createRun = useCreateRun();
   const bulkUpdate = useBulkUpdate();
+  const { canWriteTests } = usePermissions();
   const [confirmRunOpen, setConfirmRunOpen] = useState(false);
 
   const ids = [...selectedIds];
@@ -401,81 +409,83 @@ function BulkActionBar({
       {overLimit ? (
         <span className="text-[11px] text-amber">Max {BULK_LIMIT} at a time</span>
       ) : null}
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          data-testid="bulk-run-btn"
-          disabled={!canRun}
-          className="text-fg-3 hover:text-fg-1"
-          onClick={() => setConfirmRunOpen(true)}
-        >
-          <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
-          Run ({count})
-        </Button>
+      {canWriteTests ? (
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="bulk-run-btn"
+            disabled={!canRun}
+            className="text-fg-3 hover:text-fg-1"
+            onClick={() => setConfirmRunOpen(true)}
+          >
+            <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+            Run ({count})
+          </Button>
 
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          data-testid="bulk-delete-btn"
-          disabled={overLimit || bulkUpdate.isPending}
-          className="text-fg-3 hover:text-red"
-          onClick={handleDelete}
-        >
-          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-          Delete
-        </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="bulk-delete-btn"
+            disabled={overLimit || bulkUpdate.isPending}
+            className="text-fg-3 hover:text-red"
+            onClick={handleDelete}
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            Delete
+          </Button>
 
-        <select
-          data-testid="bulk-move-suite-select"
-          defaultValue=""
-          disabled={overLimit || bulkUpdate.isPending}
-          onChange={(e) => {
-            handleMoveToSuite(e.target.value);
-            e.target.value = "";
-          }}
-          className={cn(
-            "h-8 rounded-md border border-border bg-bg-elev-1 px-2 text-[12px] text-fg-3",
-            "focus:outline-none focus:ring-1 focus:ring-accent/40",
-            "disabled:cursor-not-allowed disabled:opacity-50",
-          )}
-        >
-          <option value="" disabled>
-            Move to suite…
-          </option>
-          {suites.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
+          <select
+            data-testid="bulk-move-suite-select"
+            defaultValue=""
+            disabled={overLimit || bulkUpdate.isPending}
+            onChange={(e) => {
+              handleMoveToSuite(e.target.value);
+              e.target.value = "";
+            }}
+            className={cn(
+              "h-8 rounded-md border border-border bg-bg-elev-1 px-2 text-[12px] text-fg-3",
+              "focus:outline-none focus:ring-1 focus:ring-accent/40",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+            )}
+          >
+            <option value="" disabled>
+              Move to suite…
             </option>
-          ))}
-        </select>
+            {suites.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
 
-        <select
-          data-testid="bulk-priority-select"
-          defaultValue=""
-          disabled={overLimit || bulkUpdate.isPending}
-          onChange={(e) => {
-            handleSetPriority(e.target.value);
-            e.target.value = "";
-          }}
-          className={cn(
-            "h-8 rounded-md border border-border bg-bg-elev-1 px-2 text-[12px] text-fg-3",
-            "focus:outline-none focus:ring-1 focus:ring-accent/40",
-            "disabled:cursor-not-allowed disabled:opacity-50",
-          )}
-        >
-          <option value="" disabled>
-            Set priority…
-          </option>
-          {PRIORITIES.map((p) => (
-            <option key={p} value={p}>
-              {p}
+          <select
+            data-testid="bulk-priority-select"
+            defaultValue=""
+            disabled={overLimit || bulkUpdate.isPending}
+            onChange={(e) => {
+              handleSetPriority(e.target.value);
+              e.target.value = "";
+            }}
+            className={cn(
+              "h-8 rounded-md border border-border bg-bg-elev-1 px-2 text-[12px] text-fg-3",
+              "focus:outline-none focus:ring-1 focus:ring-accent/40",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+            )}
+          >
+            <option value="" disabled>
+              Set priority…
             </option>
-          ))}
-        </select>
-      </div>
+            {PRIORITIES.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
 
       <button
         type="button"
@@ -647,6 +657,7 @@ function CaseTreeSuite({
   onSetGating: (suiteId: string | null) => void;
 }): React.ReactElement {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { canManageProjects } = usePermissions();
   const suiteName = suite?.name ?? "Unassigned";
   const itemIds = useMemo(() => items.map((c) => c.id), [items]);
   const allSuiteSelected = itemIds.length > 0 && itemIds.every((id) => selectedIds.has(id));
@@ -701,20 +712,22 @@ function CaseTreeSuite({
               >
                 Gating
               </span>
-              <button
-                type="button"
-                data-testid="suite-unset-gating-btn"
-                title="Remove gating suite"
-                aria-label="Remove gating suite"
-                onClick={() => {
-                  onSetGating(null);
-                }}
-                className="rounded-sm px-1 py-0.5 text-[9px] font-medium tracking-wide text-fg-5 hover:bg-bg-elev-2 hover:text-red transition-colors"
-              >
-                Unset
-              </button>
+              {canManageProjects ? (
+                <button
+                  type="button"
+                  data-testid="suite-unset-gating-btn"
+                  title="Remove gating suite"
+                  aria-label="Remove gating suite"
+                  onClick={() => {
+                    onSetGating(null);
+                  }}
+                  className="rounded-sm px-1 py-0.5 text-[9px] font-medium tracking-wide text-fg-5 hover:bg-bg-elev-2 hover:text-red transition-colors"
+                >
+                  Unset
+                </button>
+              ) : null}
             </div>
-          ) : (
+          ) : canManageProjects ? (
             <button
               type="button"
               data-testid="suite-set-gating-btn"
@@ -725,7 +738,7 @@ function CaseTreeSuite({
             >
               Set gating
             </button>
-          )
+          ) : null
         ) : null}
       </div>
       {!isCollapsed ? (
@@ -797,11 +810,24 @@ function CaseDetailPanel({
   const deleteCase = useDeleteTestCase();
   const restoreCase = useRestoreTestCase();
   const updateTesting = useUpdateTestingMetadata(publicId ?? "");
+  const { canWriteTests } = usePermissions();
   const [optionsModalOpen, setOptionsModalOpen] = useState(false);
 
   // Local draft state for the step editor — seeded from the server response
   // and kept in sync when the server data refreshes (via key on detail?.id).
   const [draftSteps, setDraftSteps] = useState<DraftStep[]>([]);
+
+  // When canWriteTests becomes false (demoted to VIEWER): dismiss modals and revert uncommitted drafts
+  useEffect(() => {
+    if (!canWriteTests) {
+      if (optionsModalOpen) {
+        setOptionsModalOpen(false);
+      }
+      if (draftSteps.length > 0) {
+        setDraftSteps([]);
+      }
+    }
+  }, [canWriteTests, optionsModalOpen, draftSteps.length]);
 
   // Sync draftSteps when the server data arrives or changes
   const serverSteps = detail?.steps ?? [];
@@ -992,7 +1018,7 @@ function CaseDetailPanel({
           <select
             aria-label="Testing approach override"
             value={detail.testing_approach ?? ""}
-            disabled={updateTesting.isPending}
+            disabled={updateTesting.isPending || !canWriteTests}
             onChange={(event) => {
               updateTesting.mutate({
                 testingApproach: (event.target.value || null) as TestingApproach | null,
@@ -1008,7 +1034,7 @@ function CaseDetailPanel({
           <select
             aria-label="Test level"
             value={detail.test_level ?? ""}
-            disabled={updateTesting.isPending}
+            disabled={updateTesting.isPending || !canWriteTests}
             onChange={(event) => {
               updateTesting.mutate({
                 testingApproach: detail.testing_approach ?? null,
@@ -1038,42 +1064,44 @@ function CaseDetailPanel({
             {detail.priority}
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            data-testid="case-delete-btn"
-            disabled={deletePending}
-            onClick={handleDelete}
-            className="text-fg-3 hover:text-red"
-            aria-label="Delete case"
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            {deleteCase.isPending ? "Deleting…" : "Delete"}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            data-testid="case-run-options-btn"
-            disabled={!canRun}
-            onClick={() => setOptionsModalOpen(true)}
-            aria-label="Configure and run case"
-            title="Configure execution settings & run"
-          >
-            <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            data-testid="case-run-now"
-            disabled={!canRun}
-            onClick={() => handleRun()}
-          >
-            {runPending ? "Queuing…" : "Run now"}
-          </Button>
-        </div>
+        {canWriteTests ? (
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              data-testid="case-delete-btn"
+              disabled={deletePending}
+              onClick={handleDelete}
+              className="text-fg-3 hover:text-red"
+              aria-label="Delete case"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              {deleteCase.isPending ? "Deleting…" : "Delete"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              data-testid="case-run-options-btn"
+              disabled={!canRun}
+              onClick={() => setOptionsModalOpen(true)}
+              aria-label="Configure and run case"
+              title="Configure execution settings & run"
+            >
+              <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              data-testid="case-run-now"
+              disabled={!canRun}
+              onClick={() => handleRun()}
+            >
+              {runPending ? "Queuing…" : "Run now"}
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -1134,6 +1162,7 @@ function CaseDetailPanel({
             steps={stepsToShow}
             onStepsChange={handleStepsChange}
             outcomeByOrder={outcomeByOrder}
+            canWrite={canWriteTests}
           />
           {lastRunId ? (
             <Gated feature="ai_diagnose" fallback={null}>
@@ -2210,6 +2239,7 @@ function CasesBody(): React.ReactElement {
   const navigate = useNavigate({ from: Route.fullPath });
   const { data: suites } = useSuites();
   const { data: cases } = useTestCases();
+  const { canWriteTests } = usePermissions();
   const aiTabVisible = useFeatureEnabled("ai_generation");
   const projectId = useActiveProject((s) => s.projectId);
   const { data: project } = useProject(projectId);
@@ -2395,6 +2425,7 @@ function CasesBody(): React.ReactElement {
           onOpenChange={setStrategyDialogOpen}
           projectId={projectId}
           aiEnabled={aiTabVisible}
+          canWrite={canWriteTests}
         />
       ) : null}
       {generateOpen ? (
@@ -2485,31 +2516,33 @@ function CasesBody(): React.ReactElement {
                   <option value="WHITE_BOX">White-box</option>
                 </select>
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="flex-1"
-                  data-testid="new-suite-btn"
-                  onClick={() => {
-                    setSuiteDialogOpen(true);
-                  }}
-                >
-                  New suite
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="flex-1"
-                  data-testid="new-case-btn"
-                  onClick={() => {
-                    setCaseDialogOpen(true);
-                  }}
-                >
-                  New case
-                </Button>
-              </div>
+              {canWriteTests ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    data-testid="new-suite-btn"
+                    onClick={() => {
+                      setSuiteDialogOpen(true);
+                    }}
+                  >
+                    New suite
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="flex-1"
+                    data-testid="new-case-btn"
+                    onClick={() => {
+                      setCaseDialogOpen(true);
+                    }}
+                  >
+                    New case
+                  </Button>
+                </div>
+              ) : null}
               <Button
                 type="button"
                 size="sm"

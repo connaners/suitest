@@ -1,5 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { formatRelativeTime } from "@/lib/date";
 import {
   AlertTriangle,
@@ -21,7 +22,15 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import { approveInvitation, declineInvitation } from "@/lib/api-client";
-import { isZeroSafeKind, useInbox, type InboxItem, type InboxItemKind } from "@/hooks/use-inbox";
+import { broadcastWorkspaceSwitch } from "@/lib/auth-session";
+import {
+  isZeroSafeKind,
+  useInbox,
+  type InboxItem,
+  type InboxItemKind,
+} from "@/hooks/use-inbox";
+import { useActiveWorkspace } from "@/stores/use-active-workspace";
+import { useActiveProject } from "@/stores/use-active-project";
 import { useCapabilities } from "@/stores/use-capabilities";
 
 function kindMeta(kind: InboxItemKind): { icon: LucideIcon; tone: string; label: string } {
@@ -46,9 +55,16 @@ function kindMeta(kind: InboxItemKind): { icon: LucideIcon; tone: string; label:
 /** Approve/decline actions for a `WORKSPACE_INVITE` card (M1e-9). The other
  * six kinds have no aggregator yet, so their "Review"/"Dismiss" buttons stay
  * disabled placeholders below. */
-function InviteActions({ invitationId }: { invitationId: string }): React.ReactElement {
+function InviteActions({
+  invitationId,
+  targetWorkspaceId,
+}: {
+  invitationId: string;
+  targetWorkspaceId?: string | null | undefined;
+}): React.ReactElement {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
 
   const invalidate = async (): Promise<void> => {
@@ -61,7 +77,18 @@ function InviteActions({ invitationId }: { invitationId: string }): React.ReactE
 
   const approve = useMutation({
     mutationFn: () => approveInvitation(invitationId),
-    onSuccess: invalidate,
+    onSuccess: async () => {
+      await invalidate();
+      if (targetWorkspaceId) {
+        useActiveWorkspace.getState().setWorkspaceId(targetWorkspaceId);
+        useActiveProject.getState().setProjectId(null);
+        broadcastWorkspaceSwitch(targetWorkspaceId);
+        toast.success("Joined workspace. Switched to your new workspace.");
+        navigate({ to: "/dashboard" });
+      } else {
+        toast.success("Invitation accepted.");
+      }
+    },
     onError: () => setError(t("inbox.approveError")),
   });
   const decline = useMutation({
@@ -134,10 +161,10 @@ function NotificationCard({ item }: { item: InboxItem }): React.ReactElement {
         <div className="mt-1 flex items-center justify-between">
           <span className="font-mono text-[10.5px] text-fg-5">
             {meta.label}
-            {item.ref ? ` · ${item.ref}` : ""}
+            {item.ref && item.kind !== "WORKSPACE_INVITE" ? ` · ${item.ref}` : ""}
           </span>
           {item.kind === "WORKSPACE_INVITE" ? (
-            <InviteActions invitationId={item.id} />
+            <InviteActions invitationId={item.id} targetWorkspaceId={item.ref} />
           ) : (
             <div className="flex items-center gap-1.5">
               <Button type="button" size="sm" variant="outline" disabled>

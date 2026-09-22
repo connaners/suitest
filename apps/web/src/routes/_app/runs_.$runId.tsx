@@ -10,6 +10,7 @@ import { type CaseGroup } from "@/components/runs/case-grouping";
 import { RunSummaryCard } from "@/components/runs/RunSummaryCard";
 import { WakeLockIndicator } from "@/components/runs/WakeLockIndicator";
 import { Button } from "@/components/ui/button";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useCancelRun, useRerunRun, type PlaywrightConfigInput } from "@/hooks/use-runs";
 import { ApiError, fetchRun } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,7 @@ export const Route = createFileRoute("/_app/runs_/$runId")({
 export function RunDetailPage(): React.ReactElement {
   const { runId } = Route.useParams();
   const navigate = useNavigate();
+  const { canWriteTests } = usePermissions();
   const rerunMutation = useRerunRun();
   const cancelMutation = useCancelRun();
   const [rerunForbidden, setRerunForbidden] = useState(false);
@@ -63,8 +65,8 @@ export function RunDetailPage(): React.ReactElement {
 
   // Same guard as the /runs side panel: a live run cannot be re-queued.
   const isLive = run?.status === "RUNNING" || run?.status === "QUEUED";
-  const cancelDisabled = run === undefined || !isLive || cancelMutation.isPending;
-  const rerunDisabled = run === undefined || isLive || rerunMutation.isPending;
+  const cancelDisabled = run === undefined || !isLive || cancelMutation.isPending || !canWriteTests;
+  const rerunDisabled = run === undefined || isLive || rerunMutation.isPending || !canWriteTests;
 
   const dialogGroups = explorerGroups.length > 0 ? explorerGroups : fallbackGroups;
   const failedSteps = run?.summary?.failed_steps ?? 0;
@@ -130,8 +132,18 @@ export function RunDetailPage(): React.ReactElement {
 
   return (
     <section className="flex flex-col gap-4" data-testid="run-detail-page">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Link
+            to="/runs"
+            className="text-[13px] text-fg-4 hover:text-fg-2 transition-colors"
+          >
+            ← Runs
+          </Link>
+          <span className="text-fg-5">/</span>
+          <span className="font-mono text-[13px] font-semibold text-fg-1">
+            {run?.public_id ?? runId}
+          </span>
           <WakeLockIndicator
             isLive={isLive}
             preventSleep={
@@ -141,7 +153,7 @@ export function RunDetailPage(): React.ReactElement {
             }
           />
         </div>
-        <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+        <div className="flex items-center gap-2">
           <Link
             to="/runs"
             search={{ run: run?.public_id ?? runId }}
@@ -152,7 +164,7 @@ export function RunDetailPage(): React.ReactElement {
             <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
             Minimize
           </Link>
-          {isLive ? (
+          {isLive && canWriteTests ? (
             <Button
               type="button"
               size="sm"
@@ -166,37 +178,45 @@ export function RunDetailPage(): React.ReactElement {
               {cancelMutation.isPending ? "Aborting…" : "Abort run"}
             </Button>
           ) : null}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={rerunDisabled}
-            onClick={() => setRerunDialogOpen(true)}
-            className={cn(
-              hasActualFailures && "border-red/40 text-red hover:bg-red/10",
-              hasAbortedOnly && "border-amber-500/40 text-amber-500 hover:bg-amber-500/10",
-            )}
-            data-testid="run-rerun-button"
-          >
-            <RotateCw
-              className={cn("mr-1.5 h-3.5 w-3.5", rerunMutation.isPending && "animate-spin")}
-              aria-hidden="true"
-            />
-            {rerunMutation.isPending
-              ? "Queuing…"
-              : hasActualFailures
-                ? `Re-run (${failedCount} failed)`
-                : hasAbortedOnly
-                  ? `Resume (${abortedCasesCount} remaining)`
-                  : "Re-run"}
-          </Button>
+          {canWriteTests ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={rerunDisabled}
+              onClick={() => setRerunDialogOpen(true)}
+              className={cn(
+                hasActualFailures && "border-red/40 text-red hover:bg-red/10",
+                hasAbortedOnly && "border-amber-500/40 text-amber-500 hover:bg-amber-500/10",
+              )}
+              data-testid="run-rerun-button"
+            >
+              <RotateCw
+                className={cn("mr-1.5 h-3.5 w-3.5", rerunMutation.isPending && "animate-spin")}
+                aria-hidden="true"
+              />
+              {rerunMutation.isPending
+                ? "Queuing…"
+                : hasActualFailures
+                  ? `Re-run (${failedCount} failed)`
+                  : hasAbortedOnly
+                    ? `Resume (${abortedCasesCount} remaining)`
+                    : "Re-run"}
+            </Button>
+          ) : null}
           <Link
             to="/cases"
             search={targetCasePublicId ? { case: targetCasePublicId } : {}}
             className="inline-flex h-8 items-center rounded-md border border-border bg-bg-elev-1 px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
             data-testid="run-edit-cases-link"
           >
-            {run?.cases && run.cases.length > 1 ? "Edit selected case" : "Edit case"}
+            {canWriteTests
+              ? run?.cases && run.cases.length > 1
+                ? "Edit selected case"
+                : "Edit case"
+              : run?.cases && run.cases.length > 1
+                ? "View selected case"
+                : "View case"}
           </Link>
           <Link
             to="/runs/$runId/replay"
@@ -224,15 +244,17 @@ export function RunDetailPage(): React.ReactElement {
               </span>
             </div>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="shrink-0 border-amber-500/40 text-amber-500 hover:bg-amber-500/20"
-            onClick={() => setRerunDialogOpen(true)}
-          >
-            Resume Remaining
-          </Button>
+          {canWriteTests ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="shrink-0 border-amber-500/40 text-amber-500 hover:bg-amber-500/20"
+              onClick={() => setRerunDialogOpen(true)}
+            >
+              Resume Remaining
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -261,7 +283,7 @@ export function RunDetailPage(): React.ReactElement {
         playwrightConfig={run?.playwrightConfig ?? null}
         onSelectCasePublicId={setSelectedCasePublicId}
         onGroupsChange={setExplorerGroups}
-        onRerunCase={handleRerunCase}
+        {...(canWriteTests ? { onRerunCase: handleRerunCase } : {})}
         isRerunning={rerunMutation.isPending}
       />
 

@@ -304,4 +304,58 @@ describe("StepEditor", () => {
       expect(screen.queryAllByTestId("step-row")).toHaveLength(0);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Demotion reversion
+  // ---------------------------------------------------------------------------
+  it("reverts unpersisted draft steps when canWrite flips to false", async () => {
+    const persisted = [mkStep({ id: "step_real_1" })];
+    const draft = [
+      ...persisted,
+      mkStep({ id: "__new__abc", action: "Unsaved draft step" }),
+    ];
+
+    const onStepsChange = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <StepEditor
+          caseId="TC-101"
+          steps={persisted}
+          onStepsChange={onStepsChange}
+          canWrite={true}
+        />
+      </QueryClientProvider>,
+    );
+
+    // Caller updates state to include draft step while canWrite is still true
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <StepEditor
+          caseId="TC-101"
+          steps={draft}
+          onStepsChange={onStepsChange}
+          canWrite={true}
+        />
+      </QueryClientProvider>,
+    );
+
+    // Now demote role: canWrite flips to false
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <StepEditor
+          caseId="TC-101"
+          steps={draft}
+          onStepsChange={onStepsChange}
+          canWrite={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    // onStepsChange must be called with the persisted steps (reverting the draft)
+    expect(onStepsChange).toHaveBeenCalledWith(persisted);
+  });
 });

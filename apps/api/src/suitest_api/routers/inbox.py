@@ -103,6 +103,7 @@ def _invite_card(invitation: Invitation) -> InboxItem:
         body=f"Join as {invitation.role.value.title()} — approve or decline below.",
         created_at=invitation.created_at.isoformat(),
         expires_at=invitation.expires_at.isoformat(),
+        ref=str(invitation.workspace_id),
     )
 
 

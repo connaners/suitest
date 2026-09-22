@@ -8,9 +8,9 @@ import { afterAll, afterEach, beforeAll, vi } from "vitest";
 
 import { server } from "../mocks/server";
 
-// jsdom doesn't implement scroll APIs; TanStack Router calls them on every
-// navigation, which spams the test output with "Not implemented" warnings.
-// Provide silent no-op shims.
+// jsdom's AbortSignal/AbortController instances fail undici/Node fetch's
+// `instanceof AbortSignal` check because jsdom runs in a separate VM realm.
+// Align them with the Node.js built-ins so `fetch(..., { signal })` works seamlessly.
 if (globalThis.window !== undefined) {
   globalThis.scrollTo = vi.fn();
   globalThis.scroll = vi.fn();

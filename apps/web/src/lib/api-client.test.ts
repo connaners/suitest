@@ -192,4 +192,34 @@ describe("api-client", () => {
     expect(caught?.status).toBe(404);
     expect(caught?.message).toBe("test case not found");
   });
+
+  it("extracts code, message, and details from flat detail object in FastAPI error response", async () => {
+    server.use(
+      http.delete("*/api/v1/workspaces/ws_1/members/u_1", () =>
+        HttpResponse.json(
+          {
+            detail: {
+              code: "SOLE_OWNER_PROTECTED",
+              message: "cannot demote the sole remaining OWNER",
+              details: { userId: "u_1" },
+            },
+          },
+          { status: 400 },
+        ),
+      ),
+    );
+
+    let caught: ApiError | null = null;
+    try {
+      await api.delete("/workspaces/ws_1/members/u_1");
+    } catch (err) {
+      caught = err as ApiError;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    expect(caught?.status).toBe(400);
+    expect(caught?.code).toBe("SOLE_OWNER_PROTECTED");
+    expect(caught?.message).toBe("cannot demote the sole remaining OWNER");
+    expect(caught?.details).toEqual({ userId: "u_1" });
+  });
 });
