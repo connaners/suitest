@@ -20,6 +20,45 @@ in the git tags (`launcher-v*`, `mcp-v*`, `lifecycle-v*`, `tssdk-v*`,
 stood in those tags' trees. The milestone tags that predate package-level
 versioning:
 
+## [0.15.0](https://github.com/suiflex/suitest/compare/v0.14.0...v0.15.0) (2026-09-22)
+
+
+### Features
+
+* **api-keys:** allow QA to mint and manage its own keys ([a3c2ee3](https://github.com/suiflex/suitest/commit/a3c2ee339363a3148e57ea550ef0893ee33d7b0c)), closes [#228](https://github.com/suiflex/suitest/issues/228)
+* **api:** adaptive secure S3 streaming gateway for self-hosted and VPS deployments (closes [#221](https://github.com/suiflex/suitest/issues/221)) ([ed57183](https://github.com/suiflex/suitest/commit/ed57183d60b11bb686c095ee02f4079b6bb40ecf))
+* **inbox:** audit + WS notify + expiry UX + real aggregators (M1e-10) ([6e43644](https://github.com/suiflex/suitest/commit/6e436442868ed6bb5139cf648f5a3d4070207637))
+* **invites:** in-app invite approval for existing users (M1e-9) ([a2ceb0b](https://github.com/suiflex/suitest/commit/a2ceb0b7066e511b4e2366dc8800f1cbe45a000f))
+* **profile:** let a user rename themselves ([7b1b55e](https://github.com/suiflex/suitest/commit/7b1b55ee34b306fe4dbb586cebd1877d6fe6e1f9))
+* **profile:** let a user rename themselves ([6527756](https://github.com/suiflex/suitest/commit/652775654c64b59a3ba87e8d9d8274bc0454169c)), closes [#227](https://github.com/suiflex/suitest/issues/227)
+* **web:** add suite-level selection, collapsible suites, and unset gating toggle ([414d950](https://github.com/suiflex/suitest/commit/414d9504d706c606395081fbad323d5b8f53b460))
+* **web:** full CRUD for workspace member management, real-time sync, and multi-workspace fallback (closes [#224](https://github.com/suiflex/suitest/issues/224)) ([42610a6](https://github.com/suiflex/suitest/commit/42610a6158fe252baa1aedff6f73186def58c969))
+* **web:** full CRUD for workspace member management, real-time sync, and multi-workspace fallback (closes [#224](https://github.com/suiflex/suitest/issues/224)) ([ca08c59](https://github.com/suiflex/suitest/commit/ca08c59702fd67280af9eace34c6c08adc5db103))
+
+
+### Bug Fixes
+
+* address review feedback on i18n, invite state guard, audit log, and card footer ([7b26ef7](https://github.com/suiflex/suitest/commit/7b26ef7433221c1079dd2cac11570937a738955c))
+* **agent:** handle non-JSON error bodies without an empty except (forgeguard) ([544627c](https://github.com/suiflex/suitest/commit/544627c283138d042046b23a9eb4b014d0e25789))
+* **api:** address PR feedback on artifact streaming gateway and storage boundary hardening ([e31af04](https://github.com/suiflex/suitest/commit/e31af04ed80ec38c38b105bc6afc4d31b8b80a3c))
+* **api:** allow creating runs for zero-step cases and let runner record them as SKIP ([9369d68](https://github.com/suiflex/suitest/commit/9369d68c91de296997c7aeec35fc5ac4dfc0166b))
+* **app:** don't bounce zero-membership users to /login on stale workspaceId ([371c70d](https://github.com/suiflex/suitest/commit/371c70d2bf72165b3ae699f74e910a40cef00e5d))
+* **ci:** drop unused import, refresh openapi snapshot with invoke route docstring ([84e46d1](https://github.com/suiflex/suitest/commit/84e46d17e44e2683d3836bd042bc226c589f8e8d))
+* **db:** auto-migrate legacy sqlite columns on upgrade and retry runner lock ([205fae9](https://github.com/suiflex/suitest/commit/205fae926e4044f47c3c8647fd71ac1554bc9dda))
+* **db:** auto-migrate legacy sqlite columns on upgrade and retry runner lock ([2f1bfe4](https://github.com/suiflex/suitest/commit/2f1bfe41c132776ffb62e6f12fd012d64331bd9c))
+* **e2e:** accept adaptive gateway artifact url and verify download in smoke test ([29e2874](https://github.com/suiflex/suitest/commit/29e287433aab74a9155a3ea0a934c297cc3741fd))
+* **infra:** proxy /capabilities through the web nginx to the API ([ddad4a7](https://github.com/suiflex/suitest/commit/ddad4a72fb2a10bf1e2a8ad8a7932180d28359d6))
+* **invites:** address review feedback on [#219](https://github.com/suiflex/suitest/issues/219) ([fa37c9d](https://github.com/suiflex/suitest/commit/fa37c9d1b37d60660e506940a5bf240fba3a1992))
+* **invites:** repair Docker build breaks missed by local env ([02d4c47](https://github.com/suiflex/suitest/commit/02d4c47f5b197ef49f8e7c051b9a7177d6e9d9ee))
+* **llm,mcp:** enforce connection invariant, normalize custom endpoints, fix capability push ([4556955](https://github.com/suiflex/suitest/commit/45569556fe93c41bba3df2ac883153254d48eb3f))
+* **profile:** address connaners review — 8 items ([9c37b04](https://github.com/suiflex/suitest/commit/9c37b04e8692e15dad97c625c876d32d7cac5731))
+* **profile:** rebase onto main, resolve locale conflicts, and fix lint/type/mypy issues ([63d2d09](https://github.com/suiflex/suitest/commit/63d2d0936aa19927f3d8d9d2d20ecc38c0c37326))
+* **runner,web:** handle empty test steps and zero-step cases gracefully ([2cf4a2d](https://github.com/suiflex/suitest/commit/2cf4a2da3a84919124b00ffa8364284da0172994))
+* **runner,web:** handle empty test steps and zero-step cases gracefully ([3c6b015](https://github.com/suiflex/suitest/commit/3c6b015d947b09ae175a24a95ad8e6e0debb349d))
+* **test:** override current_active_user_optional for authenticated clients and fix audit log metadata field ([af09838](https://github.com/suiflex/suitest/commit/af0983864b63e782eb680296834a1756b76ecf95))
+* **web:** prevent draft steps leakage, ghost AI diagnosis, and selection desync in test cases and runs ([cbf106d](https://github.com/suiflex/suitest/commit/cbf106d7a651edbfd6fbe0de174c14afb05ff880))
+* **web:** resolve seamless fallback logout bug, harden 403 handling, and centralize workspace event sync ([4306b84](https://github.com/suiflex/suitest/commit/4306b84cf196abc483475c9bb8348e7930600d00))
+
 ## [0.14.0](https://github.com/suiflex/suitest/compare/v0.13.0...v0.14.0) (2026-09-18)
 
 
