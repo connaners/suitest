@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from suitest_shared.domain.enums import (
@@ -177,7 +177,7 @@ class RunLogPage(BaseModel):
 class ArtifactPublic(BaseModel):
     """One artifact in ``GET /runs/:id/artifacts`` (docs/API.md §3.5)."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: str
     run_step_id: str
@@ -185,6 +185,7 @@ class ArtifactPublic(BaseModel):
     size_bytes: int
     mime_type: str
     created_at: datetime
+    metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_json")
 
 
 class CaseArtifactPublic(BaseModel):
@@ -204,6 +205,9 @@ class CaseArtifactPublic(BaseModel):
     size_bytes: int = Field(serialization_alias="sizeBytes")
     mime_type: str = Field(serialization_alias="mimeType")
     created_at: datetime = Field(serialization_alias="createdAt")
+    metadata: dict[str, Any] | None = Field(
+        default=None, serialization_alias="metadata", validation_alias="metadata_json"
+    )
 
 
 class CaseRunPublic(BaseModel):

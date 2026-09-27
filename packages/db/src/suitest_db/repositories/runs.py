@@ -243,9 +243,31 @@ class RunRepo(AsyncRepository[Run, RunCreate, RunUpdate]):
             select(Artifact)
             .join(RunStep, RunStep.id == Artifact.run_step_id)
             .where(RunStep.run_id == run_id)
-            .order_by(Artifact.created_at.asc(), Artifact.id.asc())
+            .order_by(RunStep.step_order.asc(), Artifact.created_at.asc(), Artifact.id.asc())
         )
-        return (await self.session.scalars(stmt)).all()
+        artifacts = list((await self.session.scalars(stmt)).all())
+
+        def _phase_rank(a: Artifact) -> int:
+            meta = a.metadata_json if isinstance(a.metadata_json, dict) else {}
+            phase = meta.get("phase")
+            if phase == "before":
+                return 0
+            if phase == "after":
+                return 1
+            url = a.url or ""
+            if "before" in url:
+                return 0
+            if "after" in url:
+                return 1
+            return 2
+
+        step_order_map: dict[str, int] = {}
+        for art in artifacts:
+            if art.run_step_id not in step_order_map:
+                step_order_map[art.run_step_id] = len(step_order_map)
+
+        artifacts.sort(key=lambda a: (step_order_map[a.run_step_id], _phase_rank(a)))
+        return artifacts
 
     async def summary_for_workspace(self, workspace_id: str) -> dict[str, int]:
         """Aggregated counters for the Runs summary bar (docs/API.md §3.5).

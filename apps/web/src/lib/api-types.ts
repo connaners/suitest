@@ -782,7 +782,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get Recorder Session
+         * @description Retrieve details and captured events for a recording session.
+         */
+        get: operations["get_recorder_session_api_v1_generators_recorder_sessions__session_id__get"];
         put?: never;
         post?: never;
         /**
@@ -791,6 +795,34 @@ export interface paths {
          */
         delete: operations["cancel_recorder_session_api_v1_generators_recorder_sessions__session_id__delete"];
         options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/generators/recorder/sessions/{session_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Append Recorder Session Event
+         * @description Append one captured interaction event to an active recording session.
+         *
+         *     Authorizes via the active recording session token: looks up the unguessable session_id,
+         *     verifies it is active and not expired, and appends the event. Sets CORS headers so
+         *     recording works across origins (in-browser proxy, bookmarklet, intranet tabs).
+         */
+        post: operations["append_recorder_session_event_api_v1_generators_recorder_sessions__session_id__events_post"];
+        delete?: never;
+        /**
+         * Options Recorder Session Event
+         * @description CORS preflight for recorder events from proxy, bookmarklet, or external origins.
+         */
+        options: operations["options_recorder_session_event_api_v1_generators_recorder_sessions__session_id__events_options"];
         head?: never;
         patch?: never;
         trace?: never;
@@ -1027,6 +1059,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/invitations/{invitation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Invitation Role */
+        patch: operations["update_invitation_role_api_v1_invitations__invitation_id__patch"];
         trace?: never;
     };
     "/api/v1/invitations/{invitation_id}/approve": {
@@ -3835,6 +3884,10 @@ export interface components {
             /** Id */
             id: string;
             kind: components["schemas"]["ArtifactKind"];
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
             /** Mime Type */
             mime_type: string;
             /** Run Step Id */
@@ -4196,6 +4249,10 @@ export interface components {
             /** Id */
             id: string;
             kind: components["schemas"]["ArtifactKind"];
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
             /** Mimetype */
             mimeType: string;
             /**
@@ -5555,6 +5612,10 @@ export interface components {
             revoked_at: string | null;
             role: components["schemas"]["Role"];
         };
+        /** InvitationRoleUpdate */
+        InvitationRoleUpdate: {
+            role: components["schemas"]["Role"];
+        };
         /** InvitationValidateResponse */
         InvitationValidateResponse: {
             /** Email */
@@ -6692,12 +6753,56 @@ export interface components {
          */
         RecommendedStrategy: "openapi-generator" | "url-crawler" | "recorder" | "url-semantic" | "mcp-discovery" | "prd-parsing";
         /**
+         * RecorderEvent
+         * @description One captured interaction. ``masked`` flags secret ``type`` input.
+         *
+         *     ``network`` carries ``{"status": int, "url": str, "method": str}`` for
+         *     ``NETWORK`` events; a 4xx/5xx status becomes an auto-assertion step at
+         *     finalize time.
+         */
+        RecorderEvent: {
+            /** Assertion */
+            assertion?: {
+                [key: string]: unknown;
+            } | null;
+            kind: components["schemas"]["RecorderEventKind"];
+            /**
+             * Masked
+             * @default false
+             */
+            masked: boolean;
+            /** Network */
+            network?: {
+                [key: string]: unknown;
+            } | null;
+            /** Selector */
+            selector?: string | null;
+            /** Text */
+            text?: string | null;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            /** Url */
+            url?: string | null;
+        };
+        /**
+         * RecorderEventKind
+         * @enum {string}
+         */
+        RecorderEventKind: "navigate" | "click" | "type" | "assert" | "network";
+        /**
          * RecorderFinalizeRequest
          * @description Body for ``POST .../finalize`` — where + how to persist the new case.
          */
         RecorderFinalizeRequest: {
             /** Description */
             description?: string | null;
+            /** Events */
+            events?: {
+                [key: string]: unknown;
+            }[] | null;
             /** Name */
             name: string;
             /**
@@ -6708,8 +6813,42 @@ export interface components {
             priority: "P0" | "P1" | "P2" | "P3";
             /** Target Suite Id */
             target_suite_id: string;
-            /** Events override from client */
-            events?: Array<Record<string, unknown>> | null;
+        };
+        /**
+         * RecorderSessionDetailResponse
+         * @description Detailed response for an active or past recording session.
+         */
+        RecorderSessionDetailResponse: {
+            /** Browser Url */
+            browser_url?: string | null;
+            /** Captured Events */
+            captured_events: {
+                [key: string]: unknown;
+            }[];
+            /** Captured Events Count */
+            captured_events_count: number;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Start Url */
+            start_url: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Ws Room */
+            ws_room: string;
         };
         /**
          * RecorderSessionStartRequest
@@ -6738,8 +6877,18 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+            /**
+             * Is Headed
+             * @default false
+             */
+            is_headed: boolean;
             /** Session Id */
             session_id: string;
+            /**
+             * Workspace Id
+             * @default
+             */
+            workspace_id: string;
             /** Ws Room */
             ws_room: string;
         };
@@ -9956,6 +10105,39 @@ export interface operations {
             };
         };
     };
+    get_recorder_session_api_v1_generators_recorder_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Workspace-Id"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecorderSessionDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cancel_recorder_session_api_v1_generators_recorder_sessions__session_id__delete: {
         parameters: {
             query?: never;
@@ -9975,6 +10157,74 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    append_recorder_session_event_api_v1_generators_recorder_sessions__session_id__events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecorderEvent"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    options_recorder_session_event_api_v1_generators_recorder_sessions__session_id__events_options: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
             };
             /** @description Validation Error */
             422: {
@@ -10451,6 +10701,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InvitationValidateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_invitation_role_api_v1_invitations__invitation_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvitationRoleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationOut"];
                 };
             };
             /** @description Validation Error */

@@ -175,5 +175,49 @@ describe("<ImageLightboxModal>", () => {
     await user.keyboard("{ArrowLeft}");
     expect(onNavigate).toHaveBeenCalledWith(0);
   });
+
+  it("renders phase buttons and allows switching between before and after in modal", async () => {
+    const user = userEvent.setup();
+    const onSelectPhase = vi.fn();
+    const phases = [
+      { id: "shot_before", label: "Before action (highlight)", phase: "before", isSelected: true },
+      { id: "shot_after", label: "After action", phase: "after", isSelected: false },
+    ];
+
+    render(
+      <ImageLightboxModal
+        open={true}
+        onOpenChange={vi.fn()}
+        src="https://example.com/shot_before.png"
+        title="Step 3: Click login button"
+        phases={phases}
+        onSelectPhase={onSelectPhase}
+      />
+    );
+
+    // Phase navigator is rendered
+    expect(screen.getByTestId("lightbox-phase-navigator")).toBeInTheDocument();
+
+    const beforeBtn = screen.getByTestId("lightbox-phase-btn-before");
+    const afterBtn = screen.getByTestId("lightbox-phase-btn-after");
+    expect(beforeBtn).toBeInTheDocument();
+    expect(afterBtn).toBeInTheDocument();
+
+    // Click after button
+    await user.click(afterBtn);
+    expect(onSelectPhase).toHaveBeenCalledWith("shot_after");
+
+    // Keyboard shortcut 'a' for after
+    await user.keyboard("a");
+    expect(onSelectPhase).toHaveBeenCalledWith("shot_after");
+
+    // Keyboard shortcut 'b' for before
+    await user.keyboard("b");
+    expect(onSelectPhase).toHaveBeenCalledWith("shot_before");
+
+    // Keyboard shortcut 'p' to toggle phase
+    await user.keyboard("p");
+    expect(onSelectPhase).toHaveBeenCalledWith("shot_after");
+  });
 });
 

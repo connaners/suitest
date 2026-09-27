@@ -38,7 +38,14 @@ import { VideoPlayerModal } from "./VideoPlayerModal";
 import { rollupLabel, rollupToBadge, type CaseGroup } from "./case-grouping";
 import { StepTable, type DisplayStep, type StepDisplayOutcome } from "./StepTable";
 
-type ArtifactPublic = components["schemas"]["ArtifactPublic"];
+type ArtifactPublic = components["schemas"]["ArtifactPublic"] & {
+  metadata?: {
+    phase?: string;
+    highlight?: boolean;
+    selector?: string;
+    [key: string]: unknown;
+  } | null;
+};
 type RunStatus = components["schemas"]["RunStatus"];
 type RunStepPublic = components["schemas"]["RunStepPublic"];
 
@@ -79,11 +86,13 @@ export function CaseDetailPanel({
   );
 
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [selectedShotId, setSelectedShotId] = useState<string | null>(null);
   const [stepShotUrl, setStepShotUrl] = useState<string | null>(null);
 
   // Reset transient preview state when the user switches to another case.
   useEffect(() => {
     setSelectedStepId(null);
+    setSelectedShotId(null);
     setStepShotUrl(null);
   }, [group.caseId]);
 
@@ -91,21 +100,42 @@ export function CaseDetailPanel({
   const videoArtifactId = caseArtifacts.find((artifact) => artifact.kind === "VIDEO")?.id ?? null;
   const videoUrl = useRunArtifactUrl(runId, videoArtifactId);
 
-  // Resolve the selected step's SCREENSHOT for the per-step preview.
+  // Reset selectedShotId when step changes
   useEffect(() => {
-    if (selectedStepId === null) {
-      setStepShotUrl(null);
-      return;
-    }
-    const shot = caseArtifacts.find(
+    setSelectedShotId(null);
+  }, [selectedStepId]);
+
+  // Resolve all screenshots for the currently selected step, sorting 'before' action first
+  const currentStepShots = useMemo(() => {
+    if (!selectedStepId) return [];
+    const shots = caseArtifacts.filter(
       (a) => a.kind === "SCREENSHOT" && a.run_step_id === selectedStepId,
     );
-    if (!shot) {
+    return [...shots].sort((a, b) => {
+      const aPhase = a.metadata?.phase;
+      const bPhase = b.metadata?.phase;
+      if (aPhase === "before" && bPhase !== "before") return -1;
+      if (bPhase === "before" && aPhase !== "before") return 1;
+      return 0;
+    });
+  }, [caseArtifacts, selectedStepId]);
+
+  const activeShot = useMemo(() => {
+    if (selectedShotId) {
+      const found = currentStepShots.find((s) => s.id === selectedShotId);
+      if (found) return found;
+    }
+    return currentStepShots[0] ?? null;
+  }, [currentStepShots, selectedShotId]);
+
+  // Resolve the selected step's SCREENSHOT for the per-step preview.
+  useEffect(() => {
+    if (!activeShot) {
       setStepShotUrl(null);
       return;
     }
     let cancelled = false;
-    void fetchRunSignedUrl(runId, shot.id)
+    void fetchRunSignedUrl(runId, activeShot.id)
       .then((signed) => {
         if (!cancelled) setStepShotUrl(signed.url);
       })
@@ -115,7 +145,7 @@ export function CaseDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedStepId, caseArtifacts, runId]);
+  }, [activeShot, runId]);
 
   const { data: code } = useQuery({
     queryKey: ["case-detail-code", group.caseId] as const,
@@ -299,7 +329,10 @@ export function CaseDetailPanel({
     const latestShotByStepId = new Map<string, (typeof caseArtifacts)[number]>();
     for (const a of caseArtifacts) {
       if (a.kind === "SCREENSHOT") {
-        latestShotByStepId.set(a.run_step_id, a);
+        const existing = latestShotByStepId.get(a.run_step_id);
+        if (!existing || existing.metadata?.phase === "before") {
+          latestShotByStepId.set(a.run_step_id, a);
+        }
       }
     }
 
@@ -498,6 +531,9 @@ export function CaseDetailPanel({
         stepScreenshotUrl={stepShotUrl}
         stepLabel={selectedStepLabel}
         selectedStepId={selectedStepId}
+        selectedShotId={selectedShotId}
+        currentStepShots={currentStepShots}
+        onSelectShot={(id) => setSelectedShotId(id)}
         stepScreenshots={stepScreenshots}
         onSelectStep={(id) => setSelectedStepId(id)}
         onClearStep={() => {
@@ -529,6 +565,9 @@ interface CaseEvidenceTabsProps {
   stepScreenshotUrl: string | null;
   stepLabel: string | null;
   selectedStepId: string | null;
+  selectedShotId?: string | null | undefined;
+  currentStepShots?: ArtifactPublic[] | undefined;
+  onSelectShot?: ((shotId: string) => void) | undefined;
   stepScreenshots: StepScreenshotItem[];
   onSelectStep: (stepId: string) => void;
   onClearStep: () => void;
@@ -547,6 +586,9 @@ function CaseEvidenceTabs({
   stepScreenshotUrl,
   stepLabel,
   selectedStepId,
+  selectedShotId,
+  currentStepShots,
+  onSelectShot,
   stepScreenshots,
   onSelectStep,
   onClearStep,
@@ -565,6 +607,20 @@ function CaseEvidenceTabs({
   const [previewMode, setPreviewMode] = useState<"video" | "screenshots">(() =>
     hasVideo ? "video" : "screenshots",
   );
+
+  const lightboxPhases = useMemo(() => {
+    if ((currentStepShots?.length ?? 0) <= 1) return undefined;
+    return currentStepShots?.map((shot, idx) => {
+      const phase = shot.metadata?.phase;
+      const isBefore = phase ? phase === "before" : idx === 0;
+      return {
+        id: shot.id,
+        phase: isBefore ? ("before" as const) : ("after" as const),
+        label: isBefore ? "Before action (highlight)" : "After action",
+        isSelected: (selectedShotId ?? currentStepShots[0]?.id) === shot.id,
+      };
+    });
+  }, [currentStepShots, selectedShotId]);
 
   const PAGE_SIZE = 10;
   const [displayedArtifactsCount, setDisplayedArtifactsCount] = useState(PAGE_SIZE);
@@ -765,6 +821,38 @@ function CaseEvidenceTabs({
             </div>
           ) : null}
 
+          {/* Phase navigator for dual screenshots */}
+          {previewMode === "screenshots" && (currentStepShots?.length ?? 0) > 1 ? (
+            <div
+              className="flex items-center gap-1.5 py-1 font-mono text-[11px]"
+              data-testid="step-phase-navigator"
+            >
+              <span className="text-[10.5px] text-fg-4">Capture:</span>
+              {currentStepShots?.map((shot, idx) => {
+                const isSelected = (selectedShotId ?? currentStepShots[0]?.id) === shot.id;
+                const phase = shot.metadata?.phase;
+                const isBefore = phase ? phase === "before" : idx === 0;
+                const label = isBefore ? "Before action (highlight)" : "After action";
+                return (
+                  <button
+                    key={shot.id}
+                    type="button"
+                    onClick={() => onSelectShot?.(shot.id)}
+                    className={cn(
+                      "rounded border px-2 py-0.5 text-[10.5px] transition-colors",
+                      isSelected
+                        ? "border-accent bg-accent/15 text-accent font-semibold"
+                        : "border-border bg-bg-elev-2 text-fg-3 hover:bg-bg-elev-3 hover:text-fg-1",
+                    )}
+                    data-testid={`step-phase-btn-${isBefore ? "before" : "after"}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
           <div className="flex h-[280px] items-center justify-center overflow-hidden rounded-md bg-bg-code text-[12px] text-fg-5">
             {previewMode === "screenshots" && stepScreenshotUrl ? (
               <button
@@ -846,6 +934,8 @@ function CaseEvidenceTabs({
               onSelectStep(nextShot.stepId);
             }
           }}
+          phases={lightboxPhases}
+          onSelectPhase={(phaseId) => onSelectShot?.(phaseId)}
         />
         <VideoPlayerModal
           open={videoModalOpen}

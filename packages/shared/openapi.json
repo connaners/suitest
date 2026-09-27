@@ -524,6 +524,18 @@
           "kind": {
             "$ref": "#/components/schemas/ArtifactKind"
           },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
           "mime_type": {
             "title": "Mime Type",
             "type": "string"
@@ -1282,6 +1294,18 @@
           },
           "kind": {
             "$ref": "#/components/schemas/ArtifactKind"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
           },
           "mimeType": {
             "title": "Mimetype",

@@ -55,7 +55,7 @@ from suitest_db.repositories.run_step_logs import RunStepLogRepo
 from suitest_db.repositories.runs import RunRepo, RunStepRepo
 from suitest_db.repositories.workspace_capabilities import WorkspaceCapabilityRepo
 from suitest_mcp.invoker import InvokeContext, McpInvoker
-from suitest_mcp.models import McpArtifact
+from suitest_mcp.models import McpArtifact, McpToolResult
 from suitest_mcp.providers.builtin_specs import build_playwright_provider
 from suitest_mcp.registry import McpRegistry
 from suitest_shared.domain.enums import AutonomyLevel, RunStatus, StepOutcome, TargetKind
@@ -659,6 +659,53 @@ class _HighlightManager:
             log.debug("runner.highlight.clear_failed", error=str(err))
 
 
+async def _maybe_capture_pre_screenshot(
+    *,
+    invoker: McpInvoker,
+    target_pw_provider: str,
+    test_step: Any,
+    workspace_id: str,
+    run_id: str,
+    triggered_by: str | None,
+    overrides: dict[str, object] | None,
+    target_sel: str | None,
+) -> list[McpArtifact]:
+    """Capture pre-action screenshot with highlight before executing step action."""
+    shot_ctx = InvokeContext(
+        workspace_id=workspace_id,
+        run_id=run_id,
+        step_id=test_step.id,
+        actor_user_id=triggered_by,
+        target_kind=TargetKind(test_step.target_kind),
+        routing_overrides=overrides,
+    )
+    try:
+        shot_res = await invoker.invoke(
+            explicit_provider=target_pw_provider,
+            tool="browser_take_screenshot",
+            arguments={},
+            ctx=shot_ctx,
+        )
+        if shot_res.artifacts:
+            for art in shot_res.artifacts:
+                if getattr(art, "kind", None) == "SCREENSHOT":
+                    art.filename = "screenshot-before.png"
+                    art.metadata = {
+                        "phase": "before",
+                        "highlight": True,
+                        "selector": target_sel,
+                    }
+            return list(shot_res.artifacts)
+    except Exception as exc:
+        log.warning(
+            "runner.pre_screenshot.failed",
+            run_id=run_id,
+            step_id=test_step.id,
+            error=str(exc),
+        )
+    return []
+
+
 async def _maybe_capture_screenshot(
     *,
     result: StepResult,
@@ -671,12 +718,17 @@ async def _maybe_capture_screenshot(
     run_id: str,
     triggered_by: str | None,
     overrides: dict[str, object] | None,
+    has_pre_shot: bool = False,
 ) -> None:
     artifacts = result.mcp_result.artifacts if result.mcp_result is not None else []
-    has_shot = _has_screenshot_artifact(artifacts)
+    has_post_shot = any(
+        getattr(a, "kind", None) == "SCREENSHOT"
+        and (getattr(a, "metadata", None) or {}).get("phase") != "before"
+        for a in artifacts
+    )
     has_failure = result.outcome in (StepOutcome.FAIL, StepOutcome.ERROR)
     should_capture = is_web_step and (
-        (not has_shot and screenshot_mode == "on")
+        (not has_post_shot and screenshot_mode == "on")
         or (has_failure and screenshot_mode in ("on", "only-on-failure"))
     )
     if not should_capture:
@@ -701,6 +753,11 @@ async def _maybe_capture_screenshot(
             ctx=shot_ctx,
         )
         if shot_res.artifacts:
+            for art in shot_res.artifacts:
+                if getattr(art, "kind", None) == "SCREENSHOT":
+                    if has_pre_shot:
+                        art.filename = "screenshot-after.png"
+                    art.metadata = {"phase": "after"}
             if result.mcp_result is None:
                 result.mcp_result = shot_res
             else:
@@ -997,6 +1054,19 @@ async def _execute_and_heal_step(
     target_pw_provider: str,
 ) -> tuple[StepResult, bool, dict[str, object] | None]:
     try:
+        pre_artifacts: list[McpArtifact] = []
+        if is_web_step and highlight_applied and target_sel and screenshot_mode == "on":
+            pre_artifacts = await _maybe_capture_pre_screenshot(
+                invoker=invoker,
+                target_pw_provider=target_pw_provider,
+                test_step=test_step,
+                workspace_id=workspace_id,
+                run_id=run_id,
+                triggered_by=triggered_by,
+                overrides=overrides,
+                target_sel=target_sel,
+            )
+
         result = await execute_step(
             invoker=invoker,
             test_step=test_step,
@@ -1006,6 +1076,18 @@ async def _execute_and_heal_step(
             routing_overrides=overrides,
             translator=translator,
         )
+        if pre_artifacts:
+            if result.mcp_result is None:
+                result.mcp_result = McpToolResult(
+                    ok=(result.outcome == StepOutcome.PASS),
+                    artifacts=list(pre_artifacts),
+                    duration_ms=result.duration_ms,
+                )
+            else:
+                result.mcp_result.artifacts = list(pre_artifacts) + list(
+                    result.mcp_result.artifacts
+                )
+
         selector_change_detected = is_selector_changed_failure(
             test_step.code,
             result.error_message,
@@ -1065,6 +1147,7 @@ async def _execute_and_heal_step(
             run_id=run_id,
             triggered_by=triggered_by,
             overrides=overrides,
+            has_pre_shot=bool(pre_artifacts),
         )
     finally:
         if highlight_applied:
