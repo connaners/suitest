@@ -113,3 +113,4 @@ apps/web/.forgeguard/
 .cursor/
 .forgeguard/
 .agents/mcp_config.json
+fixtures/
