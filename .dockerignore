@@ -11,6 +11,7 @@ node_modules
 **/node_modules
 docs
 docs-site
+!docs-site/package.json
 mockup
 assets
 eval
