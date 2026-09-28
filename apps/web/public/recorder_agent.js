@@ -564,8 +564,54 @@
     updateCounterDisplay();
   }
 
+  function handleStepsListClick(e) {
+    var target = e.target;
+    var actionEl = target && target.closest ? target.closest("[data-recorder-action]") : null;
+    if (!actionEl) return;
+    e.stopPropagation();
+    var action = actionEl.getAttribute("data-recorder-action");
+    var idxStr = actionEl.getAttribute("data-index");
+    var rawIdx = idxStr !== null ? parseInt(idxStr, 10) : -1;
+    var idx = Number.isInteger(rawIdx) && rawIdx >= 0 && rawIdx < capturedSteps.length ? rawIdx : -1;
+
+    if (action === "move-up" && idx > 0) {
+      moveStep(idx, "up");
+    } else if (action === "move-down" && idx >= 0) {
+      moveStep(idx, "down");
+    } else if (action === "edit" && idx >= 0) {
+      editingStepIdx = idx;
+      editDraft = JSON.parse(JSON.stringify(capturedSteps[idx]));
+      renderStepsList();
+    } else if (action === "delete" && idx >= 0) {
+      deleteStep(idx);
+    } else if (action === "cancel-edit") {
+      editingStepIdx = null;
+      editDraft = null;
+      renderStepsList();
+    } else if (action === "save-edit" && idx >= 0) {
+      saveStepEdit(idx, editDraft);
+    } else if (action === "make-var") {
+      if (editDraft && editDraft.text) {
+        editDraft.text = toDynamicVariableTemplate(editDraft.text);
+        renderStepsList();
+      }
+    }
+  }
+
+  function handleStepsListChange(e) {
+    var target = e.target;
+    if (target && target.getAttribute("data-recorder-change") === "kind") {
+      if (editDraft) {
+        editDraft.kind = target.value;
+        renderStepsList();
+      }
+    }
+  }
+
   function renderStepsList() {
     if (!hudStepsList) return;
+    hudStepsList.onclick = handleStepsListClick;
+    hudStepsList.onchange = handleStepsListChange;
     hudStepsList.innerHTML = "";
 
     if (hudDrawerTitle) {
@@ -626,10 +672,7 @@
           if (kd === editDraft.kind) opt.selected = true;
           kindSel.appendChild(opt);
         });
-        kindSel.onchange = function (e) {
-          editDraft.kind = e.target.value;
-          renderStepsList();
-        };
+        kindSel.setAttribute("data-recorder-change", "kind");
 
         cardHead.appendChild(stepNumLabel);
         cardHead.appendChild(kindSel);
@@ -681,13 +724,7 @@
           varBtn.type = "button";
           varBtn.style.cssText = "background: none; border: none; color: #818cf8; font-size: 10px; cursor: pointer; text-decoration: underline;";
           varBtn.textContent = "Make variable";
-          varBtn.onclick = function (e) {
-            e.stopPropagation();
-            if (editDraft.text) {
-              editDraft.text = toDynamicVariableTemplate(editDraft.text);
-              renderStepsList();
-            }
-          };
+          varBtn.setAttribute("data-recorder-action", "make-var");
           tHead.appendChild(tLbl);
           tHead.appendChild(varBtn);
 
@@ -741,21 +778,14 @@
         cBtn.type = "button";
         cBtn.style.cssText = "background: none; border: 1px solid #334155; color: #94a3b8; font-size: 10px; padding: 2px 7px; border-radius: 4px; cursor: pointer;";
         cBtn.textContent = "Cancel";
-        cBtn.onclick = function (e) {
-          e.stopPropagation();
-          editingStepIdx = null;
-          editDraft = null;
-          renderStepsList();
-        };
+        cBtn.setAttribute("data-recorder-action", "cancel-edit");
 
         var sBtn = document.createElement("button");
         sBtn.type = "button";
         sBtn.style.cssText = "background: #4f46e5; border: 1px solid #6366f1; color: #ffffff; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; cursor: pointer;";
         sBtn.textContent = "Save";
-        sBtn.onclick = function (e) {
-          e.stopPropagation();
-          saveStepEdit(idx, editDraft);
-        };
+        sBtn.setAttribute("data-recorder-action", "save-edit");
+        sBtn.setAttribute("data-index", String(idx));
 
         bRow.appendChild(cBtn);
         bRow.appendChild(sBtn);
@@ -866,10 +896,8 @@
         upBtn.style.cssText = "background: none; border: none; color: #94a3b8; font-size: 9px; cursor: pointer; padding: 1px 3px; border-radius: 3px;";
         upBtn.textContent = "↑";
         upBtn.title = "Move up";
-        upBtn.onclick = function (e) {
-          e.stopPropagation();
-          moveStep(idx, "up");
-        };
+        upBtn.setAttribute("data-recorder-action", "move-up");
+        upBtn.setAttribute("data-index", String(idx));
         actionsDiv.appendChild(upBtn);
       }
 
@@ -879,10 +907,8 @@
         dnBtn.style.cssText = "background: none; border: none; color: #94a3b8; font-size: 9px; cursor: pointer; padding: 1px 3px; border-radius: 3px;";
         dnBtn.textContent = "↓";
         dnBtn.title = "Move down";
-        dnBtn.onclick = function (e) {
-          e.stopPropagation();
-          moveStep(idx, "down");
-        };
+        dnBtn.setAttribute("data-recorder-action", "move-down");
+        dnBtn.setAttribute("data-index", String(idx));
         actionsDiv.appendChild(dnBtn);
       }
 
@@ -891,12 +917,8 @@
       eBtn.style.cssText = "background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #cbd5e1; font-size: 9.5px; cursor: pointer; padding: 1px 4px; border-radius: 3px;";
       eBtn.textContent = "Edit";
       eBtn.title = "Edit step";
-      eBtn.onclick = function (e) {
-        e.stopPropagation();
-        editingStepIdx = idx;
-        editDraft = JSON.parse(JSON.stringify(step));
-        renderStepsList();
-      };
+      eBtn.setAttribute("data-recorder-action", "edit");
+      eBtn.setAttribute("data-index", String(idx));
       actionsDiv.appendChild(eBtn);
 
       var dBtn = document.createElement("button");
@@ -904,10 +926,8 @@
       dBtn.style.cssText = "background: none; border: none; color: #f87171; font-size: 11px; cursor: pointer; padding: 1px 3px; border-radius: 3px;";
       dBtn.textContent = "✕";
       dBtn.title = "Delete step";
-      dBtn.onclick = function (e) {
-        e.stopPropagation();
-        deleteStep(idx);
-      };
+      dBtn.setAttribute("data-recorder-action", "delete");
+      dBtn.setAttribute("data-index", String(idx));
       actionsDiv.appendChild(dBtn);
 
       row.appendChild(actionsDiv);
