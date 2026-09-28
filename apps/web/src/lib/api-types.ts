@@ -627,6 +627,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fixtures/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Fixtures
+         * @description Save one or more base64-encoded fixtures into workspace storage for test steps.
+         */
+        post: operations["upload_fixtures_api_v1_fixtures_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/generators/classify": {
         parameters: {
             query?: never;
@@ -5081,6 +5101,27 @@ export interface components {
             sizeBytes: number;
             /** Url */
             url: string;
+        };
+        /** FixtureUploadItem */
+        FixtureUploadItem: {
+            /** Base64 */
+            base64: string;
+            /** Contenttype */
+            contentType?: string | null;
+            /** Filename */
+            fileName: string;
+        };
+        /** FixtureUploadRequest */
+        FixtureUploadRequest: {
+            /** Files */
+            files: components["schemas"]["FixtureUploadItem"][];
+        };
+        /** FixtureUploadResponse */
+        FixtureUploadResponse: {
+            /** Filenames */
+            fileNames: string[];
+            /** Fixturepaths */
+            fixturePaths: string[];
         };
         /** FlakyCaseOut */
         FlakyCaseOut: {
@@ -9913,6 +9954,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FileSignedUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_fixtures_api_v1_fixtures_upload_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Workspace-Id"?: string | null;
+                "X-API-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FixtureUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixtureUploadResponse"];
                 };
             };
             /** @description Validation Error */
