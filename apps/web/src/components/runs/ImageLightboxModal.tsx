@@ -138,7 +138,8 @@ export function ImageLightboxModal({
         } else if (key === "p") {
           e.preventDefault();
           const curIdx = phases.findIndex((p) => p.isSelected);
-          const nextPhase = phases[curIdx === 0 ? 1 : 0];
+          const nextIdx = curIdx >= 0 ? (curIdx + 1) % phases.length : 0;
+          const nextPhase = phases[nextIdx];
           if (nextPhase) onSelectPhase?.(nextPhase.id);
         }
       }

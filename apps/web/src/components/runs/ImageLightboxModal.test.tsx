@@ -219,5 +219,29 @@ describe("<ImageLightboxModal>", () => {
     await user.keyboard("p");
     expect(onSelectPhase).toHaveBeenCalledWith("shot_after");
   });
+
+  it("cycles through more than two phases correctly with 'p' shortcut", async () => {
+    const user = userEvent.setup();
+    const onSelectPhase = vi.fn();
+    const phases = [
+      { id: "shot_1", label: "Phase 1", phase: "before", isSelected: false },
+      { id: "shot_2", label: "Phase 2", phase: "during", isSelected: true },
+      { id: "shot_3", label: "Phase 3", phase: "after", isSelected: false },
+    ];
+
+    render(
+      <ImageLightboxModal
+        open={true}
+        onOpenChange={vi.fn()}
+        src="https://example.com/shot_2.png"
+        title="Step 3: Multi-phase"
+        phases={phases}
+        onSelectPhase={onSelectPhase}
+      />
+    );
+
+    await user.keyboard("p");
+    expect(onSelectPhase).toHaveBeenCalledWith("shot_3");
+  });
 });
 

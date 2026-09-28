@@ -509,6 +509,36 @@
         "title": "ArtifactKind",
         "type": "string"
       },
+      "ArtifactMetadata": {
+        "description": "Metadata payload stored alongside an artifact (e.g. dual-phase screenshots).",
+        "properties": {
+          "highlight": {
+            "title": "Highlight",
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "before",
+              "after"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "selector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selector"
+          }
+        },
+        "title": "ArtifactMetadata",
+        "type": "object"
+      },
       "ArtifactPublic": {
         "description": "One artifact in ``GET /runs/:id/artifacts`` (docs/API.md \u00a73.5).",
         "properties": {
@@ -527,14 +557,12 @@
           "metadata": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/ArtifactMetadata"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Metadata"
+            ]
           },
           "mime_type": {
             "title": "Mime Type",
@@ -1298,14 +1326,12 @@
           "metadata": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/ArtifactMetadata"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Metadata"
+            ]
           },
           "mimeType": {
             "title": "Mimetype",

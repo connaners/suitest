@@ -38,14 +38,7 @@ import { VideoPlayerModal } from "./VideoPlayerModal";
 import { rollupLabel, rollupToBadge, type CaseGroup } from "./case-grouping";
 import { StepTable, type DisplayStep, type StepDisplayOutcome } from "./StepTable";
 
-type ArtifactPublic = components["schemas"]["ArtifactPublic"] & {
-  metadata?: {
-    phase?: string;
-    highlight?: boolean;
-    selector?: string;
-    [key: string]: unknown;
-  } | null;
-};
+type ArtifactPublic = components["schemas"]["ArtifactPublic"];
 type RunStatus = components["schemas"]["RunStatus"];
 type RunStepPublic = components["schemas"]["RunStepPublic"];
 
@@ -580,6 +573,16 @@ interface CaseEvidenceTabsProps {
   playwrightConfig?: PlaywrightConfigInput | null | undefined;
 }
 
+function resolveArtifactPhase(shot: ArtifactPublic, idx: number) {
+  const phase = shot.metadata?.phase;
+  const isBefore = phase ? phase === "before" : idx === 0;
+  return {
+    isBefore,
+    phase: isBefore ? ("before" as const) : ("after" as const),
+    label: isBefore ? "Before action (highlight)" : "After action",
+  };
+}
+
 function CaseEvidenceTabs({
   code,
   videoUrl,
@@ -611,12 +614,11 @@ function CaseEvidenceTabs({
   const lightboxPhases = useMemo(() => {
     if ((currentStepShots?.length ?? 0) <= 1) return undefined;
     return currentStepShots?.map((shot, idx) => {
-      const phase = shot.metadata?.phase;
-      const isBefore = phase ? phase === "before" : idx === 0;
+      const { phase, label } = resolveArtifactPhase(shot, idx);
       return {
         id: shot.id,
-        phase: isBefore ? ("before" as const) : ("after" as const),
-        label: isBefore ? "Before action (highlight)" : "After action",
+        phase,
+        label,
         isSelected: (selectedShotId ?? currentStepShots[0]?.id) === shot.id,
       };
     });
@@ -822,34 +824,28 @@ function CaseEvidenceTabs({
           ) : null}
 
           {/* Phase navigator for dual screenshots */}
-          {previewMode === "screenshots" && (currentStepShots?.length ?? 0) > 1 ? (
+          {previewMode === "screenshots" && lightboxPhases && lightboxPhases.length > 1 ? (
             <div
               className="flex items-center gap-1.5 py-1 font-mono text-[11px]"
               data-testid="step-phase-navigator"
             >
               <span className="text-[10.5px] text-fg-4">Capture:</span>
-              {currentStepShots?.map((shot, idx) => {
-                const isSelected = (selectedShotId ?? currentStepShots[0]?.id) === shot.id;
-                const phase = shot.metadata?.phase;
-                const isBefore = phase ? phase === "before" : idx === 0;
-                const label = isBefore ? "Before action (highlight)" : "After action";
-                return (
-                  <button
-                    key={shot.id}
-                    type="button"
-                    onClick={() => onSelectShot?.(shot.id)}
-                    className={cn(
-                      "rounded border px-2 py-0.5 text-[10.5px] transition-colors",
-                      isSelected
-                        ? "border-accent bg-accent/15 text-accent font-semibold"
-                        : "border-border bg-bg-elev-2 text-fg-3 hover:bg-bg-elev-3 hover:text-fg-1",
-                    )}
-                    data-testid={`step-phase-btn-${isBefore ? "before" : "after"}`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+              {lightboxPhases.map((phaseItem) => (
+                <button
+                  key={phaseItem.id}
+                  type="button"
+                  onClick={() => onSelectShot?.(phaseItem.id)}
+                  className={cn(
+                    "rounded border px-2 py-0.5 text-[10.5px] transition-colors",
+                    phaseItem.isSelected
+                      ? "border-accent bg-accent/15 text-accent font-semibold"
+                      : "border-border bg-bg-elev-2 text-fg-3 hover:bg-bg-elev-3 hover:text-fg-1",
+                  )}
+                  data-testid={`step-phase-btn-${phaseItem.phase}`}
+                >
+                  {phaseItem.label}
+                </button>
+              ))}
             </div>
           ) : null}
 

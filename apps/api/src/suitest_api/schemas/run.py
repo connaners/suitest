@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from suitest_shared.domain.enums import (
@@ -174,6 +174,14 @@ class RunLogPage(BaseModel):
     has_more: bool = Field(serialization_alias="hasMore")
 
 
+class ArtifactMetadata(TypedDict, total=False):
+    """Metadata payload stored alongside an artifact (e.g. dual-phase screenshots)."""
+
+    phase: Literal["before", "after"]
+    highlight: bool
+    selector: str | None
+
+
 class ArtifactPublic(BaseModel):
     """One artifact in ``GET /runs/:id/artifacts`` (docs/API.md §3.5)."""
 
@@ -185,7 +193,7 @@ class ArtifactPublic(BaseModel):
     size_bytes: int
     mime_type: str
     created_at: datetime
-    metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_json")
+    metadata: ArtifactMetadata | None = Field(default=None, validation_alias="metadata_json")
 
 
 class CaseArtifactPublic(BaseModel):
@@ -205,7 +213,7 @@ class CaseArtifactPublic(BaseModel):
     size_bytes: int = Field(serialization_alias="sizeBytes")
     mime_type: str = Field(serialization_alias="mimeType")
     created_at: datetime = Field(serialization_alias="createdAt")
-    metadata: dict[str, Any] | None = Field(
+    metadata: ArtifactMetadata | None = Field(
         default=None, serialization_alias="metadata", validation_alias="metadata_json"
     )
 
