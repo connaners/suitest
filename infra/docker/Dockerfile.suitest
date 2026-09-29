@@ -7,6 +7,7 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11 --activate
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json* ./
 COPY apps/web/package.json apps/web/
+COPY docs-site/package.json docs-site/
 RUN pnpm install --frozen-lockfile --filter @suiflex/web...
 COPY apps/web/ apps/web/
 ARG VITE_API_URL=http://localhost:4000
