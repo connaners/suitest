@@ -53,7 +53,7 @@ services:
       retries: 10
 
   minio:
-    image: quay.io/minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest-dev
     profiles: ["zero", "cloud", "local", "dev", "demo"]
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
@@ -66,13 +66,13 @@ services:
     volumes:
       - miniodata:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9000/minio/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 10
 
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: cgr.dev/chainguard/minio-client:latest-dev
     profiles: ["zero", "cloud", "local", "dev", "demo"]
     depends_on:
       minio:
