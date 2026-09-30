@@ -763,16 +763,18 @@ async def test_highlight_steps_executes_action_captures_after_shot_and_cleans_up
     assert out["status"] == "PASS"
 
     tools = [tool for _, tool, _ in invocations]
-    # Sequence:
+    # Sequence with dual screenshot:
     # 1. browser_evaluate (pre-clear ghost highlight)
     # 2. browser_evaluate (highlight target element)
-    # 3. browser_click (step action)
-    # 4. browser_evaluate (re-apply highlight after action)
-    # 5. browser_take_screenshot (after shot with highlight)
-    # 6. browser_evaluate (clear highlight in finally)
+    # 3. browser_take_screenshot (pre-action shot with highlight)
+    # 4. browser_click (step action)
+    # 5. browser_evaluate (re-apply highlight after action)
+    # 6. browser_take_screenshot (after shot)
+    # 7. browser_evaluate (clear highlight in finally)
     assert tools == [
         "browser_evaluate",
         "browser_evaluate",
+        "browser_take_screenshot",
         "browser_click",
         "browser_evaluate",
         "browser_take_screenshot",
@@ -788,12 +790,116 @@ async def test_highlight_steps_executes_action_captures_after_shot_and_cleans_up
     assert "scrollIntoView" in highlight_script
 
     # Check that post-action rehighlight set highlight
-    rehighlight_script = str(invocations[3][2].get("script", ""))
+    rehighlight_script = str(invocations[4][2].get("script", ""))
     assert "data-suitest-highlight" in rehighlight_script
 
     # Check that final evaluate cleared it
-    final_clear_script = str(invocations[5][2].get("script", ""))
+    final_clear_script = str(invocations[6][2].get("script", ""))
     assert "removeAttribute('data-suitest-highlight')" in final_clear_script
+
+
+async def test_dual_screenshot_captures_pre_and_post_with_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dual screenshot: captures pre-action with highlight metadata and post-action."""
+    from suitest_mcp.invoker import McpInvoker
+    from suitest_mcp.models import McpArtifact, McpToolResult
+
+    from tests.conftest import (
+        _install_repo_stubs,
+        _make_capability,
+        _make_project,
+        _make_registry_instance,
+        _make_run,
+        _make_step,
+        _RecordingRedis,
+        _session_factory,
+    )
+
+    step = _make_step("s0", {"tool": "browser_click", "arguments": {"selector": "#login-button"}})
+    step.target_kind = "FE_WEB"
+    step.mcp_provider = "playwright-mcp"
+    selection = [("case-1", 0, step)]
+
+    class _SpyInvoker(McpInvoker):
+        def __init__(self) -> None:
+            pass
+
+        async def invoke(
+            self,
+            *,
+            explicit_provider: str | None = None,
+            tool: str,
+            arguments: dict[str, object],
+            ctx: object,
+        ) -> McpToolResult:
+            if tool == "browser_take_screenshot":
+                return McpToolResult(
+                    ok=True,
+                    artifacts=[
+                        McpArtifact(
+                            kind="SCREENSHOT",
+                            filename="screenshot-1.png",
+                            content_type="image/png",
+                            bytes=b"fake-bytes",
+                        )
+                    ],
+                    duration_ms=40,
+                )
+            return McpToolResult(ok=True, stdout="{}", duration_ms=10)
+
+    run = _make_run()
+    run.metadata_json = {
+        "playwright_config": {
+            "screenshot": "on",
+            "highlightSteps": True,
+            "headless": True,
+        }
+    }
+    cap = _make_capability()
+    inserted_steps: list[dict[str, object]] = []
+    _install_repo_stubs(
+        monkeypatch,
+        run=run,
+        selection=selection,
+        capability=cap,
+        inserted_steps=inserted_steps,
+    )
+
+    uploaded_artifacts_capture: list[list[McpArtifact]] = []
+
+    async def _mock_upload_artifacts(*args: object, **kwargs: object) -> None:
+        artifacts = kwargs.get("artifacts")
+        if artifacts:
+            uploaded_artifacts_capture.append(list(artifacts))  # type: ignore[arg-type]
+
+    monkeypatch.setattr("suitest_runner.artifacts.upload_artifacts", _mock_upload_artifacts)
+
+    redis = _RecordingRedis()
+    ctx: dict[str, object] = {
+        "session_factory": _session_factory(_make_project()),
+        "redis": redis,
+        "invoker": _SpyInvoker(),
+        "registry": _make_registry_instance(),
+    }
+    out = await run_test_case(ctx, "run-1")
+    assert out["status"] == "PASS"
+
+    assert len(uploaded_artifacts_capture) == 1
+    arts = uploaded_artifacts_capture[0]
+    assert len(arts) == 2
+
+    # Pre-action screenshot
+    assert arts[0].filename == "screenshot-before.png"
+    assert arts[0].metadata == {
+        "phase": "before",
+        "highlight": True,
+        "selector": "#login-button",
+    }
+
+    # Post-action screenshot
+    assert arts[1].filename == "screenshot-after.png"
+    assert arts[1].metadata == {"phase": "after"}
 
 
 async def test_finalize_run_updates_skipped_for_zero_step_planned_cases(
@@ -964,3 +1070,101 @@ async def test_complex_mixed_run_all_case_conditions(
     assert getattr(val_map.get("last_run_result"), "value", None) == "SKIP"
     assert getattr(val_map.get("last_run_id"), "value", None) == "run-1"
     assert getattr(val_map.get("last_duration_ms"), "value", None) == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_artifacts_preserved_on_step_failure_without_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a step fails with highlight pre_artifacts, it must not raise McpToolResult validation error."""
+    from suitest_mcp.errors import McpToolFailed
+    from suitest_mcp.invoker import McpInvoker
+    from suitest_mcp.models import McpArtifact, McpToolResult
+
+    from tests.conftest import (
+        _install_repo_stubs,
+        _make_capability,
+        _make_project,
+        _make_registry_instance,
+        _make_run,
+        _make_step,
+        _RecordingRedis,
+        _session_factory,
+    )
+
+    step = _make_step(
+        "s0",
+        {"tool": "browser_click", "arguments": {"selector": "span.text-shield-cyan.underline"}},
+    )
+    step.target_kind = "FE_WEB"
+    step.mcp_provider = "playwright-mcp"
+    selection = [("case-1", 0, step)]
+
+    class _FailingInvoker(McpInvoker):
+        def __init__(self) -> None:
+            pass
+
+        async def invoke(
+            self,
+            *,
+            explicit_provider: str | None = None,
+            tool: str,
+            arguments: dict[str, object],
+            ctx: object,
+        ) -> McpToolResult:
+            if tool == "browser_take_screenshot":
+                return McpToolResult(
+                    ok=True,
+                    artifacts=[
+                        McpArtifact(
+                            kind="SCREENSHOT",
+                            filename="pre-shot.png",
+                            content_type="image/png",
+                            bytes=b"pre-bytes",
+                        )
+                    ],
+                    duration_ms=25,
+                )
+            if tool == "browser_click":
+                raise McpToolFailed("Element not found: span.text-shield-cyan.underline")
+            return McpToolResult(ok=True, stdout="{}", duration_ms=10)
+
+    run = _make_run()
+    run.metadata_json = {
+        "playwright_config": {
+            "screenshot": "on",
+            "highlightSteps": True,
+            "headless": True,
+        }
+    }
+    cap = _make_capability()
+    inserted_steps: list[dict[str, object]] = []
+    _install_repo_stubs(
+        monkeypatch,
+        run=run,
+        selection=selection,
+        capability=cap,
+        inserted_steps=inserted_steps,
+    )
+
+    uploaded_artifacts: list[list[McpArtifact]] = []
+
+    async def _mock_upload(*args: object, **kwargs: object) -> None:
+        artifacts = kwargs.get("artifacts")
+        if artifacts:
+            uploaded_artifacts.append(list(artifacts))  # type: ignore[arg-type]
+
+    monkeypatch.setattr("suitest_runner.artifacts.upload_artifacts", _mock_upload)
+
+    ctx: dict[str, object] = {
+        "session_factory": _session_factory(_make_project()),
+        "invoker": _FailingInvoker(),
+        "redis": _RecordingRedis(),
+        "registry": _make_registry_instance(),
+    }
+    out = await run_test_case(ctx, "run-1")
+    assert out["status"] == "FAIL"
+    assert len(inserted_steps) == 1
+    assert inserted_steps[0]["outcome"] == "FAIL"
+    assert len(uploaded_artifacts) >= 1
+    assert any(a.filename == "screenshot-before.png" for sub in uploaded_artifacts for a in sub)

@@ -6,7 +6,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -776,6 +776,254 @@ describe("<CaseDetailPanel>", () => {
     expect(emptyArtifacts).toHaveTextContent("Screenshots: Off");
     expect(emptyArtifacts).toHaveTextContent("Video: Off");
     expect(emptyArtifacts).toHaveTextContent("Highlight: Enabled");
+  });
+
+  it("renders phase toggle when a step has dual screenshots (before action highlight and after action)", async () => {
+    server.use(
+      http.get("*/api/v1/runs/:runId/artifacts/:artifactId", ({ params }) => {
+        return HttpResponse.json({
+          url: `https://storage.suitest.local/artifacts/${params.artifactId}.png`,
+        });
+      }),
+    );
+
+    const steps = [makeStep(1, "Click login button", "PASS")];
+    const group: CaseGroup = {
+      caseId: "tc_dual_1",
+      casePublicId: "TC-5042",
+      caseName: "Login flow",
+      steps,
+      total: 1,
+      passed: 1,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 300,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_shot_before",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:01Z",
+      },
+      {
+        id: "art_shot_after",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:02Z",
+      },
+    ];
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    // Step navigator exists
+    const stepBtn = await screen.findByTestId("step-nav-btn-1");
+    expect(stepBtn).toBeInTheDocument();
+
+    // Click step to activate
+    fireEvent.click(stepBtn);
+
+    // Phase navigator should appear with Before and After buttons
+    const phaseNav = await screen.findByTestId("step-phase-navigator");
+    expect(phaseNav).toBeInTheDocument();
+
+    const beforeBtn = screen.getByTestId("step-phase-btn-before");
+    const afterBtn = screen.getByTestId("step-phase-btn-after");
+    expect(beforeBtn).toBeInTheDocument();
+    expect(afterBtn).toBeInTheDocument();
+
+    // Default image is before shot
+    const img = await screen.findByTestId("case-preview-step-image");
+    await waitFor(() => {
+      expect(img).toHaveAttribute("src", "https://storage.suitest.local/artifacts/art_shot_before.png");
+    });
+
+    // Switching to after shot
+    fireEvent.click(afterBtn);
+    await waitFor(() => {
+      expect(img).toHaveAttribute("src", "https://storage.suitest.local/artifacts/art_shot_after.png");
+    });
+  });
+
+  it("correctly sorts and labels phase buttons when artifacts arrive with after preceding before in array", async () => {
+    server.use(
+      http.get("/api/v1/runs/:runId/artifacts/:artifactId", ({ params }) => {
+        return HttpResponse.json({
+          url: `https://storage.suitest.local/artifacts/${params.artifactId}.png`,
+        });
+      }),
+    );
+
+    const steps = [makeStep(1, "Click Button", "PASS")];
+    const group: CaseGroup = {
+      caseId: "case_dual_inv",
+      casePublicId: "TC-9999",
+      caseName: "Dual Screenshot Inverted Array Test",
+      steps,
+      total: 1,
+      passed: 1,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 300,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    // 'after' artifact is intentionally listed first in the array to simulate DB tie-break inversion
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "art_shot_after_first",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 2048,
+        created_at: "2026-09-14T00:00:01Z",
+        metadata: { phase: "after" },
+      },
+      {
+        id: "art_shot_before_second",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:01Z",
+        metadata: { phase: "before", highlight: true },
+      },
+    ];
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    const stepBtn = await screen.findByTestId("step-nav-btn-1");
+    fireEvent.click(stepBtn);
+
+    const phaseNav = await screen.findByTestId("step-phase-navigator");
+    expect(phaseNav).toBeInTheDocument();
+
+    const beforeBtn = screen.getByTestId("step-phase-btn-before");
+    const afterBtn = screen.getByTestId("step-phase-btn-after");
+    expect(beforeBtn).toHaveTextContent("Before action (highlight)");
+    expect(afterBtn).toHaveTextContent("After action");
+
+    // The default active preview must be 'before' (highlighted) despite 'after' being index 0 in the raw array
+    const img = await screen.findByTestId("case-preview-step-image");
+    await waitFor(() => {
+      expect(img).toHaveAttribute(
+        "src",
+        "https://storage.suitest.local/artifacts/art_shot_before_second.png",
+      );
+    });
+
+    // Clicking After switches to the after screenshot
+    fireEvent.click(afterBtn);
+    await waitFor(() => {
+      expect(img).toHaveAttribute(
+        "src",
+        "https://storage.suitest.local/artifacts/art_shot_after_first.png",
+      );
+    });
+  });
+
+  it("allows toggling before and after screenshots directly inside the lightbox modal when zoomed", async () => {
+    server.use(
+      http.get("/api/v1/runs/:runId/artifacts/:artifactId", ({ params }) => {
+        return HttpResponse.json({
+          url: `https://storage.suitest.local/artifacts/${params.artifactId}.png`,
+        });
+      }),
+    );
+
+    const steps = [makeStep(1, "Click Submit", "PASS")];
+    const group: CaseGroup = {
+      caseId: "case_zoom_dual",
+      casePublicId: "TC-8888",
+      caseName: "Zoom Modal Dual Screenshot Test",
+      steps,
+      total: 1,
+      passed: 1,
+      failed: 0,
+      rollup: "pass",
+      durationMs: 250,
+      kind: "frontend",
+      firstFailure: null,
+    };
+
+    const artifacts: ArtifactPublic[] = [
+      {
+        id: "modal_shot_before",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 1024,
+        created_at: "2026-09-14T00:00:01Z",
+        metadata: { phase: "before", highlight: true },
+      },
+      {
+        id: "modal_shot_after",
+        run_step_id: "step_1",
+        kind: "SCREENSHOT",
+        mime_type: "image/png",
+        size_bytes: 2048,
+        created_at: "2026-09-14T00:00:02Z",
+        metadata: { phase: "after" },
+      },
+    ];
+
+    renderPanel(group, "PASS", undefined, true, artifacts);
+
+    // Select step 1
+    const stepBtn = await screen.findByTestId("step-nav-btn-1");
+    fireEvent.click(stepBtn);
+
+    // Click to open zoom lightbox modal
+    const zoomTrigger = await screen.findByTestId("case-preview-zoom-trigger");
+    fireEvent.click(zoomTrigger);
+
+    // Lightbox modal should be open
+    const modal = await screen.findByTestId("image-lightbox-modal");
+    expect(modal).toBeInTheDocument();
+
+    // Lightbox phase navigator should be visible in modal header
+    const modalPhaseNav = await screen.findByTestId("lightbox-phase-navigator");
+    expect(modalPhaseNav).toBeInTheDocument();
+
+    const modalBeforeBtn = screen.getByTestId("lightbox-phase-btn-before");
+    const modalAfterBtn = screen.getByTestId("lightbox-phase-btn-after");
+    expect(modalBeforeBtn).toBeInTheDocument();
+    expect(modalAfterBtn).toBeInTheDocument();
+
+    // Default image in lightbox is before action
+    const lightboxImg = screen.getByTestId("lightbox-image");
+    await waitFor(() => {
+      expect(lightboxImg).toHaveAttribute(
+        "src",
+        "https://storage.suitest.local/artifacts/modal_shot_before.png",
+      );
+    });
+
+    // Click 'After action' inside modal
+    fireEvent.click(modalAfterBtn);
+    await waitFor(() => {
+      expect(lightboxImg).toHaveAttribute(
+        "src",
+        "https://storage.suitest.local/artifacts/modal_shot_after.png",
+      );
+    });
+
+    // Keyboard shortcut 'b' inside modal switches back to before
+    fireEvent.keyDown(window, { key: "b" });
+    await waitFor(() => {
+      expect(lightboxImg).toHaveAttribute(
+        "src",
+        "https://storage.suitest.local/artifacts/modal_shot_before.png",
+      );
+    });
   });
 });
 
