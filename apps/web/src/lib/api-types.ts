@@ -3940,6 +3940,21 @@ export interface components {
          */
         ArtifactKind: "SCREENSHOT" | "HAR" | "DOM_SNAPSHOT" | "VIDEO" | "CONSOLE_LOG" | "TRACE" | "COVERAGE_REPORT" | "CUSTOM";
         /**
+         * ArtifactMetadata
+         * @description Metadata payload stored alongside an artifact (e.g. dual-phase screenshots).
+         */
+        ArtifactMetadata: {
+            /** Highlight */
+            highlight?: boolean;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase?: "before" | "after";
+            /** Selector */
+            selector?: string | null;
+        };
+        /**
          * ArtifactPublic
          * @description One artifact in ``GET /runs/:id/artifacts`` (docs/API.md §3.5).
          */
@@ -3952,6 +3967,7 @@ export interface components {
             /** Id */
             id: string;
             kind: components["schemas"]["ArtifactKind"];
+            metadata?: components["schemas"]["ArtifactMetadata"] | null;
             /** Mime Type */
             mime_type: string;
             /** Run Step Id */
@@ -4313,6 +4329,7 @@ export interface components {
             /** Id */
             id: string;
             kind: components["schemas"]["ArtifactKind"];
+            metadata?: components["schemas"]["ArtifactMetadata"] | null;
             /** Mimetype */
             mimeType: string;
             /**

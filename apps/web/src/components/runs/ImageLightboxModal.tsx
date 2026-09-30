@@ -19,6 +19,13 @@ export interface LightboxImage {
   downloadFilename?: string | undefined;
 }
 
+export interface LightboxPhase {
+  id: string;
+  label: string;
+  phase?: "before" | "after" | string | undefined;
+  isSelected: boolean;
+}
+
 export interface ImageLightboxModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -30,6 +37,8 @@ export interface ImageLightboxModalProps {
   images?: LightboxImage[] | undefined;
   currentIndex?: number | undefined;
   onNavigate?: ((index: number) => void) | undefined;
+  phases?: LightboxPhase[] | undefined;
+  onSelectPhase?: ((phaseId: string) => void) | undefined;
 }
 
 export function ImageLightboxModal({
@@ -43,6 +52,8 @@ export function ImageLightboxModal({
   images,
   currentIndex,
   onNavigate,
+  phases,
+  onSelectPhase,
 }: ImageLightboxModalProps): React.ReactElement | null {
   const [isActualSize, setIsActualSize] = React.useState(false);
 
@@ -92,9 +103,10 @@ export function ImageLightboxModal({
     [images, activeIndex, onNavigate],
   );
 
-  // Keyboard navigation: ArrowLeft (prev), ArrowRight (next)
+  // Keyboard navigation: ArrowLeft (prev), ArrowRight (next), 'b' (before), 'a' (after), 'p' (toggle phase)
   React.useEffect(() => {
-    if (!open || !hasMultipleImages) return;
+    const hasPhases = Boolean(phases && phases.length > 1);
+    if (!open || (!hasMultipleImages && !hasPhases)) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (
@@ -109,6 +121,27 @@ export function ImageLightboxModal({
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         handleNext();
+      } else if (hasPhases && phases) {
+        const key = e.key.toLowerCase();
+        if (key === "b") {
+          const beforePhase = phases.find((p) => p.phase === "before");
+          if (beforePhase) {
+            e.preventDefault();
+            onSelectPhase?.(beforePhase.id);
+          }
+        } else if (key === "a") {
+          const afterPhase = phases.find((p) => p.phase === "after");
+          if (afterPhase) {
+            e.preventDefault();
+            onSelectPhase?.(afterPhase.id);
+          }
+        } else if (key === "p") {
+          e.preventDefault();
+          const curIdx = phases.findIndex((p) => p.isSelected);
+          const nextIdx = curIdx >= 0 ? (curIdx + 1) % phases.length : 0;
+          const nextPhase = phases[nextIdx];
+          if (nextPhase) onSelectPhase?.(nextPhase.id);
+        }
       }
     };
 
@@ -116,7 +149,7 @@ export function ImageLightboxModal({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, hasMultipleImages, handlePrev, handleNext]);
+  }, [open, hasMultipleImages, handlePrev, handleNext, phases, onSelectPhase]);
 
   if (!activeSrc) {
     return null;
@@ -161,6 +194,33 @@ export function ImageLightboxModal({
           </div>
 
           <div className="mr-6 flex items-center gap-1.5 sm:mr-8 shrink-0">
+            {phases && phases.length > 1 ? (
+              <div
+                className="flex items-center gap-1 font-mono text-[11px] mr-2"
+                data-testid="lightbox-phase-navigator"
+              >
+                <span className="text-[10.5px] text-fg-4 mr-0.5 hidden md:inline">Phase:</span>
+                {phases.map((p) => {
+                  const phaseType = p.phase || "phase";
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => onSelectPhase?.(p.id)}
+                      className={cn(
+                        "rounded border px-2 py-0.5 text-[11px] transition-colors",
+                        p.isSelected
+                          ? "border-accent bg-accent/15 text-accent font-semibold"
+                          : "border-border bg-bg-elev-2 text-fg-3 hover:bg-bg-elev-3 hover:text-fg-1",
+                      )}
+                      data-testid={`lightbox-phase-btn-${phaseType}`}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             {hasMultipleImages ? (
               <div className="flex items-center gap-1 mr-1">
                 <Button

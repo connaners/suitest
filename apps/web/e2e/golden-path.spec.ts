@@ -462,3 +462,55 @@ test("test_session_expires_redirects_to_login", async ({ page }) => {
     timeout: 8_000,
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test 4 — issue #238: bulk actions remain operable on narrow pane width
+// ---------------------------------------------------------------------------
+
+test("test_bulk_action_bar_responsive_layout_on_narrow_pane", async ({ page }) => {
+  await installRoutes(page, buildBaseRouteTable());
+
+  // Mount at the minimum allowable left pane width (LEFT_MIN = 280px)
+  await page.addInitScript(() => {
+    localStorage.setItem("suitest:cases:left-width", "280");
+  });
+
+  await page.goto("/cases");
+
+  await expect(page.getByRole("heading", { name: "Test Cases", level: 2 })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // Select the first case row to reveal the bulk action bar
+  const checkbox = page.getByTestId("case-row-checkbox").first();
+  await checkbox.click();
+
+  const bulkBar = page.getByTestId("bulk-action-bar");
+  await expect(bulkBar).toBeVisible({ timeout: 5_000 });
+  await expect(bulkBar).toContainText("1 selected");
+
+  // All bulk action controls must be visible and operable
+  const clearBtn = page.getByTestId("bulk-clear-btn");
+  const runBtn = page.getByTestId("bulk-run-btn");
+  const deleteBtn = page.getByTestId("bulk-delete-btn");
+  const moveSelect = page.getByTestId("bulk-move-suite-select");
+  const prioritySelect = page.getByTestId("bulk-priority-select");
+
+  await expect(clearBtn).toBeVisible();
+  await expect(runBtn).toBeVisible();
+  await expect(deleteBtn).toBeVisible();
+  await expect(moveSelect).toBeVisible();
+  await expect(prioritySelect).toBeVisible();
+
+  // Verify that controls stay within the left pane bounds without horizontal clipping
+  const leftPane = page.getByTestId("cases-left-pane");
+  const paneBox = await leftPane.boundingBox();
+  const priorityBox = await prioritySelect.boundingBox();
+
+  expect(paneBox).not.toBeNull();
+  expect(priorityBox).not.toBeNull();
+  if (paneBox && priorityBox) {
+    // Priority dropdown right edge must not exceed pane right edge (+ 1px subpixel tolerance)
+    expect(priorityBox.x + priorityBox.width).toBeLessThanOrEqual(paneBox.x + paneBox.width + 1);
+  }
+});
