@@ -89,11 +89,8 @@ export function PrintableRunReport({
 
                   {group.firstFailure && (
                     <div className="mt-2 bg-red-50 border border-red-200 rounded p-2 text-xs font-mono text-red-900">
-                      <div className="font-semibold text-red-800">
-                        Step {group.firstFailure.stepIndex}: {group.firstFailure.action}{" "}
-                        {group.firstFailure.target ? `"${group.firstFailure.target}"` : ""}
-                      </div>
-                      <div className="mt-1 whitespace-pre-wrap">{group.firstFailure.message}</div>
+                      <div className="font-semibold text-red-800">Failure Details:</div>
+                      <div className="mt-1 whitespace-pre-wrap">{group.firstFailure}</div>
                     </div>
                   )}
 
