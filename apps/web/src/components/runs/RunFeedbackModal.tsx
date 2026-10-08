@@ -132,6 +132,7 @@ export function RunFeedbackModal({
             type="button"
             variant="outline"
             size="sm"
+            data-testid="modal-close-button"
             onClick={() => onOpenChange(false)}
           >
             Close

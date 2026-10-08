@@ -1,12 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { AlertCircle, Minimize2, RotateCw, Square } from "lucide-react";
+import { AlertCircle, Minimize2, Printer, RotateCw, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { PrintableRunReport } from "@/components/runs/PrintableRunReport";
 import { RerunSelectionDialog } from "@/components/runs/RerunSelectionDialog";
 import { RunCaseExplorer } from "@/components/runs/RunCaseExplorer";
+import { RunFeedbackModal } from "@/components/runs/RunFeedbackModal";
 import { RunInterruptedBanner } from "@/components/runs/RunInterruptedBanner";
 import { type CaseGroup } from "@/components/runs/case-grouping";
+import { getRunFeedback, setRunCaseFeedback } from "@/components/runs/run-feedback";
 import { RunSummaryCard } from "@/components/runs/RunSummaryCard";
 import { WakeLockIndicator } from "@/components/runs/WakeLockIndicator";
 import { Button } from "@/components/ui/button";
@@ -29,8 +32,24 @@ export function RunDetailPage(): React.ReactElement {
   const cancelMutation = useCancelRun();
   const [rerunForbidden, setRerunForbidden] = useState(false);
   const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
+  const [feedback, setFeedback] = useState<Record<string, string>>(() => getRunFeedback(runId));
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [explorerGroups, setExplorerGroups] = useState<CaseGroup[]>([]);
   const [selectedCasePublicId, setSelectedCasePublicId] = useState<string | null>(null);
+
+  const handleFeedbackChange = (caseId: string, text: string): void => {
+    const updated = setRunCaseFeedback(runId, caseId, text);
+    setFeedback(updated);
+  };
+
+  const handlePrint = (): void => {
+    setFeedbackModalOpen(false);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        window.print();
+      }, 100);
+    });
+  };
 
   const { data: run } = useQuery({
     queryKey: ["run", runId] as const,
@@ -226,6 +245,24 @@ export function RunDetailPage(): React.ReactElement {
           >
             ⏱ Time-travel replay
           </Link>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={run === undefined || isLive}
+            onClick={() => {
+              if (failedCount > 0 || hasActualFailures) {
+                setFeedbackModalOpen(true);
+              } else {
+                handlePrint();
+              }
+            }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-bg-elev-1 px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-bg-elev-2 hover:text-fg-1"
+            data-testid="run-print-button"
+          >
+            <Printer className="h-3.5 w-3.5" aria-hidden="true" />
+            Print results
+          </Button>
         </div>
       </div>
 
@@ -273,7 +310,12 @@ export function RunDetailPage(): React.ReactElement {
         errorMessage={run?.errorMessage || run?.error_message}
       />
 
-      <RunSummaryCard run={run} />
+      <RunSummaryCard
+        run={run}
+        groups={dialogGroups}
+        feedback={feedback}
+        onOpenFeedbackModal={() => setFeedbackModalOpen(true)}
+      />
 
       {/* TEST CASE master-detail — the primary run view (shared with the panel). */}
       <RunCaseExplorer
@@ -298,6 +340,24 @@ export function RunDetailPage(): React.ReactElement {
           initialSettings={run.playwrightConfig ?? null}
         />
       ) : null}
+
+      {run ? (
+        <RunFeedbackModal
+          open={feedbackModalOpen}
+          onOpenChange={setFeedbackModalOpen}
+          runPublicId={run.public_id}
+          groups={dialogGroups}
+          feedback={feedback}
+          onFeedbackChange={handleFeedbackChange}
+          onPrint={handlePrint}
+        />
+      ) : null}
+
+      <PrintableRunReport
+        run={run}
+        groups={dialogGroups}
+        feedback={feedback}
+      />
     </section>
   );
 }
