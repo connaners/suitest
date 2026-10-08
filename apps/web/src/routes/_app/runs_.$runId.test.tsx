@@ -589,4 +589,49 @@ describe("RunDetailPage", () => {
       );
     });
   });
+
+  it("opens feedback review modal and updates printable report with feedback", async () => {
+    const user = userEvent.setup();
+    withFreshMocks();
+
+    server.use(
+      http.get(`*/api/v1/runs/${RUN_ID}`, () =>
+        HttpResponse.json({
+          id: RUN_ID,
+          public_id: "RUN-1001",
+          project_id: "prj_demo",
+          name: "Checkout flow with failure",
+          branch: "main",
+          commit_sha: "abcd123",
+          env: "staging",
+          status: "FAIL",
+          trigger: "MANUAL",
+          started_at: "2026-05-27T10:00:00Z",
+          completed_at: "2026-05-27T10:01:00Z",
+          duration_ms: 60000,
+          summary: { total_steps: 4, passed_steps: 3, failed_steps: 1, duration_ms: 60000 },
+          created_at: "2026-05-27T10:00:00Z",
+          updated_at: "2026-05-27T10:01:00Z",
+        }),
+      ),
+    );
+
+    renderRunDetail();
+    await screen.findByTestId("run-detail-page", undefined, { timeout: 3000 });
+
+    const printBtn = await screen.findByTestId("run-print-button");
+    expect(printBtn).toBeInTheDocument();
+    await user.click(printBtn);
+
+    expect(await screen.findByTestId("run-feedback-modal")).toBeInTheDocument();
+    const textarea = screen.getByTestId("feedback-input-case_02");
+    await user.type(textarea, "Card tokenization error on gateway");
+
+    const closeBtn = screen.getByTestId("modal-close-button");
+    await user.click(closeBtn);
+
+    expect(screen.getByTestId("print-feedback-case_02")).toHaveTextContent(
+      "Card tokenization error on gateway",
+    );
+  });
 });
