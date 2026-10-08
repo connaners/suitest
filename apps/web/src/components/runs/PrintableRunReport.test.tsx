@@ -53,12 +53,7 @@ describe("<PrintableRunReport> (Issue #240 AC)", () => {
         caseName: "Checkout payment fails",
         rollup: "fail",
         failed: 1,
-        firstFailure: {
-          stepIndex: 3,
-          action: "click",
-          target: "Submit Payment",
-          message: "Timeout 5000ms waiting for payment gateway response",
-        },
+        firstFailure: "Timeout 5000ms waiting for payment gateway response",
       }),
     ];
     const feedback = {
@@ -120,12 +115,7 @@ describe("<PrintableRunReport> (Issue #240 AC)", () => {
         caseName: "Profile avatar upload",
         rollup: "fail",
         failed: 1,
-        firstFailure: {
-          stepIndex: 2,
-          action: "upload",
-          target: "Avatar Input",
-          message: "File too large error unexpected 500",
-        },
+        firstFailure: "File too large error unexpected 500",
       }),
     ];
 
@@ -146,12 +136,7 @@ describe("<PrintableRunReport> (Issue #240 AC)", () => {
         caseName: "Cart calculation",
         rollup: "fail",
         failed: 1,
-        firstFailure: {
-          stepIndex: 4,
-          action: "expect",
-          target: "Total Price",
-          message: "Expected $50.00, received $45.00",
-        },
+        firstFailure: "Expected $50.00, received $45.00",
       }),
     ];
 
@@ -164,7 +149,6 @@ describe("<PrintableRunReport> (Issue #240 AC)", () => {
     );
 
     expect(screen.getByText(/TC-104/)).toBeInTheDocument();
-    expect(screen.getByText(/Step 4/i)).toBeInTheDocument();
     expect(screen.getByText(/Expected \$50\.00, received \$45\.00/i)).toBeInTheDocument();
     expect(screen.getByTestId("print-feedback-tc_fail_3")).toHaveTextContent("Tax discount logic bug");
   });

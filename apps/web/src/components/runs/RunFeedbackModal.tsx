@@ -94,12 +94,9 @@ export function RunFeedbackModal({
                     <div className="rounded border border-red/20 bg-red/5 p-2.5 text-[11px] font-mono text-fg-3 flex items-start gap-2">
                       <AlertCircle className="h-3.5 w-3.5 text-red shrink-0 mt-0.5" />
                       <div className="space-y-0.5 min-w-0">
-                        <div className="font-semibold text-red">
-                          Step {group.firstFailure.stepIndex}: {group.firstFailure.action}{" "}
-                          {group.firstFailure.target ? `"${group.firstFailure.target}"` : ""}
-                        </div>
+                        <div className="font-semibold text-red">Failure Details:</div>
                         <div className="text-fg-4 text-[10.5px] truncate">
-                          {group.firstFailure.message}
+                          {group.firstFailure}
                         </div>
                       </div>
                     </div>

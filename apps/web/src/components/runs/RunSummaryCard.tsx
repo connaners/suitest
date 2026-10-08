@@ -37,6 +37,11 @@ export function RunSummaryCard({
   feedback,
   onOpenFeedbackModal,
 }: RunSummaryCardProps): React.ReactElement {
+  const failedGroups = useMemo(
+    () => (groups ?? []).filter((g) => g.rollup === "fail" || g.rollup === "aborted"),
+    [groups],
+  );
+
   if (!run) {
     return (
       <section
@@ -47,11 +52,6 @@ export function RunSummaryCard({
       </section>
     );
   }
-
-  const failedGroups = useMemo(
-    () => (groups ?? []).filter((g) => g.rollup === "fail" || g.rollup === "aborted"),
-    [groups],
-  );
   const totalStepsFromCases =
     run.cases && run.cases.length > 0
       ? run.cases.reduce((acc, c) => acc + (c.total_steps ?? 0), 0)

@@ -17,12 +17,7 @@ function makeGroup(overrides: Partial<CaseGroup> = {}): CaseGroup {
     rollup: "fail",
     durationMs: 1200,
     kind: "frontend",
-    firstFailure: {
-      stepIndex: 3,
-      action: "click",
-      target: "Login Button",
-      message: "Element not found",
-    },
+    firstFailure: "Element not found",
     ...overrides,
   };
 }
