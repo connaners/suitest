@@ -21,8 +21,10 @@ export interface CreateCaseDialogProps {
   onClose: () => void;
   /** Suites the case can be created under; the picker shows when there are ≥2. */
   suites: Suite[];
+  /** Optional pre-selected suite ID when opening from a specific suite */
+  initialSuiteId?: string | undefined;
   /** Called with the new case's public id so the caller can open the editor. */
-  onCreated?: (publicId: string) => void;
+  onCreated?: ((publicId: string) => void) | undefined;
 }
 
 /**
@@ -35,6 +37,7 @@ export function CreateCaseDialog({
   open,
   onClose,
   suites,
+  initialSuiteId,
   onCreated,
 }: CreateCaseDialogProps): React.ReactElement {
   const [name, setName] = useState("");
@@ -43,7 +46,11 @@ export function CreateCaseDialog({
   // this dialog mounted (it's rendered persistently) still defaults correctly —
   // `useState(suites[0]?.id)` would freeze the first-render value.
   const [chosenSuiteId, setChosenSuiteId] = useState("");
-  const suiteId = chosenSuiteId !== "" ? chosenSuiteId : (suites[0]?.id ?? "");
+  const effectiveDefault =
+    initialSuiteId && suites.some((s) => s.id === initialSuiteId)
+      ? initialSuiteId
+      : (suites[0]?.id ?? "");
+  const suiteId = chosenSuiteId !== "" ? chosenSuiteId : effectiveDefault;
   const createCase = useCreateTestCase();
 
   const reset = (): void => {

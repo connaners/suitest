@@ -71,6 +71,56 @@ export function useCreateSuite(): UseMutationResult<SuitePublic, Error, CreateSu
   });
 }
 
+export interface UpdateSuiteInput {
+  suiteId: string;
+  name?: string;
+  description?: string;
+  defaultTestingApproach?: TestingApproach;
+}
+
+export function useUpdateSuite(): UseMutationResult<SuitePublic, Error, UpdateSuiteInput> {
+  const queryClient = useQueryClient();
+  const projectId = useActiveProject((s) => s.projectId);
+  return useMutation({
+    mutationFn: async (input: UpdateSuiteInput) => {
+      const res = await api.patch<SuitePublic>(`/suites/${input.suiteId}`, {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.defaultTestingApproach !== undefined
+          ? { defaultTestingApproach: input.defaultTestingApproach }
+          : {}),
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["suites", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["suites"] });
+    },
+  });
+}
+
+export interface DeleteSuiteInput {
+  suiteId: string;
+  confirmCascade?: boolean;
+}
+
+export function useDeleteSuite(): UseMutationResult<void, Error, DeleteSuiteInput> {
+  const queryClient = useQueryClient();
+  const projectId = useActiveProject((s) => s.projectId);
+  return useMutation({
+    mutationFn: async ({ suiteId, confirmCascade = true }: DeleteSuiteInput) => {
+      await api.delete(`/suites/${suiteId}`, {
+        params: { confirmCascade },
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["suites", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["suites"] });
+      void queryClient.invalidateQueries({ queryKey: ["test-cases"] });
+    },
+  });
+}
+
 export interface CreateTestCaseInput {
   suiteId: string;
   name: string;
