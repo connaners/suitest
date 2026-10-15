@@ -96,7 +96,7 @@ describe("Test Cases screen", () => {
     expect(rows[0]?.getAttribute("data-public-id")).toBe("TC-101");
   });
 
-  it("renders the empty state when there are zero cases", async () => {
+  it("renders suites in the tree when there are zero cases with add case button", async () => {
     server.use(
       http.get("*/api/v1/test-cases", () =>
         HttpResponse.json({ items: [], meta: { limit: 50, nextCursor: null } }),
@@ -104,8 +104,21 @@ describe("Test Cases screen", () => {
     );
     renderCases();
     expect(
-      await screen.findByText(/No cases yet/i, undefined, { timeout: 3000 }),
+      await screen.findByTestId("cases-tree", undefined, { timeout: 3000 }),
     ).toBeInTheDocument();
+    expect(
+      await screen.findAllByText(/No cases yet/i, undefined, { timeout: 3000 }),
+    ).not.toHaveLength(0);
+    expect(screen.getAllByTestId("suite-add-case-btn").length).toBeGreaterThan(0);
+  });
+
+  it("clicking edit suite button opens EditSuiteDialog", async () => {
+    const user = userEvent.setup();
+    renderCases();
+    const editBtns = await screen.findAllByTestId("edit-suite-btn", undefined, { timeout: 3000 });
+    await user.click(editBtns[0] as HTMLElement);
+    expect(await screen.findByTestId("edit-suite-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-suite-name")).toBeInTheDocument();
   });
 
   it("renders the error fallback when /suites 500s", async () => {

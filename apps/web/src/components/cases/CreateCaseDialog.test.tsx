@@ -123,4 +123,23 @@ describe("CreateCaseDialog", () => {
     await user.type(screen.getByTestId("create-case-name"), "Valid login");
     expect(screen.getByTestId("create-case-submit")).toBeEnabled();
   });
+
+  it("preselects initialSuiteId when provided", () => {
+    const multiSuites: Suite[] = [
+      ...SUITES,
+      {
+        id: "ste_checkout",
+        project_id: "prj_demo",
+        name: "Checkout flow",
+        description: null,
+        order: 1,
+        case_count: 0,
+        created_at: "2026-06-01T08:00:00Z",
+        updated_at: "2026-06-01T08:00:00Z",
+      },
+    ];
+    renderDialog({ suites: multiSuites, initialSuiteId: "ste_checkout" });
+    const select = screen.getByTestId("create-case-suite") as HTMLSelectElement;
+    expect(select.value).toBe("ste_checkout");
+  });
 });
