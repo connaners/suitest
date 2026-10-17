@@ -102,6 +102,8 @@ AUDITED_TABLES: frozenset[str] = frozenset(
         "memberships",
         "projects",
         "suites",
+        "workspace_variables",
+        "suite_variables",
     }
 )
 
