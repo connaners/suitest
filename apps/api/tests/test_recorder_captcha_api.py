@@ -27,6 +27,14 @@ async def test_solve_captcha_endpoint_with_base64_canvas(app) -> None:
     }
 
     mock_session = MagicMock(id="test_session", workspace_id="ws_test")
+    mock_config = MagicMock(model="gpt-4o")
+    mock_cred = MagicMock(
+        provider="openai",
+        api_key="sk-test",
+        base_url=None,
+        extra_headers=None,
+        extra_body=None,
+    )
 
     with (
         patch(
@@ -37,7 +45,12 @@ async def test_solve_captcha_endpoint_with_base64_canvas(app) -> None:
         patch(
             "suitest_db.repositories.llm_configs.LLMConfigRepo.get_active",
             new_callable=AsyncMock,
-            return_value=None,
+            return_value=mock_config,
+        ),
+        patch(
+            "suitest_api.routers.generators.resolve_for_config",
+            new_callable=AsyncMock,
+            return_value=mock_cred,
         ),
         patch(
             "suitest_agent.generators.captcha_solver.solve_captcha_image",
@@ -73,6 +86,14 @@ async def test_solve_captcha_endpoint_playwright_snapshot_fallback(app) -> None:
     }
 
     mock_session = MagicMock(id="test_session", workspace_id="ws_test")
+    mock_config = MagicMock(model="gpt-4o")
+    mock_cred = MagicMock(
+        provider="openai",
+        api_key="sk-test",
+        base_url=None,
+        extra_headers=None,
+        extra_body=None,
+    )
     mock_page = MagicMock()
     mock_locator = MagicMock()
     mock_locator.wait_for = AsyncMock()
@@ -89,7 +110,12 @@ async def test_solve_captcha_endpoint_playwright_snapshot_fallback(app) -> None:
         patch(
             "suitest_db.repositories.llm_configs.LLMConfigRepo.get_active",
             new_callable=AsyncMock,
-            return_value=None,
+            return_value=mock_config,
+        ),
+        patch(
+            "suitest_api.routers.generators.resolve_for_config",
+            new_callable=AsyncMock,
+            return_value=mock_cred,
         ),
         patch(
             "suitest_agent.generators.browser_launcher.get_headed_session_page",
@@ -115,6 +141,44 @@ async def test_solve_captcha_endpoint_playwright_snapshot_fallback(app) -> None:
             mock_solver.assert_called_once()
             call_kwargs = mock_solver.call_args.kwargs
             assert call_kwargs["captcha_type"] == "math"
+
+
+@pytest.mark.asyncio
+async def test_solve_captcha_endpoint_no_active_llm(app) -> None:
+    dummy_b64 = base64.b64encode(b"fake_png_data").decode("ascii")
+    payload = {
+        "image_base64": f"data:image/png;base64,{dummy_b64}",
+        "image_selector": "#img-captcha",
+        "input_selector": "#captcha",
+        "captcha_type": "auto",
+        "force_uppercase": True,
+    }
+
+    mock_session = MagicMock(id="test_session", workspace_id="ws_test")
+
+    with (
+        patch(
+            "suitest_db.repositories.recorder_sessions.RecorderSessionRepo.get_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_session,
+        ),
+        patch(
+            "suitest_db.repositories.llm_configs.LLMConfigRepo.get_active",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.post(
+                "/api/v1/generators/recorder/sessions/test_session/solve-captcha",
+                json=payload,
+            )
+            assert res.status_code == 200, res.text
+            data = res.json()
+            assert data["status"] == "error"
+            assert data["text"] == ""
+            assert data["source"] == "none"
+            assert "Workspace has no active LLM configured" in data["error"]
 
 
 @pytest.mark.asyncio

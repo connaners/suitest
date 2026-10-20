@@ -61,6 +61,7 @@ async def test_inject_pre_submit_captcha_step_inserts_and_reindexes():
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [step_nav, step_submit, step_assert]
     mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session.add = MagicMock()
 
     mock_factory = MagicMock()
     mock_factory.return_value.__aenter__.return_value = mock_session

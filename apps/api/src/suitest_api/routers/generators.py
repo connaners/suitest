@@ -863,19 +863,23 @@ async def solve_recorder_session_captcha(
 
     llm_repo = LLMConfigRepo(session)
     config = await llm_repo.get_active(rec_session.workspace_id)
-    if config is not None:
-        credential = await resolve_for_config(session, config)
-        provider = get_provider(
-            credential.provider,
-            api_key=credential.api_key,
-            base_url=credential.base_url,
-            extra_headers=credential.extra_headers or None,
-            extra_body=credential.extra_body or None,
+    if config is None:
+        return SolveCaptchaResponse(
+            status="error",
+            text="",
+            source="none",
+            error="Workspace has no active LLM configured for vision fallback",
         )
-        model = config.model
-    else:
-        provider = get_provider("openai", api_key=None)
-        model = None
+
+    credential = await resolve_for_config(session, config)
+    provider = get_provider(
+        credential.provider,
+        api_key=credential.api_key,
+        base_url=credential.base_url,
+        extra_headers=credential.extra_headers or None,
+        extra_body=credential.extra_body or None,
+    )
+    model = config.model
 
     try:
         resolved_text = await solve_captcha_image(

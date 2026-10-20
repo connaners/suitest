@@ -48,6 +48,7 @@ from suitest_shared.domain.enums import StepOutcome, TargetKind
 
 from suitest_runner.executors.captcha_detector import (
     build_detect_captcha_script,
+    has_captcha_hint,
     is_submit_action,
 )
 from suitest_runner.executors.tiny_ocr import (
@@ -513,6 +514,7 @@ async def _invoke_tool(
     arguments: dict[str, object],
     ctx: InvokeContext,
     captcha_solver: CaptchaSolver | None = None,
+    action_description: str | None = None,
 ) -> McpToolResult:
     normalized_tool = _normalize_tool_name(tool)
     if normalized_tool in ("browser_solve_captcha", "browser.solve_captcha"):
@@ -599,8 +601,15 @@ async def _invoke_tool(
                 duration_ms=1,
             )
 
-        if captcha_solver is not None and not arguments.get("_skip_captcha_detect"):
-            target = str(arguments.get("target") or arguments.get("selector") or "")
+        target = str(arguments.get("target") or arguments.get("selector") or "")
+        should_detect = has_captcha_hint(target, action_description) or bool(
+            arguments.get("_detect_captcha")
+        )
+        if (
+            captcha_solver is not None
+            and should_detect
+            and not arguments.get("_skip_captcha_detect")
+        ):
             frame_selector = str(
                 arguments.get("frame_selector") or arguments.get("frameSelector") or ""
             )
@@ -656,7 +665,10 @@ async def _invoke_tool(
 
     if normalized_tool in ("browser_click", "browser.click") and captcha_solver is not None:
         target = str(arguments.get("target") or arguments.get("selector") or "")
-        if is_submit_action(target, normalized_tool):
+        should_detect_pre = has_captcha_hint(target, action_description) or bool(
+            arguments.get("_detect_captcha")
+        )
+        if should_detect_pre:
             frame_selector = str(
                 arguments.get("frame_selector") or arguments.get("frameSelector") or ""
             )
@@ -704,10 +716,15 @@ async def _invoke_tool(
                         captcha_solver=captcha_solver,
                     )
                     solved_text = (solve_res.output or {}).get("solved_text", "")
+                    clean_click_args = {
+                        k: v
+                        for k, v in arguments.items()
+                        if k not in ("_skip_captcha_detect", "_detect_captcha")
+                    }
                     click_res = await invoker.invoke(
                         explicit_provider=explicit_provider,
                         tool=normalized_tool,
-                        arguments=arguments,
+                        arguments=clean_click_args,
                         ctx=ctx,
                     )
                     out = dict(click_res.output or {})
@@ -723,16 +740,91 @@ async def _invoke_tool(
                 log.debug("step_executor.pre_submit_captcha_detect_failed", error=str(det_err))
 
     clean_invoke_args = (
-        {k: v for k, v in arguments.items() if k != "_skip_captcha_detect"}
-        if "_skip_captcha_detect" in arguments
+        {k: v for k, v in arguments.items() if k not in ("_skip_captcha_detect", "_detect_captcha")}
+        if ("_skip_captcha_detect" in arguments or "_detect_captcha" in arguments)
         else arguments
     )
-    return await invoker.invoke(
+    click_res = await invoker.invoke(
         explicit_provider=explicit_provider,
         tool=normalized_tool,
         arguments=clean_invoke_args,
         ctx=ctx,
     )
+
+    # Post-failure fallback: only trigger DOM inspection when a submit action actually fails
+    target = str(arguments.get("target") or arguments.get("selector") or "")
+    if (
+        normalized_tool in ("browser_click", "browser.click")
+        and not click_res.ok
+        and captcha_solver is not None
+        and is_submit_action(target, normalized_tool)
+    ):
+        frame_selector = str(
+            arguments.get("frame_selector") or arguments.get("frameSelector") or ""
+        )
+        frame_chain = _build_frame_chain_js(frame_selector) if frame_selector else "page"
+        detect_code = build_detect_captcha_script(
+            target_input_selector=None, frame_chain=frame_chain
+        )
+        try:
+            detect_res = await invoker.invoke(
+                explicit_provider=explicit_provider,
+                tool="browser_run_code_unsafe",
+                arguments={"code": detect_code},
+                ctx=ctx,
+            )
+            detection = (detect_res.output or {}).get("result") or {}
+            if (
+                isinstance(detection, dict)
+                and detection.get("is_captcha")
+                and detection.get("is_empty")
+            ):
+                inp_sel = detection.get("input_selector") or "#captcha"
+                img_sel = detection.get("image_selector") or "img"
+                refresh_tgt = detection.get("refresh_target")
+                log.info(
+                    "step_executor.captcha.post_failure_submit_intercept",
+                    submit_target=target,
+                    input_selector=inp_sel,
+                    image_selector=img_sel,
+                )
+                solve_args = {
+                    "image_selector": img_sel,
+                    "input_selector": inp_sel,
+                    "max_retries": 3,
+                }
+                if refresh_tgt:
+                    solve_args["refresh_target"] = refresh_tgt
+                if frame_selector:
+                    solve_args["frame_selector"] = frame_selector
+
+                solve_res = await _handle_solve_captcha_operation(
+                    invoker=invoker,
+                    explicit_provider=explicit_provider,
+                    arguments=solve_args,
+                    ctx=ctx,
+                    captcha_solver=captcha_solver,
+                )
+                solved_text = (solve_res.output or {}).get("solved_text", "")
+                retry_click_res = await invoker.invoke(
+                    explicit_provider=explicit_provider,
+                    tool=normalized_tool,
+                    arguments=clean_invoke_args,
+                    ctx=ctx,
+                )
+                out = dict(retry_click_res.output or {})
+                out["pre_submit_injected_captcha"] = {
+                    "image_selector": img_sel,
+                    "input_selector": inp_sel,
+                    "refresh_target": refresh_tgt,
+                    "solved_text": solved_text,
+                }
+                retry_click_res.output = out
+                return retry_click_res
+        except Exception as det_err:
+            log.debug("step_executor.post_failure_captcha_detect_failed", error=str(det_err))
+
+    return click_res
 
 
 async def _parse_or_translate_step(
@@ -952,6 +1044,7 @@ async def execute_step(
             arguments=arguments,
             ctx=ctx,
             captcha_solver=captcha_solver,
+            action_description=test_step.action,
         )
         await _run_assertions(
             invoker=invoker,

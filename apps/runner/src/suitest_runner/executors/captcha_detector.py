@@ -11,12 +11,23 @@ SUBMIT_TRIGGER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+CAPTCHA_HINT_PATTERN = re.compile(
+    r"(captcha|recaptcha|turnstile|secur(ity)?[-\s_]?code|verif(ication)?[-\s_]?code|kode[-\s_]?keamanan)",
+    re.IGNORECASE,
+)
+
 
 def is_submit_action(target_selector: str, tool_name: str) -> bool:
     """Check if target element selector or tool represents a form submission action."""
     if tool_name not in ("browser_click", "browser.click"):
         return False
     return bool(SUBMIT_TRIGGER_PATTERN.search(target_selector))
+
+
+def has_captcha_hint(target_selector: str | None, action_text: str | None = None) -> bool:
+    """Check if target element selector or action description hints at a captcha field."""
+    combined = f"{target_selector or ''} {action_text or ''}"
+    return bool(CAPTCHA_HINT_PATTERN.search(combined))
 
 
 @dataclass(frozen=True)
