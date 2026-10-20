@@ -408,11 +408,15 @@ async def _inject_pre_submit_captcha_step(
     if not callable(factory):
         return False
     from sqlalchemy import select
-    from suitest_db.models.case import TestStep
+    from suitest_db.models.case import TestCase, TestStep
     from suitest_shared.domain.enums import TargetKind
 
     try:
         async with factory() as session:
+            # Row-level lock on TestCase to guard against concurrent step mutations
+            lock_stmt = select(TestCase.id).where(TestCase.id == case_id).with_for_update()
+            await session.execute(lock_stmt)
+
             stmt = (
                 select(TestStep).where(TestStep.case_id == case_id).order_by(TestStep.order.asc())
             )
@@ -448,6 +452,11 @@ async def _inject_pre_submit_captcha_step(
             )
             session.add(new_step)
             await session.commit()
+            log.warning(
+                "runner.pre_submit_captcha.runtime_step_reorder: Auto-healed CAPTCHA adjusted step ordering for case %s (injected at order %d). Concurrency notice: UI edits during run may conflict.",
+                case_id,
+                submit_step_order,
+            )
             log.info(
                 "runner.pre_submit_captcha.injected",
                 case_id=case_id,
