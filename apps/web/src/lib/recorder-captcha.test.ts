@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -18,6 +18,15 @@ describe("Recorder Agent CAPTCHA Detection & Pairing", () => {
     // Execute recorder_agent.js in jsdom context
     const fn = new Function(scriptContent);
     fn();
+  });
+
+  afterEach(() => {
+    // @ts-expect-error test cleanup
+    if (typeof window.__suitest_recorder_cleanup__ === "function") {
+      // @ts-expect-error test cleanup
+      window.__suitest_recorder_cleanup__();
+    }
+    vi.clearAllTimers();
   });
 
   it("detects captcha input fields by name, id, placeholder, and aria-label", () => {

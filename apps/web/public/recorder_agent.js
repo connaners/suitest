@@ -145,7 +145,44 @@
 
   var eventQueue = [];
   var isSending = false;
-  var lastHudInteractionTime = 0;
+  var activeObservers = [];
+  var activeTimers = new Set();
+
+  function safeSetTimeout(fn, delay) {
+    var timerId = setTimeout(function () {
+      activeTimers.delete(timerId);
+      fn();
+    }, delay);
+    activeTimers.add(timerId);
+    return timerId;
+  }
+
+  function safeClearTimeout(timerId) {
+    if (timerId) {
+      activeTimers.delete(timerId);
+      clearTimeout(timerId);
+    }
+  }
+
+  function cleanupRecorder() {
+    for (var i = 0; i < activeObservers.length; i++) {
+      try {
+        activeObservers[i].disconnect();
+      } catch (e) {
+        console.debug("[Suitest Recorder] Error disconnecting observer during cleanup:", e);
+      }
+    }
+    activeObservers.length = 0;
+    activeTimers.forEach(function (t) {
+      try {
+        clearTimeout(t);
+      } catch (e) {
+        console.debug("[Suitest Recorder] Error clearing timer during cleanup:", e);
+      }
+    });
+    activeTimers.clear();
+  }
+  window.__suitest_recorder_cleanup__ = cleanupRecorder;
 
   function getCurrentVirtualUrl() {
     return window.location.href;
@@ -237,7 +274,10 @@
 
   // 2. Resilient Selector Engine
   function getSelector(el) {
-    if (!el || el === document.body || el === document.documentElement) {
+    var doc = typeof document !== "undefined" ? document : null;
+    var docBody = doc ? doc.body : null;
+    var docEl = doc ? doc.documentElement : null;
+    if (!el || el === docBody || el === docEl) {
       return "body";
     }
 
@@ -264,7 +304,7 @@
       return `#${CSS.escape(el.id)}`;
     }
 
-    var tag = el.tagName.toLowerCase();
+    var tag = el.tagName ? el.tagName.toLowerCase() : "unknown";
 
     // Priority 3: Links with clean href (super stable for menus/submenus)
     if (tag === "a") {
@@ -276,7 +316,7 @@
         !rawHref.startsWith("data:")
       ) {
         var hrefSel = `a[href="${rawHref.replace(/"/g, '\\"')}"]`;
-        if (document.querySelectorAll(hrefSel).length === 1) {
+        if (doc && doc.querySelectorAll(hrefSel).length === 1) {
           return hrefSel;
         }
       }
@@ -322,7 +362,7 @@
       var roleText = getCleanElementText(el);
       if (roleText && roleText.length > 0 && roleText.length <= 40) {
         var roleSel = `[role="${role}"]:has-text("${roleText.replace(/"/g, '\\"')}")`;
-        if (document.querySelectorAll(roleSel).length === 1) {
+        if (doc && doc.querySelectorAll(roleSel).length === 1) {
           return roleSel;
         }
       }
@@ -333,7 +373,7 @@
       var liText = getCleanElementText(el);
       if (liText && liText.length > 0 && liText.length <= 40) {
         var liSel = `li:has-text("${liText.replace(/"/g, '\\"')}")`;
-        if (document.querySelectorAll(liSel).length === 1) {
+        if (doc && doc.querySelectorAll(liSel).length === 1) {
           return liSel;
         }
       }
@@ -344,7 +384,7 @@
       var cleanText = getCleanElementText(el);
       if (cleanText.length > 0 && cleanText.length <= 35) {
         var textSel = `${tag}:has-text("${cleanText.replace(/"/g, '\\"')}")`;
-        if (document.querySelectorAll(textSel).length === 1) {
+        if (doc && doc.querySelectorAll(textSel).length === 1) {
           return textSel;
         }
       }
@@ -366,7 +406,7 @@
       .slice(0, 2);
     if (classNames.length > 0) {
       var classSelector = `${tag}.${classNames.map(CSS.escape).join(".")}`;
-      if (document.querySelectorAll(classSelector).length === 1) {
+      if (doc && doc.querySelectorAll(classSelector).length === 1) {
         return classSelector;
       }
     }
@@ -378,7 +418,7 @@
         return c.tagName === el.tagName;
       });
       var index = siblings.indexOf(el) + 1;
-      var parentSel = parent === document.body ? "" : getSelector(parent) + " > ";
+      var parentSel = (docBody && parent === docBody) ? "" : getSelector(parent) + " > ";
       return `${parentSel}${tag}${siblings.length > 1 ? `:nth-of-type(${index})` : ""}`;
     }
 
@@ -2099,12 +2139,12 @@
   }
 
   function setupAlertObserver() {
-    if (!window.MutationObserver || !document.documentElement) return;
+    if (!window.MutationObserver || typeof document === "undefined" || !document.documentElement) return;
     var seenAlerts = new WeakSet();
     var alertTimeout = null;
 
     function checkNode(node) {
-      if (!node || node.nodeType !== 1) return;
+      if (typeof document === "undefined" || !node || node.nodeType !== 1) return;
       if (
         node.id === "suitest-recorder-hud" ||
         node.id === "suitest-picker-overlay" ||
@@ -2146,8 +2186,9 @@
       }
       hudAlertNotice.style.display = "flex";
 
-      if (alertTimeout) clearTimeout(alertTimeout);
-      alertTimeout = setTimeout(function () {
+      if (alertTimeout) safeClearTimeout(alertTimeout);
+      alertTimeout = safeSetTimeout(function () {
+        if (typeof document === "undefined") return;
         if (hudAlertNotice) hudAlertNotice.style.display = "none";
       }, 10000);
     }
@@ -2156,6 +2197,7 @@
     var debounceTimer = null;
 
     function processPendingNodes() {
+      if (typeof document === "undefined") return;
       var nodes = pendingNodes.splice(0, pendingNodes.length);
       for (var i = 0; i < nodes.length; i++) {
         checkNode(nodes[i]);
@@ -2163,6 +2205,7 @@
     }
 
     var alertObserver = new MutationObserver(function (mutations) {
+      if (typeof document === "undefined") return;
       for (var m of mutations) {
         if (m.type === "childList" && m.addedNodes && m.addedNodes.length) {
           Array.prototype.push.apply(pendingNodes, m.addedNodes);
@@ -2174,8 +2217,9 @@
         pendingNodes.length = 50;
       }
       if (!debounceTimer) {
-        debounceTimer = setTimeout(function () {
+        debounceTimer = safeSetTimeout(function () {
           debounceTimer = null;
+          if (typeof document === "undefined") return;
           processPendingNodes();
         }, 150);
       }
@@ -2186,6 +2230,7 @@
       attributes: true,
       attributeFilter: ["class", "role", "aria-modal", "style"],
     });
+    activeObservers.push(alertObserver);
   }
 
   function sanitizeString(str, maxLen) {
@@ -2468,8 +2513,10 @@
   }
 
   function findNearestCaptchaImage(inputEl) {
-    if (!inputEl) return null;
-    var container = inputEl.closest("form") || inputEl.closest(".card, .login-box, .auth-box, div") || document.body;
+    if (typeof document === "undefined" || !inputEl) return null;
+    var docBody = typeof document !== "undefined" ? document.body : null;
+    var container = inputEl.closest("form") || inputEl.closest(".card, .login-box, .auth-box, div") || docBody;
+    if (!container) return null;
     var images = Array.from(container.querySelectorAll("img, canvas"));
 
     for (var i = 0; i < images.length; i++) {
@@ -2911,10 +2958,10 @@
   }
 
   function setupCaptchaObserver() {
-    if (!document.documentElement) return;
+    if (typeof document === "undefined" || !document.documentElement) return;
 
     function checkCandidate(node) {
-      if (!node || node.nodeType !== 1) return;
+      if (typeof document === "undefined" || !node || node.nodeType !== 1) return;
       if (node.tagName && node.tagName.toLowerCase() === "input" && isCaptchaField(node)) {
         bindCaptchaField(node);
       } else if (node.querySelector) {
@@ -2937,6 +2984,7 @@
     var captchaDebounceTimer = null;
 
     function processPendingAddedNodes() {
+      if (typeof document === "undefined") return;
       var nodes = pendingAddedNodes.splice(0, pendingAddedNodes.length);
       for (var k = 0; k < nodes.length; k++) {
         checkCandidate(nodes[k]);
@@ -2944,6 +2992,7 @@
     }
 
     var captchaObserver = new MutationObserver(function (mutations) {
+      if (typeof document === "undefined") return;
       for (var j = 0; j < mutations.length; j++) {
         var m = mutations[j];
         if (m.type === "childList" && m.addedNodes && m.addedNodes.length) {
@@ -2954,8 +3003,9 @@
         pendingAddedNodes.length = 50;
       }
       if (!captchaDebounceTimer) {
-        captchaDebounceTimer = setTimeout(function () {
+        captchaDebounceTimer = safeSetTimeout(function () {
           captchaDebounceTimer = null;
+          if (typeof document === "undefined") return;
           processPendingAddedNodes();
         }, 150);
       }
@@ -2965,6 +3015,7 @@
       childList: true,
       subtree: true,
     });
+    activeObservers.push(captchaObserver);
   }
 
   // 7. DOM Listeners

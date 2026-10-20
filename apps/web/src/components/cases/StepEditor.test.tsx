@@ -445,6 +445,8 @@ describe("StepEditor", () => {
 
     await user.click(quickEditBtn);
     expect(await screen.findByTestId("quick-edit-inputs-dialog")).toBeInTheDocument();
+  });
+
   it("renders captcha configuration bar when step is solve_captcha", () => {
     const captchaStep = mkStep({
       id: "stp_captcha_1",
