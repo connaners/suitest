@@ -280,7 +280,7 @@ def _parameterize_single_step(
     row_values: dict[str, str],
 ) -> dict[str, object]:
     st_copy = dict(st)
-    code_str = str(st.get("code") or "")
+    code_str = str(st["code"] if "code" in st and st["code"] else "")  # noqa: RUF019
     if not code_str:
         return st_copy
 
@@ -291,17 +291,27 @@ def _parameterize_single_step(
             parsed = loaded
 
     if parsed is not None:
-        step_tool_name = str(parsed.get("tool") or "").lower()
-        step_payload_args = parsed.get("arguments")
+        tool_val = parsed["tool"] if "tool" in parsed and parsed["tool"] else ""  # noqa: RUF019
+        step_tool_name = str(tool_val).lower()
+        step_payload_args = parsed["arguments"] if "arguments" in parsed else None  # noqa: SIM401
         if isinstance(step_payload_args, dict) and step_tool_name in (
             "browser_type",
             "browser.type",
         ):
-            raw_text = str(step_payload_args.get("text", ""))
-            target = str(
-                step_payload_args.get("target") or step_payload_args.get("selector") or ""
-            ).lower()
-            act = str(st.get("action") or "").lower()
+            raw_text = (
+                str(step_payload_args["text"])
+                if "text" in step_payload_args and step_payload_args["text"]  # noqa: RUF019
+                else ""
+            )
+            if "target" in step_payload_args:
+                target_val = step_payload_args["target"]
+            elif "selector" in step_payload_args:
+                target_val = step_payload_args["selector"]
+            else:
+                target_val = ""
+            target = str(target_val or "").lower()
+            act_val = st["action"] if "action" in st else ""  # noqa: SIM401
+            act = str(act_val or "").lower()
 
             var_name = ""
             if "user" in target or "user" in act:
