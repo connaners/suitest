@@ -151,7 +151,12 @@
   function safeSetTimeout(fn, delay) {
     var timerId = setTimeout(function () {
       activeTimers.delete(timerId);
-      fn();
+      try {
+        if (typeof document === "undefined" || !document) return;
+        fn();
+      } catch (e) {
+        // Guard against torn-down test environments or unexpected dom teardown
+      }
     }, delay);
     activeTimers.add(timerId);
     return timerId;
@@ -173,6 +178,14 @@
       }
     }
     activeObservers.length = 0;
+    if (typeof typingTimer !== "undefined" && typingTimer) {
+      safeClearTimeout(typingTimer);
+      typingTimer = null;
+    }
+    if (typeof pendingImageClickTimer !== "undefined" && pendingImageClickTimer) {
+      safeClearTimeout(pendingImageClickTimer);
+      pendingImageClickTimer = null;
+    }
     activeTimers.forEach(function (t) {
       try {
         clearTimeout(t);
@@ -1871,8 +1884,9 @@
     var hudObserver = new MutationObserver(function () {
       if (!hudCheckScheduled) {
         hudCheckScheduled = true;
-        setTimeout(function () {
+        safeSetTimeout(function () {
           hudCheckScheduled = false;
+          if (typeof document === "undefined" || !document || !document.getElementById) return;
           if (!document.getElementById("suitest-recorder-hud")) {
             createHUD();
           }
@@ -1880,6 +1894,7 @@
       }
     });
     hudObserver.observe(document.documentElement, { childList: true, subtree: true });
+    activeObservers.push(hudObserver);
   }
 
   function ensurePickerOverlay() {
@@ -2931,9 +2946,11 @@
     var input = form.querySelector("input[data-suitest-captcha='true']");
     if (!input) return;
     var refreshSelector = getSelector(img);
-    if (pendingImageClickTimer) clearTimeout(pendingImageClickTimer);
+    if (pendingImageClickTimer) safeClearTimeout(pendingImageClickTimer);
     updateCaptchaHud("Menunggu CAPTCHA baru...", null, "spin");
-    pendingImageClickTimer = setTimeout(function () {
+    pendingImageClickTimer = safeSetTimeout(function () {
+      pendingImageClickTimer = null;
+      if (typeof document === "undefined" || !document) return;
       waitForImageReady(img).then(function () {
         triggerLiveCaptchaSolve(img, input, { refresh_target: refreshSelector, force: true });
       });
@@ -3258,7 +3275,7 @@
           return;
         }
 
-        clearTimeout(typingTimer);
+        safeClearTimeout(typingTimer);
         pendingTypingTarget = target;
         pendingTypingSelector = getSelector(target);
         pendingTypingMasked = isPasswordField(target);
@@ -3266,7 +3283,9 @@
         var val = target.value;
 
         // Debounce continuous typing so we send coalesced value after typing pauses
-        typingTimer = setTimeout(function () {
+        typingTimer = safeSetTimeout(function () {
+          typingTimer = null;
+          if (typeof document === "undefined" || !document) return;
           flushTyping();
         }, 1000);
       },
