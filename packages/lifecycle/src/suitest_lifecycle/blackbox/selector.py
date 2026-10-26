@@ -58,43 +58,44 @@ def _accessible_name(el: ElementInfo) -> str:
 
 def build_locator(el: ElementInfo, *, ignore_testids: bool = False) -> str:
     """Best locator expression for ``el`` per the strategy above."""
+    scope = f'page.frame_locator("{_q(el.frame_selector)}").' if el.frame_selector else "page."
     # 1 — test attributes
     if el.testid and not ignore_testids:
         if el.testid_attr in ("", "data-testid"):
-            return f'page.get_by_test_id("{_q(el.testid)}")'
-        return f"page.locator('[{el.testid_attr}=\"{_q(el.testid)}\"]')"
+            return f'{scope}get_by_test_id("{_q(el.testid)}")'
+        return f"{scope}locator('[{el.testid_attr}=\"{_q(el.testid)}\"]')"
     # 2 — role + accessible name
     role = _role_of(el)
     name = _accessible_name(el)
     if role in ("button", "link", "checkbox", "radio", "combobox") and name:
-        return f'page.get_by_role("{role}", name="{_q(name)}").first'
+        return f'{scope}get_by_role("{role}", name="{_q(name)}").first'
     # 3 — label
     if el.label:
-        return f'page.get_by_label("{_q(el.label)}").first'
+        return f'{scope}get_by_label("{_q(el.label)}").first'
     # 4 — placeholder
     if el.placeholder:
-        return f'page.get_by_placeholder("{_q(el.placeholder)}").first'
+        return f'{scope}get_by_placeholder("{_q(el.placeholder)}").first'
     # 5 — input name / type / autocomplete
     if el.tag in ("input", "textarea", "select"):
         if el.name:
-            return f"page.locator('{el.tag}[name=\"{_q(el.name)}\"]').first"
+            return f"{scope}locator('{el.tag}[name=\"{_q(el.name)}\"]').first"
         if el.autocomplete:
-            return f"page.locator('{el.tag}[autocomplete=\"{_q(el.autocomplete)}\"]').first"
+            return f"{scope}locator('{el.tag}[autocomplete=\"{_q(el.autocomplete)}\"]').first"
         if el.input_type:
-            return f"page.locator('input[type=\"{_q(el.input_type)}\"]').first"
+            return f"{scope}locator('input[type=\"{_q(el.input_type)}\"]').first"
     # 6 — visible text (buttons / links)
     if el.text.strip():
         if role:
-            return f'page.get_by_role("{role}", name="{_q(el.text.strip())}").first'
-        return f'page.get_by_text("{_q(el.text.strip())}", exact=False).first'
+            return f'{scope}get_by_role("{role}", name="{_q(el.text.strip())}").first'
+        return f'{scope}get_by_text("{_q(el.text.strip())}", exact=False).first'
     # 5b — dom id (stable-ish, before raw css)
     if el.dom_id:
-        return f'page.locator("#{_q(el.dom_id)}")'
+        return f'{scope}locator("#{_q(el.dom_id)}")'
     # 7 — stable CSS path
     if el.css:
-        return f'page.locator("{_q(el.css)}").first'
+        return f'{scope}locator("{_q(el.css)}").first'
     # 8 — XPath as the absolute last resort
-    return f'page.locator("xpath=//{el.tag or "*"}").first'
+    return f'{scope}locator("xpath=//{el.tag or "*"}").first'
 
 
 def describe(el: ElementInfo) -> str:

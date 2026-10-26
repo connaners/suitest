@@ -11,6 +11,13 @@ target not ready) — those become ``success=false`` envelopes with ``errors``.
 
 from __future__ import annotations
 
+import json
+import os
+import re
+from contextlib import suppress
+from pathlib import Path
+from typing import Any
+
 from suitest_lifecycle.blackbox.mcp import BLACKBOX_TOOLS
 from suitest_lifecycle.config import Config, ConfigError, load_config
 from suitest_lifecycle.models import Mode
@@ -247,6 +254,498 @@ def whitebox_run_tests(config_path: str) -> dict[str, object]:
     return _run_result(run_lifecycle(cfg))  # type: ignore[arg-type]
 
 
+def edit_test_case_inputs(
+    config_path: str = "suitest.config.json",
+    case_id: str = "",
+    action: str = "get",
+    updates: list[dict[str, Any]] | None = None,
+    output_dir: str = "",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """Inspect or update input values, file upload paths, and variable bindings in a test case."""
+    out_dir = Path(output_dir).resolve() if output_dir else Path("suitest-output").resolve()
+    if config_path and not output_dir:
+        try:
+            cfg = load_config(config_path)
+            out_dir = cfg.output_dir
+        except Exception:
+            pass
+
+    paths = build_paths(out_dir, Mode.FRONTEND)
+    mode_dir = paths.mode_dir
+
+    if not case_id:
+        plan_path = paths.test_plan_json
+        cases_summary: list[dict[str, Any]] = []
+        if plan_path.is_file():
+            try:
+                plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                for c in plan:
+                    cases_summary.append(
+                        {
+                            "id": c.get("id"),
+                            "title": c.get("title"),
+                            "file": c.get("automationFile", ""),
+                            "stepCount": len(c.get("steps", [])),
+                        }
+                    )
+            except Exception:
+                pass
+        if not cases_summary and mode_dir.is_dir():
+            for f in sorted(mode_dir.glob("TC*.py")):
+                cases_summary.append({"id": f.stem.split("_")[0], "title": f.stem, "file": f.name})
+        return _envelope(
+            True,
+            f"found {len(cases_summary)} test case(s)",
+            data={"cases": cases_summary},
+        )
+
+    target_file: Path | None = None
+    if mode_dir.is_dir():
+        candidates = sorted(mode_dir.glob(f"{case_id}_*.py")) or sorted(
+            mode_dir.glob(f"{case_id}.py")
+        )
+        for candidate in candidates:
+            target_file = candidate
+            break
+        if target_file is None:
+            for candidate in sorted(mode_dir.glob("*.py")):
+                if case_id.lower() in candidate.name.lower():
+                    target_file = candidate
+                    break
+
+    if target_file is None or not target_file.is_file():
+        return _envelope(
+            False,
+            f"test case file for '{case_id}' not found in {mode_dir}",
+            errors=[f"file matching {case_id}*.py does not exist"],
+        )
+
+    source = target_file.read_text(encoding="utf-8")
+
+    fill_re = re.compile(r"await\s+(.+?)\.fill\((.*?)\)")
+    select_re = re.compile(r"await\s+(.+?)\.select_option\((.*?)\)")
+    upload_re = re.compile(r"await\s+(.+?)\.set_input_files\((.*?)\)")
+    upload_files_var_re = re.compile(r'upload_files\s*=\s*(\[.*?\]|["\'].*?["\'])')
+
+    discovered_inputs: list[dict[str, Any]] = []
+    matches: list[tuple[int, dict[str, Any]]] = []
+
+    for m in fill_re.finditer(source):
+        loc = m.group(1).strip()
+        raw_val = m.group(2).strip()
+        val = (
+            raw_val[1:-1]
+            if raw_val.startswith(('"', "'")) and raw_val.endswith(('"', "'"))
+            else raw_val
+        )
+        input_type = (
+            "password" if "password" in loc.lower() or "password" in val.lower() else "text"
+        )
+        if "captcha" in loc.lower() or "captcha" in val.lower():
+            input_type = "solve_captcha"
+        matches.append(
+            (
+                m.start(),
+                {
+                    "type": input_type,
+                    "selector": loc,
+                    "current_value": val,
+                    "is_multiple": False,
+                    "is_variable": val.startswith("{{") and val.endswith("}}"),
+                },
+            )
+        )
+
+    for m in select_re.finditer(source):
+        loc = m.group(1).strip()
+        raw_val = m.group(2).strip()
+        val = (
+            raw_val[1:-1]
+            if raw_val.startswith(('"', "'")) and raw_val.endswith(('"', "'"))
+            else raw_val
+        )
+        matches.append(
+            (
+                m.start(),
+                {
+                    "type": "select",
+                    "selector": loc,
+                    "current_value": val,
+                    "is_multiple": False,
+                    "is_variable": val.startswith("{{") and val.endswith("}}"),
+                },
+            )
+        )
+
+    for m in upload_re.finditer(source):
+        loc = m.group(1)
+        raw_val = m.group(2).strip()
+        val_parsed: Any = raw_val
+        is_mult = False
+        if raw_val.startswith("[") and raw_val.endswith("]"):
+            is_mult = True
+            try:
+                val_parsed = json.loads(raw_val.replace("'", '"'))
+            except Exception:
+                val_parsed = raw_val
+        elif raw_val in ("upload_files",):
+            v_match = upload_files_var_re.search(source)
+            if v_match:
+                v_raw = v_match.group(1).strip()
+                if v_raw.startswith("["):
+                    is_mult = True
+                try:
+                    val_parsed = json.loads(v_raw.replace("'", '"'))
+                except Exception:
+                    val_parsed = v_raw
+        elif raw_val.startswith(('"', "'")):
+            val_parsed = raw_val[1:-1]
+        matches.append(
+            (
+                m.start(),
+                {
+                    "type": "file_upload",
+                    "selector": loc,
+                    "current_value": val_parsed,
+                    "is_multiple": is_mult,
+                    "is_variable": isinstance(val_parsed, str)
+                    and val_parsed.startswith("{{")
+                    and val_parsed.endswith("}}"),
+                },
+            )
+        )
+
+    matches.sort(key=lambda x: x[0])
+    for idx, (_, item) in enumerate(matches):
+        item["step_order"] = idx + 1
+        discovered_inputs.append(item)
+
+    if action == "get" or not updates:
+        return _envelope(
+            True,
+            f"discovered {len(discovered_inputs)} input(s) in {target_file.name}",
+            data={
+                "case_id": case_id,
+                "file": str(target_file),
+                "inputs": discovered_inputs,
+            },
+            artifacts=[str(target_file)],
+        )
+
+    updated_count = 0
+    new_source = source
+    for upd in updates:
+        step_ord = upd.get("step_order")
+        target_input = None
+        if step_ord is not None and 1 <= int(step_ord) <= len(discovered_inputs):
+            target_input = discovered_inputs[int(step_ord) - 1]
+        elif upd.get("selector"):
+            target_input = next(
+                (inp for inp in discovered_inputs if str(upd["selector"]) in inp["selector"]),
+                None,
+            )
+
+        if not target_input:
+            continue
+
+        loc = target_input["selector"]
+        escaped_loc = re.escape(loc)
+
+        if "input_value" in upd and upd["input_value"] is not None:
+            new_val = str(upd["input_value"])
+            clean_val = new_val.replace("\\", "\\\\").replace('"', '\\"')
+            if target_input["type"] in ("text", "password", "solve_captcha"):
+                pattern = rf"await\s+{escaped_loc}\.fill\((.*?)\)"
+                replacement = f'await {loc}.fill("{clean_val}")'
+                new_source, n_sub = re.subn(pattern, replacement, new_source, count=1)
+                if n_sub > 0:
+                    updated_count += 1
+            elif target_input["type"] == "select":
+                pattern = rf"await\s+{escaped_loc}\.select_option\((.*?)\)"
+                replacement = f'await {loc}.select_option("{clean_val}")'
+                new_source, n_sub = re.subn(pattern, replacement, new_source, count=1)
+                if n_sub > 0:
+                    updated_count += 1
+
+        if "file_paths" in upd and upd["file_paths"] is not None:
+            new_files = upd["file_paths"]
+            if isinstance(new_files, list):
+                files_repr = json.dumps(new_files)
+            else:
+                files_repr = (
+                    json.dumps([str(new_files)])
+                    if target_input.get("is_multiple")
+                    else json.dumps(str(new_files))
+                )
+
+            if upload_files_var_re.search(new_source):
+                new_source, n_sub = upload_files_var_re.subn(
+                    f"upload_files = {files_repr}", new_source, count=1
+                )
+                if n_sub > 0:
+                    updated_count += 1
+            else:
+                pattern = rf"await\s+{escaped_loc}\.set_input_files\((.*?)\)"
+                replacement = f"await {loc}.set_input_files({files_repr})"
+                new_source, n_sub = re.subn(pattern, replacement, new_source, count=1)
+                if n_sub > 0:
+                    updated_count += 1
+
+    if updated_count > 0:
+        target_file.write_text(new_source, encoding="utf-8")
+        api_url = os.environ.get("SUITEST_API_URL")
+        api_key = os.environ.get("SUITEST_API_KEY")
+        if api_url and api_key:
+            with suppress(Exception):
+                from suitest_lifecycle.blackbox.mcp import extract_steps_from_automation_code
+                from suitest_lifecycle.http_client import SuitestClient
+
+                with SuitestClient(api_url, token=api_key) as client:
+                    api_steps = extract_steps_from_automation_code(new_source)
+                    client.patch(f"/api/v1/test-cases/{case_id}/steps", json={"steps": api_steps})
+
+    return _envelope(
+        True,
+        f"updated {updated_count} input(s) in {target_file.name}",
+        data={
+            "case_id": case_id,
+            "file": str(target_file),
+            "updated_count": updated_count,
+        },
+        artifacts=[str(target_file)],
+    )
+
+
+def manage_test_case_dataset(
+    config_path: str = "suitest.config.json",
+    case_id: str = "",
+    action: str = "get",
+    schema: list[str] | None = None,
+    rows: list[dict[str, Any]] | None = None,
+    old_column: str = "",
+    new_column: str = "",
+    output_dir: str = "",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """Inspect or update Data-Driven Testing (DDT) dataset scenario matrices on a test case."""
+    out_dir = Path(output_dir).resolve() if output_dir else Path("suitest-output").resolve()
+    if config_path and not output_dir:
+        try:
+            cfg = load_config(config_path)
+            out_dir = cfg.output_dir
+        except Exception:
+            pass
+
+    paths = build_paths(out_dir, Mode.FRONTEND)
+    mode_dir = paths.mode_dir
+
+    if not case_id:
+        return _envelope(False, "case_id is required", errors=["missing case_id"])
+
+    sidecar_path = mode_dir / f"{case_id}.dataset.json"
+    current_data: dict[str, Any] = {"schema": [], "rows": []}
+    if sidecar_path.is_file():
+        with suppress(Exception):
+            current_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
+
+    from suitest_lifecycle.http_client import SuitestClient
+
+    api_url = os.environ.get("SUITEST_API_URL")
+    api_key = os.environ.get("SUITEST_API_KEY")
+
+    if action == "get":
+        if (
+            not current_data.get("schema")
+            and api_url
+            and api_key
+            and (case_id.startswith("tc_") or len(case_id) >= 20)
+        ):
+            try:
+                with SuitestClient(api_url, token=api_key) as client:
+                    case_res = client.get(f"/api/v1/test-cases/{case_id}")
+                    current_data = {
+                        "schema": case_res.get("dataset_schema")
+                        or case_res.get("datasetSchema")
+                        or [],
+                        "rows": case_res.get("dataset_rows") or case_res.get("datasetRows") or [],
+                    }
+            except Exception:
+                pass
+        return _envelope(
+            True,
+            f"dataset for {case_id}: {len(current_data.get('schema', []))} columns, {len(current_data.get('rows', []))} rows",
+            data={
+                "case_id": case_id,
+                "dataset_schema": current_data.get("schema", []),
+                "dataset_rows": current_data.get("rows", []),
+            },
+            artifacts=[str(sidecar_path)] if sidecar_path.is_file() else [],
+        )
+
+    if action == "rename_column":
+        old_col = old_column.strip()
+        new_col = new_column.strip()
+        if not old_col or not new_col:
+            return _envelope(False, "old_column and new_column are required for rename_column")
+        cols = list(current_data.get("schema", []))
+        if old_col not in cols:
+            return _envelope(False, f"column '{old_col}' does not exist in dataset schema")
+        if new_col in cols and new_col != old_col:
+            return _envelope(False, f"column '{new_col}' already exists in dataset schema")
+
+        new_cols = [new_col if c == old_col else c for c in cols]
+        new_rows = []
+        for r in current_data.get("rows", []):
+            vals = dict(r.get("values", {}))
+            if old_col in vals:
+                vals[new_col] = vals.pop(old_col)
+            row_copy = dict(r)
+            row_copy["values"] = vals
+            new_rows.append(row_copy)
+
+        current_data = {"schema": new_cols, "rows": new_rows}
+        mode_dir.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(json.dumps(current_data, indent=2), encoding="utf-8")
+
+        if api_url and api_key and (case_id.startswith("tc_") or len(case_id) >= 20):
+            try:
+                with SuitestClient(api_url, token=api_key) as client:
+                    client.patch(
+                        f"/api/v1/test-cases/{case_id}",
+                        json={"dataset_schema": new_cols, "dataset_rows": new_rows},
+                    )
+            except Exception:
+                pass
+
+        return _envelope(
+            True,
+            f"renamed column '{old_col}' to '{new_col}' in {case_id} dataset",
+            data={
+                "case_id": case_id,
+                "dataset_schema": new_cols,
+                "dataset_rows": new_rows,
+            },
+            artifacts=[str(sidecar_path)],
+        )
+
+    if action == "set":
+        cols = list(schema) if schema is not None else current_data.get("schema", [])
+        matrix_rows = list(rows) if rows is not None else current_data.get("rows", [])
+        current_data = {"schema": cols, "rows": matrix_rows}
+        mode_dir.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(json.dumps(current_data, indent=2), encoding="utf-8")
+
+        if api_url and api_key and (case_id.startswith("tc_") or len(case_id) >= 20):
+            try:
+                with SuitestClient(api_url, token=api_key) as client:
+                    client.patch(
+                        f"/api/v1/test-cases/{case_id}",
+                        json={"dataset_schema": cols, "dataset_rows": matrix_rows},
+                    )
+            except Exception:
+                pass
+
+        return _envelope(
+            True,
+            f"saved dataset for {case_id}: {len(cols)} columns, {len(matrix_rows)} scenario rows",
+            data={
+                "case_id": case_id,
+                "dataset_schema": cols,
+                "dataset_rows": matrix_rows,
+            },
+            artifacts=[str(sidecar_path)],
+        )
+
+    return _envelope(False, f"unknown action: {action}")
+
+
+def get_workspace_variables(
+    workspace_id: str = "",
+    config_path: str = "suitest.config.json",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """Retrieve workspace variables for parameterization and DDT."""
+    from suitest_lifecycle.http_client import SuitestClient
+
+    api_url = os.environ.get("SUITEST_API_URL")
+    api_key = os.environ.get("SUITEST_API_KEY")
+    if not api_url or not api_key:
+        return _envelope(False, "SUITEST_API_URL / SUITEST_API_KEY required")
+    try:
+        with SuitestClient(api_url, token=api_key) as client:
+            ws_id = workspace_id or client.workspace_id
+            if not ws_id:
+                with suppress(Exception):
+                    whoami = client.get("/api/v1/api-keys/whoami")
+                    if isinstance(whoami, dict) and whoami.get("workspace_id"):
+                        ws_id = str(whoami["workspace_id"])
+            ws_id = ws_id or "default"
+            vars_res = client.get(f"/api/v1/workspaces/{ws_id}/variables")
+            items = vars_res.get("items", []) if isinstance(vars_res, dict) else vars_res
+            return _envelope(
+                True, f"retrieved {len(items)} workspace variable(s)", data={"variables": items}
+            )
+    except Exception as exc:
+        return _envelope(False, f"failed to fetch workspace variables: {exc}", errors=[str(exc)])
+
+
+def set_workspace_variable(
+    key: str = "",
+    value: str = "",
+    is_secret: bool = False,
+    description: str = "",
+    workspace_id: str = "",
+    config_path: str = "suitest.config.json",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """Create or update a workspace variable via API (with AES-GCM encryption for secrets)."""
+    from suitest_lifecycle.http_client import SuitestClient
+
+    api_url = os.environ.get("SUITEST_API_URL")
+    api_key = os.environ.get("SUITEST_API_KEY")
+    if not api_url or not api_key:
+        return _envelope(False, "SUITEST_API_URL / SUITEST_API_KEY required")
+    trimmed_key = key.strip()
+    if not trimmed_key:
+        return _envelope(False, "variable key is required")
+    try:
+        with SuitestClient(api_url, token=api_key) as client:
+            ws_id = workspace_id or client.workspace_id
+            if not ws_id:
+                with suppress(Exception):
+                    whoami = client.get("/api/v1/api-keys/whoami")
+                    if isinstance(whoami, dict) and whoami.get("workspace_id"):
+                        ws_id = str(whoami["workspace_id"])
+            ws_id = ws_id or "default"
+            payload = {
+                "key": trimmed_key,
+                "value": value,
+                "is_secret": is_secret,
+                "description": description,
+            }
+            # Check if variable already exists to update via PATCH
+            existing_var = None
+            with suppress(Exception):
+                existing_res = client.get(f"/api/v1/workspaces/{ws_id}/variables")
+                items = (
+                    existing_res.get("items", [])
+                    if isinstance(existing_res, dict)
+                    else existing_res
+                )
+                if isinstance(items, list):
+                    existing_var = next((v for v in items if v.get("key") == trimmed_key), None)
+            if existing_var and isinstance(existing_var, dict) and existing_var.get("id"):
+                res = client.patch(
+                    f"/api/v1/workspaces/{ws_id}/variables/{existing_var['id']}", json=payload
+                )
+            else:
+                res = client.post(f"/api/v1/workspaces/{ws_id}/variables", json=payload)
+            return _envelope(True, f"saved variable '{trimmed_key}'", data=res)
+    except Exception as exc:
+        return _envelope(False, f"failed to save variable: {exc}", errors=[str(exc)])
+
+
 # Tool registry (name -> callable) used by the MCP server.
 TOOLS = {
     "analyze_project": analyze_project,
@@ -261,11 +760,22 @@ TOOLS = {
     "get_failure_context": get_failure_context,
     "whitebox_discover_tests": whitebox_discover_tests,
     "whitebox_run_tests": whitebox_run_tests,
+    "edit_test_case_inputs": edit_test_case_inputs,
+    "manage_test_case_dataset": manage_test_case_dataset,
+    "get_workspace_variables": get_workspace_variables,
+    "set_workspace_variable": set_workspace_variable,
     **BLACKBOX_TOOLS,
 }
 
-# Blackbox tools take structured kwargs (url/username/…), not just config_path.
-KWARG_TOOLS = frozenset(BLACKBOX_TOOLS)
-
+# Tools that take structured kwargs (url/username/case_id/…), not just config_path.
+KWARG_TOOLS = frozenset(
+    {
+        *BLACKBOX_TOOLS,
+        "edit_test_case_inputs",
+        "manage_test_case_dataset",
+        "get_workspace_variables",
+        "set_workspace_variable",
+    }
+)
 
 __all__ = ["KWARG_TOOLS", "TOOLS", *TOOLS.keys()]

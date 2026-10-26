@@ -78,6 +78,10 @@ _TOOL_DESCRIPTIONS = {
     "blackbox_collect_evidence": "Blackbox: index all evidence (screenshots, videos, traces, report JSONs).",
     "blackbox_publish_results": "Publish the blackbox suite + latest run (video/screenshot evidence) into the Suitest web TCM. Needs project_id (or publish.projectId in config).",
     "blackbox_summarize_findings": "Blackbox: one JSON summary — route map, bug candidates, test outcomes — for agent reasoning.",
+    "edit_test_case_inputs": "Inspect or update test case step input values, multiple file upload paths, and {{variable}} bindings programmatically.",
+    "manage_test_case_dataset": "Inspect, define, or rename columns/rows of Data-Driven Testing (DDT) scenario matrices on a test case.",
+    "get_workspace_variables": "List available workspace and suite variables for parameterization (secrets masked).",
+    "set_workspace_variable": "Create or update a workspace variable with optional AES-GCM secret encryption.",
 }
 
 
@@ -125,7 +129,169 @@ _BLACKBOX_INPUT_SCHEMA: dict[str, object] = {
 }
 
 
+_EDIT_INPUTS_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "config_path": {
+            "type": "string",
+            "description": "Path to suitest.config.json",
+            "default": "suitest.config.json",
+        },
+        "case_id": {
+            "type": "string",
+            "description": "Test case ID (e.g. TC001, title, or filename) to inspect or modify",
+        },
+        "action": {
+            "type": "string",
+            "description": "'get' to inspect inputs, 'update' to modify input values or file paths",
+            "enum": ["get", "update"],
+            "default": "get",
+        },
+        "updates": {
+            "type": "array",
+            "description": "List of update directives when action='update'",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "step_order": {
+                        "type": "integer",
+                        "description": "1-based step index to modify",
+                    },
+                    "selector": {
+                        "type": "string",
+                        "description": "Target element selector if matching by locator",
+                    },
+                    "input_value": {
+                        "type": "string",
+                        "description": "New text value or {{variable}} binding",
+                    },
+                    "file_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of local file paths for file upload steps",
+                    },
+                },
+            },
+        },
+    },
+    "required": [],
+}
+
+
+_DATASET_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "config_path": {
+            "type": "string",
+            "description": "Path to suitest.config.json",
+            "default": "suitest.config.json",
+        },
+        "case_id": {
+            "type": "string",
+            "description": "Test case ID (e.g. TC001 or case public ID)",
+        },
+        "action": {
+            "type": "string",
+            "description": "'get', 'set', or 'rename_column'",
+            "enum": ["get", "set", "rename_column"],
+            "default": "get",
+        },
+        "schema": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of variable column names",
+        },
+        "rows": {
+            "type": "array",
+            "description": "List of scenario row objects with values dict",
+        },
+        "old_column": {
+            "type": "string",
+            "description": "Current column name when renaming",
+        },
+        "new_column": {
+            "type": "string",
+            "description": "New column name when renaming",
+        },
+    },
+    "required": [],
+}
+
+
+_GET_VARS_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "workspace_id": {
+            "type": "string",
+            "description": "Target workspace ID (defaults to current)",
+        },
+        "config_path": {
+            "type": "string",
+            "description": "Path to suitest.config.json",
+        },
+    },
+    "required": [],
+}
+
+
+_SET_VAR_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "key": {
+            "type": "string",
+            "description": "Variable key (e.g. admin_password or api_url)",
+        },
+        "value": {
+            "type": "string",
+            "description": "Plaintext or secret value to store",
+        },
+        "is_secret": {
+            "type": "boolean",
+            "description": "True to encrypt with AES-GCM and mask in UI",
+            "default": False,
+        },
+        "description": {
+            "type": "string",
+            "description": "Optional human description",
+        },
+        "workspace_id": {
+            "type": "string",
+            "description": "Target workspace ID (defaults to current)",
+        },
+        "config_path": {
+            "type": "string",
+            "description": "Path to suitest.config.json",
+        },
+    },
+    "required": ["key", "value"],
+}
+
+
 def _tool_schema(name: str) -> dict[str, object]:
+    if name == "edit_test_case_inputs":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _EDIT_INPUTS_SCHEMA,
+        }
+    if name == "manage_test_case_dataset":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _DATASET_SCHEMA,
+        }
+    if name == "get_workspace_variables":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _GET_VARS_SCHEMA,
+        }
+    if name == "set_workspace_variable":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _SET_VAR_SCHEMA,
+        }
     if name in KWARG_TOOLS:
         return {
             "name": name,

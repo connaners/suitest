@@ -43,6 +43,7 @@ import type { DraftStep } from "@/components/cases/StepEditor";
 import {
   detectInputSteps,
   applyStepInputUpdate,
+  deriveSemanticVarName,
   type DetectedInputType,
 } from "@/lib/step-input-detector";
 import { cn } from "@/lib/utils";
@@ -92,6 +93,8 @@ function getTypeBadge(type: DetectedInputType) {
       return { label: "Select", color: "bg-amber-500/10 text-amber-400 border-amber-500/20" };
     case "url":
       return { label: "URL", color: "bg-sky-500/10 text-sky-400 border-sky-500/20" };
+    case "captcha":
+      return { label: "CAPTCHA", color: "bg-purple-500/10 text-purple-400 border-purple-500/20" };
     default:
       return { label: "Text Input", color: "bg-fg-4/10 text-fg-3 border-border" };
   }
@@ -554,15 +557,40 @@ export function QuickEditInputsDialog({
     setIsSaving(true);
 
     try {
-      // 1. Apply each input step update to workingSteps
+      // 1. Prepare steps & DDT dataset
       let updatedList = [...workingSteps];
-      for (const inputItem of detectedInputs) {
-        const newVal = editedValues[inputItem.stepId] ?? inputItem.currentValue;
-        const newFiles = editedFiles[inputItem.stepId];
-        const stepIdx = updatedList.findIndex((s) => s.id === inputItem.stepId);
-        const targetStep = updatedList[stepIdx];
-        if (stepIdx !== -1 && targetStep) {
-          updatedList[stepIdx] = applyStepInputUpdate(targetStep, newVal, newFiles);
+      const rowValues: Record<string, string> = {};
+      const schemaCols = new Set<string>();
+      const existingSchema = caseData?.dataset_schema || caseData?.datasetSchema || [];
+      const existingRows = parsedDatasetRows;
+
+      if (saveAsDdtRow) {
+        detectedInputs.forEach((inputItem) => {
+          const rawVal = editedValues[inputItem.stepId] ?? inputItem.currentValue;
+          let varKey = deriveSemanticVarName(
+            { ...inputItem, currentValue: rawVal },
+            Array.from(new Set([...existingSchema, ...schemaCols]))
+          );
+          if (schemaCols.has(varKey)) {
+            varKey = `${varKey}_step_${inputItem.order}`;
+          }
+          schemaCols.add(varKey);
+          rowValues[varKey] = rawVal;
+
+          const stepIdx = updatedList.findIndex((s) => s.id === inputItem.stepId);
+          if (stepIdx !== -1 && updatedList[stepIdx]) {
+            const tag = `{{${varKey}}}`;
+            updatedList[stepIdx] = applyStepInputUpdate(updatedList[stepIdx]!, tag);
+          }
+        });
+      } else {
+        for (const inputItem of detectedInputs) {
+          const newVal = editedValues[inputItem.stepId] ?? inputItem.currentValue;
+          const newFiles = editedFiles[inputItem.stepId];
+          const stepIdx = updatedList.findIndex((s) => s.id === inputItem.stepId);
+          if (stepIdx !== -1 && updatedList[stepIdx]) {
+            updatedList[stepIdx] = applyStepInputUpdate(updatedList[stepIdx]!, newVal, newFiles);
+          }
         }
       }
 
@@ -582,30 +610,6 @@ export function QuickEditInputsDialog({
 
       // 3. Persist dataset row selection or save new DDT scenario
       if (saveAsDdtRow) {
-        const rowValues: Record<string, string> = {};
-        const schemaCols = new Set<string>();
-
-        detectedInputs.forEach((item) => {
-          const val = editedValues[item.stepId] ?? item.currentValue;
-          // Variable or sanitize selector for column key
-          let colKey = `step_${item.order}_input`;
-          const varMatch = val.match(/^\{\{([a-zA-Z0-9_.-]+)\}\}$/);
-          if (varMatch && varMatch[1]) {
-            colKey = varMatch[1];
-          } else if (item.selector && item.selector !== "URL") {
-            const cleanSelector = item.selector
-              .replace(/[^a-zA-Z0-9_]/g, "_")
-              .replace(/^_+|_+$/g, "")
-              .slice(0, 20);
-            if (cleanSelector) colKey = cleanSelector;
-          }
-          schemaCols.add(colKey);
-          rowValues[colKey] = val;
-        });
-
-        const existingSchema = caseData?.dataset_schema || caseData?.datasetSchema || [];
-        const existingRows = parsedDatasetRows;
-
         const updatedSchema = Array.from(new Set([...existingSchema, ...schemaCols]));
         const updatedExisting = existingRows.map((r) => ({
           ...r,
@@ -998,7 +1002,7 @@ export function QuickEditInputsDialog({
               </div>
 
               {saveAsDdtRow ? (
-                <div className="pl-6 space-y-1.5">
+                <div className="pl-6 space-y-2">
                   <Input
                     data-testid="ddt-row-name-input"
                     placeholder="Scenario Name (e.g. Invalid Login, Test User #2)"
@@ -1006,9 +1010,38 @@ export function QuickEditInputsDialog({
                     onChange={(e) => setDdtRowName(e.target.value)}
                     className="h-7 text-xs bg-bg-elev-2 border-border"
                   />
+                  <div className="rounded border border-border/60 bg-bg-elev-2/40 p-2 space-y-1">
+                    <p className="text-[10.5px] font-medium text-fg-3">
+                      Semantic variable columns to bind:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      {(() => {
+                        const previewCols = new Set<string>();
+                        const baseSchema = caseData?.dataset_schema || caseData?.datasetSchema || [];
+                        return detectedInputs.map((item) => {
+                          const currentVal = editedValues[item.stepId] ?? item.currentValue;
+                          let varKey = deriveSemanticVarName(
+                            { ...item, currentValue: currentVal },
+                            Array.from(new Set([...baseSchema, ...previewCols]))
+                          );
+                          if (previewCols.has(varKey)) {
+                            varKey = `${varKey}_step_${item.order}`;
+                          }
+                          previewCols.add(varKey);
+                          return (
+                            <span
+                              key={item.stepId}
+                              className="inline-flex items-center gap-1 rounded bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[10.5px] font-mono text-purple-300"
+                            >
+                              {item.label}: <strong className="text-accent">{`{{${varKey}}}`}</strong>
+                            </span>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
                   <p className="text-[11px] text-fg-4">
-                    Will add a new row in the <strong>Test Data</strong> tab for Data-Driven Testing
-                    runs.
+                    Will add a new row in the <strong>Test Data</strong> tab and bind steps to these clean variables.
                   </p>
                 </div>
               ) : null}

@@ -107,3 +107,28 @@ def test_handle_unknown_method_still_errors() -> None:
     resp = mcp_server.handle({"jsonrpc": "2.0", "id": 9, "method": "does/not/exist"})
     assert resp is not None
     assert resp["error"]["code"] == -32601
+
+
+def test_tool_schema_distinguishes_kwarg_and_config_tools() -> None:
+    """Verify non-kwarg tools have required config_path and kwarg tools have custom schemas."""
+    resp = mcp_server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert resp is not None
+    tools = {t["name"]: t for t in resp["result"]["tools"]}  # type: ignore[index]
+
+    # Non-kwarg tools require config_path
+    run_schema = tools["run_tests"]["inputSchema"]
+    assert run_schema["required"] == ["config_path"]
+    assert "config_path" in run_schema["properties"]
+
+    analyze_schema = tools["analyze_project"]["inputSchema"]
+    assert analyze_schema["required"] == ["config_path"]
+
+    # Kwarg tools do not have required config_path
+    discover_schema = tools["blackbox_discover_app"]["inputSchema"]
+    assert "url" in discover_schema["properties"]
+    assert discover_schema["required"] == []
+
+    # Dedicated schemas
+    dataset_schema = tools["manage_test_case_dataset"]["inputSchema"]
+    assert "schema" in dataset_schema["properties"]
+    assert "old_column" in dataset_schema["properties"]
