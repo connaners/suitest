@@ -274,6 +274,57 @@ def extract_steps_from_automation_code(
     return extracted
 
 
+def _parameterize_single_step(
+    st: dict[str, object],
+    schema: list[str],
+    row_values: dict[str, str],
+) -> dict[str, object]:
+    st_copy = dict(st)
+    code_str = str(st.get("code") or "")
+    if not code_str:
+        return st_copy
+
+    parsed: dict[str, Any] | None = None
+    with suppress(json.JSONDecodeError, TypeError, ValueError):
+        loaded = json.loads(code_str)
+        if isinstance(loaded, dict):
+            parsed = loaded
+
+    if parsed is not None:
+        step_tool_name = str(parsed.get("tool") or "").lower()
+        step_payload_args = parsed.get("arguments")
+        if isinstance(step_payload_args, dict) and step_tool_name in (
+            "browser_type",
+            "browser.type",
+        ):
+            raw_text = str(step_payload_args.get("text", ""))
+            target = str(
+                step_payload_args.get("target") or step_payload_args.get("selector") or ""
+            ).lower()
+            act = str(st.get("action") or "").lower()
+
+            var_name = ""
+            if "user" in target or "user" in act:
+                var_name = "username"
+            elif "pass" in target or "pass" in act:
+                var_name = "password"
+            elif "email" in target or "email" in act:
+                var_name = "email"
+
+            if (
+                var_name
+                and raw_text
+                and not (raw_text.startswith("{{") and raw_text.endswith("}}"))
+            ):
+                if var_name not in schema:
+                    schema.append(var_name)
+                row_values[var_name] = raw_text
+                step_payload_args["text"] = f"{{{{{var_name}}}}}"
+                parsed["arguments"] = step_payload_args
+                st_copy["code"] = json.dumps(parsed)
+    return st_copy
+
+
 def build_default_dataset_from_steps(
     steps: list[dict[str, object]],
 ) -> tuple[list[dict[str, object]], list[str], list[dict[str, Any]]]:
@@ -282,49 +333,7 @@ def build_default_dataset_from_steps(
     row_values: dict[str, str] = {}
     parameterized_steps: list[dict[str, object]] = []
 
-    for st in steps:
-        st_copy = dict(st)
-        code_str = str(st.get("code") or "")
-        if code_str:
-            parsed: dict[str, Any] | None = None
-            with suppress(json.JSONDecodeError, TypeError, ValueError):
-                loaded = json.loads(code_str)
-                if isinstance(loaded, dict):
-                    parsed = loaded
-
-            if parsed is not None:
-                step_tool_name = str(parsed.get("tool") or "").lower()
-                step_payload_args = parsed.get("arguments")
-                if isinstance(step_payload_args, dict) and step_tool_name in (
-                    "browser_type",
-                    "browser.type",
-                ):
-                    raw_text = str(step_payload_args.get("text", ""))
-                    target = str(
-                        step_payload_args.get("target") or step_payload_args.get("selector") or ""
-                    ).lower()
-                    act = str(st.get("action") or "").lower()
-
-                    var_name = ""
-                    if "user" in target or "user" in act:
-                        var_name = "username"
-                    elif "pass" in target or "pass" in act:
-                        var_name = "password"
-                    elif "email" in target or "email" in act:
-                        var_name = "email"
-
-                    if (
-                        var_name
-                        and raw_text
-                        and not (raw_text.startswith("{{") and raw_text.endswith("}}"))
-                    ):
-                        if var_name not in schema:
-                            schema.append(var_name)
-                        row_values[var_name] = raw_text
-                        step_payload_args["text"] = f"{{{{{var_name}}}}}"
-                        parsed["arguments"] = step_payload_args
-                        st_copy["code"] = json.dumps(parsed)
-        parameterized_steps.append(st_copy)
+    parameterized_steps = [_parameterize_single_step(st, schema, row_values) for st in steps]
 
     rows: list[dict[str, Any]] = []
     if schema:
@@ -766,6 +775,40 @@ def bootstrap_project(**kwargs: Any) -> dict[str, Any]:
 _PRIO_TO_P = {"High": "P1", "Medium": "P2", "Low": "P3"}
 
 
+def _build_published_case_payload(
+    c: dict[str, Any],
+    paths: Paths,
+    target_url: str,
+) -> dict[str, Any]:
+    code = ""
+    if c.get("automation_file"):
+        fp = paths.test_file(str(c["automation_file"]))
+        if fp.is_file():
+            code = fp.read_text(encoding="utf-8")
+    steps_extracted = extract_steps_from_automation_code(
+        code,
+        target_url=target_url,
+        fallback_steps=c.get("steps", []),
+    )
+    param_steps, ddt_cols, ddt_rows = build_default_dataset_from_steps(steps_extracted)
+    return {
+        "sourceRef": c.get("source_ref", "bb:blackbox"),
+        "name": c["title"],
+        "slug": c["title"],
+        "description": c.get("description", ""),
+        "source": "MCP",
+        "priority": _PRIO_TO_P.get(str(c.get("priority")), "P2"),
+        "category": c.get("category", "Blackbox"),
+        "tags": ["blackbox"],
+        "automationFilePath": c.get("automation_file", ""),
+        "automationCode": code,
+        "generatedBy": "suitest-blackbox",
+        "steps": param_steps,
+        "datasetSchema": ddt_cols if ddt_cols else None,
+        "datasetRows": ddt_rows if ddt_rows else None,
+    }
+
+
 def blackbox_publish_results(**kwargs: Any) -> dict[str, Any]:
     """Publish the blackbox suite + latest run (with video/screenshot evidence)
     to the Suitest server so it shows up in the web TCM (Cases + Runs).
@@ -904,36 +947,8 @@ def blackbox_publish_results(**kwargs: Any) -> dict[str, Any]:
 
             cases_payload: list[dict[str, Any]] = []
             results_payload: list[dict[str, Any]] = []
+            cases_payload = [_build_published_case_payload(c, paths, ui.target_url) for c in plan]
             for c in plan:
-                code = ""
-                if c.get("automation_file"):
-                    fp = paths.test_file(str(c["automation_file"]))
-                    if fp.is_file():
-                        code = fp.read_text(encoding="utf-8")
-                steps_extracted = extract_steps_from_automation_code(
-                    code,
-                    target_url=ui.target_url,
-                    fallback_steps=c.get("steps", []),
-                )
-                param_steps, ddt_cols, ddt_rows = build_default_dataset_from_steps(steps_extracted)
-                cases_payload.append(
-                    {
-                        "sourceRef": c.get("source_ref", "bb:blackbox"),
-                        "name": c["title"],
-                        "slug": c["title"],
-                        "description": c.get("description", ""),
-                        "source": "MCP",
-                        "priority": _PRIO_TO_P.get(str(c.get("priority")), "P2"),
-                        "category": c.get("category", "Blackbox"),
-                        "tags": ["blackbox"],
-                        "automationFilePath": c.get("automation_file", ""),
-                        "automationCode": code,
-                        "generatedBy": "suitest-blackbox",
-                        "steps": param_steps,
-                        "datasetSchema": ddt_cols if ddt_cols else None,
-                        "datasetRows": ddt_rows if ddt_rows else None,
-                    }
-                )
                 side = _sidecar(str(c["id"]))
                 if not side:
                     continue

@@ -2841,18 +2841,23 @@
     fillCaptchaValue(inputEl, safeText);
     updateCaptchaHud('Solved: "' + safeText + '"', "resolve", "check");
 
+    var safeSelector = sanitizeString(getSelector(imgEl), 256);
+    var safeInputSelector = sanitizeString(getSelector(inputEl), 256);
+    var safeRefreshTarget = options && options.refresh_target ? sanitizeString(options.refresh_target, 256) : undefined;
+    var safeUrl = sanitizeString(getCurrentVirtualUrl(), 1024);
+
     postEvent({
       kind: "solve_captcha",
       timestamp: new Date().toISOString(),
-      selector: getSelector(imgEl),
+      selector: safeSelector,
       data: {
-        input_selector: getSelector(inputEl),
-        captcha_type: (options && options.captcha_type) || "auto",
+        input_selector: safeInputSelector,
+        captcha_type: sanitizeString((options && options.captcha_type) || "auto", 32),
         force_uppercase: Boolean(options && options.force_uppercase),
         max_retries: 1,
-        ...(options && options.refresh_target ? { refresh_target: options.refresh_target } : {}),
+        ...(safeRefreshTarget ? { refresh_target: safeRefreshTarget } : {}),
       },
-      url: getCurrentVirtualUrl(),
+      url: safeUrl,
     });
   }
 
@@ -2891,7 +2896,8 @@
         var cleanClientText = clientRes.text.trim().slice(0, 32);
         if (/^[a-zA-Z0-9\s\+\-\*\/]+$/.test(cleanClientText)) {
           console.info("[Suitest Recorder] Solved CAPTCHA via in-browser fast OCR:", cleanClientText, clientRes.source);
-          applyLiveCaptchaResult(imgEl, inputEl, cleanClientText, solveState, options);
+          var validatedCleanText = sanitizeString(cleanClientText, 32);
+          applyLiveCaptchaResult(imgEl, inputEl, validatedCleanText, solveState, options);
           return;
         }
       }
@@ -2909,7 +2915,8 @@
         updateCaptchaHud("CAPTCHA unreadable", "solve", "warn");
         return;
       }
-      applyLiveCaptchaResult(imgEl, inputEl, solvedText, solveState, options);
+      var validatedSolvedText = sanitizeString(solvedText, 32);
+      applyLiveCaptchaResult(imgEl, inputEl, validatedSolvedText, solveState, options);
     } catch (err) {
       console.warn("[Suitest Recorder] Failed live captcha solve:", err);
       var msg = "CAPTCHA solve failed";
@@ -2931,9 +2938,9 @@
 
   function onCaptchaFieldEvent(e) {
     var inputEl = e.currentTarget;
-    if (!inputEl || inputEl._suitest_auto_filling || (inputEl.value && inputEl.value !== "")) return;
+    if (!inputEl || !(inputEl instanceof HTMLElement) || inputEl._suitest_auto_filling || (inputEl.value && inputEl.value !== "")) return;
     var img = findNearestCaptchaImage(inputEl);
-    if (img) {
+    if (img && img instanceof HTMLElement) {
       triggerLiveCaptchaSolve(img, inputEl);
     }
   }

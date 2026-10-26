@@ -210,8 +210,9 @@ async def _build_captcha_solver(session: object, *, workspace_id: str) -> Captch
             oauth_tokens_json=llm.oauth_tokens_encrypted,
             config=dict(llm.config_json or {}),
         )
-    if persist is not None:
-        await repo.update(llm.id, LLMConfigUpdate(oauth_tokens_encrypted=persist))
+    if persist is not None and isinstance(persist, str) and llm and llm.id:
+        clean_persist = str(persist).strip()
+        await repo.update(str(llm.id), LLMConfigUpdate(oauth_tokens_encrypted=clean_persist))
         await session.commit()
     provider = get_provider(
         credential.provider,

@@ -257,6 +257,25 @@ def whitebox_run_tests(config_path: str) -> dict[str, object]:
     return _run_result(run_lifecycle(cfg))  # type: ignore[arg-type]
 
 
+def _find_target_input(
+    upd: dict[str, Any],
+    discovered_inputs: list[dict[str, Any]],
+    inputs_by_sel: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    step_ord = upd.get("step_order")
+    if step_ord is not None and 1 <= int(step_ord) <= len(discovered_inputs):
+        return discovered_inputs[int(step_ord) - 1]
+    if upd.get("selector"):
+        sel_key = str(upd["selector"])
+        match = inputs_by_sel.get(sel_key)
+        if match is not None:
+            return match
+        for inp in discovered_inputs:
+            if sel_key in str(inp.get("selector", "")):
+                return inp
+    return None
+
+
 def edit_test_case_inputs(
     config_path: str = "suitest.config.json",
     case_id: str = "",
@@ -440,19 +459,7 @@ def edit_test_case_inputs(
     new_source = source
     inputs_by_sel = {str(inp.get("selector", "")): inp for inp in discovered_inputs}
     for upd in updates:
-        step_ord = upd.get("step_order")
-        target_input = None
-        if step_ord is not None and 1 <= int(step_ord) <= len(discovered_inputs):
-            target_input = discovered_inputs[int(step_ord) - 1]
-        elif upd.get("selector"):
-            sel_key = str(upd["selector"])
-            target_input = inputs_by_sel.get(sel_key)
-            if not target_input:
-                for inp in discovered_inputs:
-                    if sel_key in str(inp.get("selector", "")):
-                        target_input = inp
-                        break
-
+        target_input = _find_target_input(upd, discovered_inputs, inputs_by_sel)
         if not target_input:
             continue
 
