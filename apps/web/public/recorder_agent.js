@@ -30,6 +30,7 @@
   var rawApiBase =
     (scriptTag && scriptTag.getAttribute("data-api-url")) ||
     window.__SUITEST_API_URL__ ||
+    window.__SUITEST_API_BASE__ ||
     "/api/v1";
 
   // When <base href="..."> is present in target HTML, relative fetch URLs resolve to target domain.
@@ -93,6 +94,36 @@
     console.debug("[Suitest Recorder] Could not restore captured steps from sessionStorage:", e);
   }
 
+  var HUD_ICONS = {
+    scan: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>',
+    spin: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: suitest-spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>',
+    check: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>',
+    warn: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>',
+    refresh: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
+    x: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+  };
+
+  function mountSvgIcon(container, svgString, labelText) {
+    if (!container) return;
+    container.textContent = "";
+    if (svgString) {
+      try {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(svgString, "image/svg+xml");
+        if (doc && doc.documentElement && doc.documentElement.nodeName.toLowerCase() === "svg") {
+          container.appendChild(document.importNode(doc.documentElement, true));
+        }
+      } catch (e) {
+        console.debug("[Suitest Recorder] SVG parse error:", e);
+      }
+    }
+    if (labelText) {
+      var span = document.createElement("span");
+      span.textContent = labelText;
+      container.appendChild(span);
+    }
+  }
+
   var isStepsPanelOpen = true;
   try {
     var storedOpen = sessionStorage.getItem("__suitest_hud_steps_open__");
@@ -114,7 +145,57 @@
 
   var eventQueue = [];
   var isSending = false;
-  var lastHudInteractionTime = 0;
+  var activeObservers = [];
+  var activeTimers = new Set();
+
+  function safeSetTimeout(fn, delay) {
+    var timerId = setTimeout(function () {
+      activeTimers.delete(timerId);
+      try {
+        if (typeof document === "undefined" || !document) return;
+        fn();
+      } catch (e) {
+        // Guard against torn-down test environments or unexpected dom teardown
+      }
+    }, delay);
+    activeTimers.add(timerId);
+    return timerId;
+  }
+
+  function safeClearTimeout(timerId) {
+    if (timerId) {
+      activeTimers.delete(timerId);
+      clearTimeout(timerId);
+    }
+  }
+
+  function cleanupRecorder() {
+    for (var i = 0; i < activeObservers.length; i++) {
+      try {
+        activeObservers[i].disconnect();
+      } catch (e) {
+        console.debug("[Suitest Recorder] Error disconnecting observer during cleanup:", e);
+      }
+    }
+    activeObservers.length = 0;
+    if (typeof typingTimer !== "undefined" && typingTimer) {
+      safeClearTimeout(typingTimer);
+      typingTimer = null;
+    }
+    if (typeof pendingImageClickTimer !== "undefined" && pendingImageClickTimer) {
+      safeClearTimeout(pendingImageClickTimer);
+      pendingImageClickTimer = null;
+    }
+    activeTimers.forEach(function (t) {
+      try {
+        clearTimeout(t);
+      } catch (e) {
+        console.debug("[Suitest Recorder] Error clearing timer during cleanup:", e);
+      }
+    });
+    activeTimers.clear();
+  }
+  window.__suitest_recorder_cleanup__ = cleanupRecorder;
 
   function getCurrentVirtualUrl() {
     return window.location.href;
@@ -206,7 +287,10 @@
 
   // 2. Resilient Selector Engine
   function getSelector(el) {
-    if (!el || el === document.body || el === document.documentElement) {
+    var doc = typeof document !== "undefined" ? document : null;
+    var docBody = doc ? doc.body : null;
+    var docEl = doc ? doc.documentElement : null;
+    if (!el || el === docBody || el === docEl) {
       return "body";
     }
 
@@ -233,7 +317,7 @@
       return `#${CSS.escape(el.id)}`;
     }
 
-    var tag = el.tagName.toLowerCase();
+    var tag = el.tagName ? el.tagName.toLowerCase() : "unknown";
 
     // Priority 3: Links with clean href (super stable for menus/submenus)
     if (tag === "a") {
@@ -245,7 +329,7 @@
         !rawHref.startsWith("data:")
       ) {
         var hrefSel = `a[href="${rawHref.replace(/"/g, '\\"')}"]`;
-        if (document.querySelectorAll(hrefSel).length === 1) {
+        if (doc && doc.querySelectorAll(hrefSel).length === 1) {
           return hrefSel;
         }
       }
@@ -291,7 +375,7 @@
       var roleText = getCleanElementText(el);
       if (roleText && roleText.length > 0 && roleText.length <= 40) {
         var roleSel = `[role="${role}"]:has-text("${roleText.replace(/"/g, '\\"')}")`;
-        if (document.querySelectorAll(roleSel).length === 1) {
+        if (doc && doc.querySelectorAll(roleSel).length === 1) {
           return roleSel;
         }
       }
@@ -302,7 +386,7 @@
       var liText = getCleanElementText(el);
       if (liText && liText.length > 0 && liText.length <= 40) {
         var liSel = `li:has-text("${liText.replace(/"/g, '\\"')}")`;
-        if (document.querySelectorAll(liSel).length === 1) {
+        if (doc && doc.querySelectorAll(liSel).length === 1) {
           return liSel;
         }
       }
@@ -313,7 +397,7 @@
       var cleanText = getCleanElementText(el);
       if (cleanText.length > 0 && cleanText.length <= 35) {
         var textSel = `${tag}:has-text("${cleanText.replace(/"/g, '\\"')}")`;
-        if (document.querySelectorAll(textSel).length === 1) {
+        if (doc && doc.querySelectorAll(textSel).length === 1) {
           return textSel;
         }
       }
@@ -335,7 +419,7 @@
       .slice(0, 2);
     if (classNames.length > 0) {
       var classSelector = `${tag}.${classNames.map(CSS.escape).join(".")}`;
-      if (document.querySelectorAll(classSelector).length === 1) {
+      if (doc && doc.querySelectorAll(classSelector).length === 1) {
         return classSelector;
       }
     }
@@ -347,7 +431,7 @@
         return c.tagName === el.tagName;
       });
       var index = siblings.indexOf(el) + 1;
-      var parentSel = parent === document.body ? "" : getSelector(parent) + " > ";
+      var parentSel = (docBody && parent === docBody) ? "" : getSelector(parent) + " > ";
       return `${parentSel}${tag}${siblings.length > 1 ? `:nth-of-type(${index})` : ""}`;
     }
 
@@ -359,6 +443,8 @@
   var hudCounter = null;
   var hudLastAction = null;
   var hudAlertNotice = null;
+  var hudCaptchaNotice = null;
+  var pendingCaptcha = { imgEl: null, inputEl: null, isSolving: false, solvedText: null };
   var hudStepsDrawer = null;
   var hudStepsList = null;
   var hudDrawerTitle = null;
@@ -369,6 +455,7 @@
   var editingStepIdx = null;
   var editDraft = null;
   var lastUserInteractionTime = 0;
+
 
   function toDynamicVariableTemplate(val) {
     var v = (val || "").trim();
@@ -652,7 +739,8 @@
     if (capturedSteps.length === 0) {
       var emptyDiv = document.createElement("div");
       emptyDiv.style.cssText = "color: #64748b; font-size: 10.5px; text-align: center; padding: 14px 4px; font-style: italic;";
-      emptyDiv.innerHTML = "No actions recorded yet.<br>Click or type on the page to record steps.";
+      emptyDiv.textContent = "";
+      emptyDiv.append("No actions recorded yet.", document.createElement("br"), "Click or type on the page to record steps.");
       hudStepsList.appendChild(emptyDiv);
       return;
     }
@@ -664,6 +752,17 @@
       select: { bg: "rgba(56, 189, 248, 0.12)", text: "#38bdf8", border: "rgba(56, 189, 248, 0.25)" },
       upload: { bg: "rgba(244, 114, 182, 0.12)", text: "#f472b6", border: "rgba(244, 114, 182, 0.25)" },
       assert: { bg: "rgba(192, 132, 252, 0.12)", text: "#c084fc", border: "rgba(192, 132, 252, 0.25)" },
+      solve_captcha: { bg: "rgba(168, 85, 247, 0.12)", text: "#a855f7", border: "rgba(168, 85, 247, 0.25)" },
+    };
+
+    var kindIcons = {
+      navigate: '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>',
+      click: '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 9 5 12 1.774-5.226L21 14 9 9z"/><path d="m16.071 16.071 4.243 4.243"/></svg>',
+      type: '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001"/><path d="M10 8h.001"/><path d="M14 8h.001"/><path d="M18 8h.001"/><path d="M8 12h.001"/><path d="M12 12h.001"/><path d="M16 12h.001"/><path d="M7 16h10"/></svg>',
+      select: '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>',
+      upload: '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+      assert: '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>',
+      solve_captcha: '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>',
     };
 
     capturedSteps.forEach(function (step, idx) {
@@ -690,7 +789,7 @@
 
         var kindSel = document.createElement("select");
         kindSel.style.cssText = "background: #0f172a; border: 1px solid #334155; color: #f8fafc; font-family: monospace; font-size: 10px; border-radius: 4px; padding: 2px 4px;";
-        var kinds = ["navigate", "click", "type", "select", "upload", "assert"];
+        var kinds = ["navigate", "click", "type", "select", "upload", "assert", "solve_captcha"];
         kinds.forEach(function (kd) {
           var opt = document.createElement("option");
           opt.value = kd;
@@ -857,8 +956,13 @@
         "letter-spacing: 0.03em",
         "text-transform: uppercase",
         "flex-shrink: 0",
+        "display: inline-flex",
+        "align-items: center",
+        "gap: 3px",
       ].join(";");
-      badge.textContent = k === "navigate" ? "NAV" : k;
+      var badgeIconHtml = kindIcons[k] || "";
+      var badgeText = k === "navigate" ? "NAV" : (k === "solve_captcha" ? "CAPTCHA" : k);
+      mountSvgIcon(badge, badgeIconHtml, badgeText);
 
       var desc = document.createElement("span");
       desc.style.cssText = [
@@ -884,6 +988,8 @@
         label = (step.selector || "select") + " → " + ((step.assertion && step.assertion.label) || step.text || "");
       } else if (k === "upload") {
         label = (step.selector || "upload") + " ← " + (step.text || "file");
+      } else if (k === "solve_captcha") {
+        label = (step.selector || "captcha") + " → " + (step.data && step.data.input_selector ? step.data.input_selector : "input");
       } else {
         label = step.selector || step.text || k;
       }
@@ -984,16 +1090,25 @@
   }
 
   function addCapturedStep(safeEvent) {
+    var replaced = false;
     if (capturedSteps.length > 0) {
       var lastStep = capturedSteps[capturedSteps.length - 1];
       if (lastStep.kind === "navigate" && safeEvent.kind === "navigate" && lastStep.url === safeEvent.url) {
-        return;
+        return false;
       }
       if (lastStep.kind === "click" && safeEvent.kind === "navigate") {
-        return;
+        return false;
       }
       if (lastStep.kind === "type" && safeEvent.kind === "type" && lastStep.selector === safeEvent.selector) {
         capturedSteps[capturedSteps.length - 1] = safeEvent;
+        replaced = true;
+      } else if (lastStep.kind === "solve_captcha" && safeEvent.kind === "solve_captcha" && lastStep.selector === safeEvent.selector) {
+        capturedSteps[capturedSteps.length - 1] = safeEvent;
+        replaced = true;
+      } else if (lastStep.kind === "click" && safeEvent.kind === "solve_captcha" && lastStep.selector === safeEvent.selector) {
+        // Drop click on captcha image right before solve_captcha
+        capturedSteps[capturedSteps.length - 1] = safeEvent;
+        replaced = true;
       } else {
         capturedSteps.push(safeEvent);
       }
@@ -1012,6 +1127,7 @@
 
     updateCounterDisplay();
     renderStepsList();
+    return replaced;
   }
 
   function syncStepsFromServer(onComplete) {
@@ -1141,6 +1257,14 @@
       "user-select: none",
       "transition: box-shadow 0.2s ease",
     ].join(";");
+
+    try {
+      var hudStyles = document.createElement("style");
+      hudStyles.textContent = "@keyframes suitest-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }";
+      document.head.appendChild(hudStyles);
+    } catch (e) {
+      console.debug("[Suitest Recorder] Could not inject HUD style:", e);
+    }
 
     var header = document.createElement("div");
     header.style.cssText = "display: flex; align-items: center; justify-content: space-between; gap: 12px;";
@@ -1435,7 +1559,110 @@
     alertActionsDiv.appendChild(dismissAlertBtn);
     hudAlertNotice.appendChild(alertActionsDiv);
 
+    hudCaptchaNotice = document.createElement("div");
+    hudCaptchaNotice.id = "suitest-hud-captcha-notice";
+    hudCaptchaNotice.style.cssText = [
+      "display: none",
+      "background: rgba(168, 85, 247, 0.15)",
+      "border: 1px solid rgba(168, 85, 247, 0.35)",
+      "border-radius: 6px",
+      "padding: 4px 6px",
+      "font-size: 10.5px",
+      "color: #e9d5ff",
+      "align-items: center",
+      "justify-content: space-between",
+      "gap: 4px",
+    ].join(";");
+
+    var captchaLeftDiv = document.createElement("div");
+    captchaLeftDiv.style.cssText = "display:flex;align-items:center;gap:5px;overflow:hidden;min-width:0;flex:1;";
+
+    var captchaIconSpan = document.createElement("span");
+    captchaIconSpan.id = "suitest-hud-captcha-icon";
+    captchaIconSpan.style.cssText = "display:inline-flex;align-items:center;flex-shrink:0;line-height:1;";
+    mountSvgIcon(captchaIconSpan, HUD_ICONS.scan);
+
+    var captchaTxtSpan = document.createElement("span");
+    captchaTxtSpan.id = "suitest-hud-captcha-text";
+    captchaTxtSpan.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:#e9d5ff;";
+
+    captchaLeftDiv.appendChild(captchaIconSpan);
+    captchaLeftDiv.appendChild(captchaTxtSpan);
+    hudCaptchaNotice.appendChild(captchaLeftDiv);
+
+    var captchaActionsDiv = document.createElement("div");
+    captchaActionsDiv.style.cssText = "display:flex;align-items:center;gap:3px;flex-shrink:0;";
+
+    var solveCaptchaBtn = document.createElement("button");
+    solveCaptchaBtn.id = "suitest-hud-solve-captcha";
+    solveCaptchaBtn.type = "button";
+    solveCaptchaBtn.style.cssText = [
+      "display: inline-flex",
+      "align-items: center",
+      "gap: 3px",
+      "background: #9333ea",
+      "border: 1px solid #a855f7",
+      "color: #ffffff",
+      "padding: 2px 6px",
+      "border-radius: 4px",
+      "cursor: pointer",
+      "font-size: 10px",
+      "font-weight: 600",
+      "line-height: 1.2",
+    ].join(";");
+    mountSvgIcon(solveCaptchaBtn, HUD_ICONS.scan, "Solve & Fill");
+    solveCaptchaBtn.onclick = function (e) {
+      e.stopPropagation();
+      var img = pendingCaptcha.imgEl;
+      var input = pendingCaptcha.inputEl;
+      if (!img || !document.contains(img) || !input || !document.contains(input)) {
+        var foundInput =
+          document.querySelector("input[data-suitest-captcha='true']") ||
+          Array.from(document.querySelectorAll("input")).find(isCaptchaField);
+        if (foundInput) {
+          input = foundInput;
+          img = findNearestCaptchaImage(input);
+          if (img) {
+            pendingCaptcha.imgEl = img;
+            pendingCaptcha.inputEl = input;
+          }
+        }
+      }
+      if (img && input) {
+        if (pendingImageClickTimer) clearTimeout(pendingImageClickTimer);
+        waitForImageReady(img).then(function () {
+          triggerLiveCaptchaSolve(img, input, { force: true });
+        });
+      }
+    };
+
+    var dismissCaptchaBtn = document.createElement("button");
+    dismissCaptchaBtn.id = "suitest-hud-dismiss-captcha";
+    dismissCaptchaBtn.type = "button";
+    dismissCaptchaBtn.style.cssText = [
+      "display: inline-flex",
+      "align-items: center",
+      "justify-content: center",
+      "background: none",
+      "border: none",
+      "color: #c084fc",
+      "cursor: pointer",
+      "padding: 2px",
+      "border-radius: 3px",
+      "line-height: 1",
+    ].join(";");
+    mountSvgIcon(dismissCaptchaBtn, HUD_ICONS.x);
+    dismissCaptchaBtn.onclick = function (e) {
+      e.stopPropagation();
+      hudCaptchaNotice.style.display = "none";
+    };
+
+    captchaActionsDiv.appendChild(solveCaptchaBtn);
+    captchaActionsDiv.appendChild(dismissCaptchaBtn);
+    hudCaptchaNotice.appendChild(captchaActionsDiv);
+
     hudLastAction = document.createElement("div");
+
     hudLastAction.id = "suitest-hud-last-action";
     hudLastAction.style.cssText = [
       "font-size: 11px",
@@ -1552,7 +1779,7 @@
       "user-select: none",
       "z-index: 10",
     ].join(";");
-    resizeGrip.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M9 1L1 9M9 5L5 9M9 9L9 9" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round"/></svg>';
+    mountSvgIcon(resizeGrip, '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M9 1L1 9M9 5L5 9M9 9L9 9" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round"/></svg>');
     resizeGrip.title = "Drag to resize";
     resizeGrip.addEventListener("mouseenter", function () { resizeGrip.style.opacity = "1"; });
     resizeGrip.addEventListener("mouseleave", function () { if (!isResizing) resizeGrip.style.opacity = "0.5"; });
@@ -1599,6 +1826,7 @@
     hudContainer.appendChild(toolbar);
     hudContainer.appendChild(hudStepsDrawer);
     hudContainer.appendChild(hudAlertNotice);
+    hudContainer.appendChild(hudCaptchaNotice);
     hudContainer.appendChild(hudLastAction);
     hudContainer.appendChild(resizeGrip);
 
@@ -1656,8 +1884,9 @@
     var hudObserver = new MutationObserver(function () {
       if (!hudCheckScheduled) {
         hudCheckScheduled = true;
-        setTimeout(function () {
+        safeSetTimeout(function () {
           hudCheckScheduled = false;
+          if (typeof document === "undefined" || !document || !document.getElementById) return;
           if (!document.getElementById("suitest-recorder-hud")) {
             createHUD();
           }
@@ -1665,6 +1894,7 @@
       }
     });
     hudObserver.observe(document.documentElement, { childList: true, subtree: true });
+    activeObservers.push(hudObserver);
   }
 
   function ensurePickerOverlay() {
@@ -1924,12 +2154,12 @@
   }
 
   function setupAlertObserver() {
-    if (!window.MutationObserver || !document.documentElement) return;
+    if (!window.MutationObserver || typeof document === "undefined" || !document.documentElement) return;
     var seenAlerts = new WeakSet();
     var alertTimeout = null;
 
     function checkNode(node) {
-      if (!node || node.nodeType !== 1) return;
+      if (typeof document === "undefined" || !node || node.nodeType !== 1) return;
       if (
         node.id === "suitest-recorder-hud" ||
         node.id === "suitest-picker-overlay" ||
@@ -1971,8 +2201,9 @@
       }
       hudAlertNotice.style.display = "flex";
 
-      if (alertTimeout) clearTimeout(alertTimeout);
-      alertTimeout = setTimeout(function () {
+      if (alertTimeout) safeClearTimeout(alertTimeout);
+      alertTimeout = safeSetTimeout(function () {
+        if (typeof document === "undefined") return;
         if (hudAlertNotice) hudAlertNotice.style.display = "none";
       }, 10000);
     }
@@ -1981,6 +2212,7 @@
     var debounceTimer = null;
 
     function processPendingNodes() {
+      if (typeof document === "undefined") return;
       var nodes = pendingNodes.splice(0, pendingNodes.length);
       for (var i = 0; i < nodes.length; i++) {
         checkNode(nodes[i]);
@@ -1988,6 +2220,7 @@
     }
 
     var alertObserver = new MutationObserver(function (mutations) {
+      if (typeof document === "undefined") return;
       for (var m of mutations) {
         if (m.type === "childList" && m.addedNodes && m.addedNodes.length) {
           Array.prototype.push.apply(pendingNodes, m.addedNodes);
@@ -1999,8 +2232,9 @@
         pendingNodes.length = 50;
       }
       if (!debounceTimer) {
-        debounceTimer = setTimeout(function () {
+        debounceTimer = safeSetTimeout(function () {
           debounceTimer = null;
+          if (typeof document === "undefined") return;
           processPendingNodes();
         }, 150);
       }
@@ -2011,6 +2245,7 @@
       attributes: true,
       attributeFilter: ["class", "role", "aria-modal", "style"],
     });
+    activeObservers.push(alertObserver);
   }
 
   function sanitizeString(str, maxLen) {
@@ -2028,7 +2263,7 @@
       return;
     }
 
-    var validKinds = ["click", "type", "navigate", "assert", "network", "select", "upload"];
+    var validKinds = ["click", "type", "navigate", "assert", "network", "select", "upload", "solve_captcha"];
     if (!eventData || !validKinds.includes(eventData.kind)) {
       return;
     }
@@ -2051,7 +2286,7 @@
       data: eventData.data && typeof eventData.data === "object" ? eventData.data : undefined,
     };
 
-    addCapturedStep(safeEvent);
+    var replaced = addCapturedStep(safeEvent);
 
     if (isSubframe) {
       try {
@@ -2068,12 +2303,19 @@
       }
     }
 
+    if (replaced) {
+      syncCleanedStepsToServer(capturedSteps);
+      updateCapturedCount(capturedSteps.length);
+      return;
+    }
+
     // If un-sent event at the end of the queue is typing or clicking the same selector, update in-place
     if (eventQueue.length > 0) {
       var lastInQueue = eventQueue[eventQueue.length - 1];
       if (
         (lastInQueue.kind === "type" && safeEvent.kind === "type" && lastInQueue.selector === safeEvent.selector) ||
-        (lastInQueue.kind === "click" && safeEvent.kind === "type" && lastInQueue.selector === safeEvent.selector)
+        (lastInQueue.kind === "click" && safeEvent.kind === "type" && lastInQueue.selector === safeEvent.selector) ||
+        (lastInQueue.kind === "solve_captcha" && safeEvent.kind === "solve_captcha" && lastInQueue.selector === safeEvent.selector)
       ) {
         eventQueue[eventQueue.length - 1] = safeEvent;
         return;
@@ -2085,10 +2327,10 @@
   }
 
   function updateCapturedCount(newCount) {
-    if (typeof newCount === "number") {
-      capturedCount = Math.max(capturedCount, newCount);
+    if (typeof newCount === "number" && !hasUserEditedSteps && newCount <= capturedSteps.length) {
+      capturedCount = newCount;
     } else {
-      capturedCount = Math.max(capturedCount, capturedSteps.length);
+      capturedCount = capturedSteps.length;
     }
     try {
       sessionStorage.setItem("__suitest_captured_count__", String(capturedCount));
@@ -2199,17 +2441,42 @@
     if (!pendingTypingTarget) return;
 
     var target = pendingTypingTarget;
+    if (target._suitest_auto_filling) {
+      pendingTypingTarget = null;
+      return;
+    }
     var val = target.value;
     if (lastValueMap.get(target) !== val) {
       lastValueMap.set(target, val);
-      postEvent({
-        kind: "type",
-        timestamp: new Date().toISOString(),
-        selector: pendingTypingSelector || getSelector(target),
-        text: val,
-        masked: pendingTypingMasked,
-        url: getCurrentVirtualUrl(),
-      });
+      if (isCaptchaField(target)) {
+        if (target._suitest_auto_filling) {
+          pendingTypingTarget = null;
+          return;
+        }
+        var captchaImg = findNearestCaptchaImage(target);
+        var imgSelector = captchaImg ? getSelector(captchaImg) : "img";
+        var inputSelector = pendingTypingSelector || getSelector(target);
+        postEvent({
+          kind: "solve_captcha",
+          timestamp: new Date().toISOString(),
+          selector: imgSelector,
+          data: {
+            input_selector: inputSelector,
+            force_uppercase: false,
+            max_retries: 1,
+          },
+          url: getCurrentVirtualUrl(),
+        });
+      } else {
+        postEvent({
+          kind: "type",
+          timestamp: new Date().toISOString(),
+          selector: pendingTypingSelector || getSelector(target),
+          text: val,
+          masked: pendingTypingMasked,
+          url: getCurrentVirtualUrl(),
+        });
+      }
     }
     pendingTypingTarget = null;
   }
@@ -2242,6 +2509,537 @@
     if (/pass(word|wd)?/i.test(testId)) return true;
 
     return false;
+  }
+
+  function isCaptchaField(el) {
+    if (!el || !el.tagName) return false;
+    var tag = el.tagName.toLowerCase();
+    if (tag !== "input") return false;
+
+    var name = (el.name || "").toLowerCase();
+    var id = (el.id || "").toLowerCase();
+    var placeholder = (el.getAttribute("placeholder") || "").toLowerCase();
+    var ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
+    var testId = (el.getAttribute("data-test") || el.getAttribute("data-testid") || "").toLowerCase();
+    var className = (el.className || "").toLowerCase();
+
+    var combined = name + " " + id + " " + placeholder + " " + ariaLabel + " " + testId + " " + className;
+    return /captcha|secur(ity)?[-\s_]?code|verif(ication)?[-\s_]?code|kode[-\s_]?keamanan/i.test(combined);
+  }
+
+  function findNearestCaptchaImage(inputEl) {
+    if (typeof document === "undefined" || !inputEl) return null;
+    var docBody = typeof document !== "undefined" ? document.body : null;
+    var container = inputEl.closest("form") || inputEl.closest(".card, .login-box, .auth-box, div") || docBody;
+    if (!container) return null;
+    var images = Array.from(container.querySelectorAll("img, canvas"));
+
+    for (var i = 0; i < images.length; i++) {
+      var img = images[i];
+      var imgStr = (
+        (img.id || "") + " " +
+        (img.className || "") + " " +
+        (img.getAttribute("src") || "") + " " +
+        (img.getAttribute("alt") || "") + " " +
+        (img.getAttribute("data-testid") || "")
+      ).toLowerCase();
+
+      if (/captcha|secur|code|verif|token/i.test(imgStr)) {
+        return img;
+      }
+    }
+
+    if (images.length > 0) {
+      if (typeof inputEl.getBoundingClientRect === "function") {
+        var inputRect = inputEl.getBoundingClientRect();
+        var bestImg = null;
+        var minDistance = Infinity;
+        for (var j = 0; j < images.length; j++) {
+          var cand = images[j];
+          var cRect = typeof cand.getBoundingClientRect === "function" ? cand.getBoundingClientRect() : { top: 0, left: 0 };
+          var dist = Math.abs(cRect.top - inputRect.top) + Math.abs(cRect.left - inputRect.left);
+          if (dist < minDistance) {
+            minDistance = dist;
+            bestImg = cand;
+          }
+        }
+        if (bestImg) return bestImg;
+      }
+      return images[0];
+    }
+
+    return null;
+  }
+
+  function fillCaptchaValue(inputEl, value) {
+    if (!inputEl) return;
+    try {
+      inputEl._suitest_auto_filling = true;
+      lastValueMap.set(inputEl, value);
+      var proto = window.HTMLInputElement && window.HTMLInputElement.prototype;
+      var descriptor = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(inputEl, value);
+      } else {
+        inputEl.value = value;
+      }
+    } catch (e) {
+      inputEl.value = value;
+    }
+    try {
+      inputEl.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+      inputEl.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    } catch (err) {
+      console.debug("[Suitest Recorder] Event dispatch error on fillCaptchaValue:", err);
+    } finally {
+      setTimeout(function () {
+        try {
+          delete inputEl._suitest_auto_filling;
+        } catch (e) {
+          console.debug("[Suitest Recorder] Error clearing auto-filling flag:", e);
+        }
+      }, 500);
+    }
+  }
+
+  function shouldApplySolvedText(inputEl, solvedText, state, options) {
+    if (!inputEl || !solvedText) return false;
+    if (options && options.force) return true;
+    if (state && state.userTyped) return false;
+    if (inputEl._suitest_last_solved_value && inputEl.value === inputEl._suitest_last_solved_value) {
+      return true;
+    }
+    if (inputEl.value && inputEl.value !== "" && inputEl.value !== "Membaca CAPTCHA..." && inputEl.value !== solvedText) {
+      return false;
+    }
+    return true;
+  }
+
+  function waitForImageReady(img) {
+    return new Promise(function (resolve) {
+      if (!img) return resolve();
+      if (img.tagName && img.tagName.toLowerCase() === "canvas") {
+        return resolve();
+      }
+      if (img.complete && img.naturalWidth > 0) {
+        return setTimeout(resolve, 80);
+      }
+      function onDone() {
+        img.removeEventListener("load", onDone);
+        img.removeEventListener("error", onDone);
+        resolve();
+      }
+      img.addEventListener("load", onDone, { once: true });
+      img.addEventListener("error", onDone, { once: true });
+      setTimeout(onDone, 2500);
+    });
+  }
+
+  function extractImageBase64(imgEl) {
+    if (!imgEl) return null;
+    try {
+      if (imgEl.tagName && imgEl.tagName.toLowerCase() === "canvas") {
+        return imgEl.toDataURL("image/png");
+      }
+      if (imgEl.tagName && imgEl.tagName.toLowerCase() === "img") {
+        if (!imgEl.complete || !imgEl.naturalWidth) {
+          return null;
+        }
+        var canvas = document.createElement("canvas");
+        var w = imgEl.naturalWidth || imgEl.clientWidth || 120;
+        var h = imgEl.naturalHeight || imgEl.clientHeight || 40;
+        if (w <= 0) w = 120;
+        if (h <= 0) h = 40;
+        canvas.width = w;
+        canvas.height = h;
+        var ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(imgEl, 0, 0, w, h);
+          return canvas.toDataURL("image/png");
+        }
+      }
+    } catch (e) {
+      console.debug("[Suitest Recorder] Canvas export failed, will use backend snapshot:", e);
+    }
+    return null;
+  }
+
+  function inspectCanvasNoise(c) {
+    try {
+      var ctx = c.getContext("2d");
+      if (!ctx) return { isClean: false, reason: "no_ctx" };
+      var imgData = ctx.getImageData(0, 0, c.width, c.height);
+      var d = imgData.data;
+      var corners = [
+        0,
+        (c.width - 1) * 4,
+        ((c.height - 1) * c.width) * 4,
+        ((c.height - 1) * c.width + (c.width - 1)) * 4,
+      ];
+      var bgR = 0, bgG = 0, bgB = 0;
+      for (var i = 0; i < 4; i++) {
+        bgR += d[corners[i]];
+        bgG += d[corners[i] + 1];
+        bgB += d[corners[i] + 2];
+      }
+      bgR /= 4; bgG /= 4; bgB /= 4;
+
+      var bgVariance = 0;
+      var textPixels = 0;
+      var totalPixels = c.width * c.height;
+      for (var j = 0; j < d.length; j += 4) {
+        var diff = Math.abs(d[j] - bgR) + Math.abs(d[j+1] - bgG) + Math.abs(d[j+2] - bgB);
+        if (diff > 60) {
+          textPixels++;
+        } else {
+          bgVariance += diff;
+        }
+      }
+
+      var textRatio = textPixels / totalPixels;
+      var avgBgVariance = bgVariance / (totalPixels - textPixels || 1);
+
+      if (avgBgVariance >= 30 || textRatio < 0.03 || textRatio > 0.60) {
+        return { isClean: false, reason: "noisy_or_distorted", avgBgVariance: avgBgVariance, textRatio: textRatio };
+      }
+      return { isClean: true, avgBgVariance: avgBgVariance, textRatio: textRatio };
+    } catch (e) {
+      return { isClean: false, reason: "noise_inspect_error: " + e };
+    }
+  }
+
+  function evaluateClientMathExpression(str) {
+    if (!str) return null;
+    var m = str.trim().match(/^(\d{1,4})\s*([\+\-\*xX\/])\s*(\d{1,4})(?:\s*=\s*\??|\s*\??)?$/);
+    if (!m) return null;
+    var a = parseInt(m[1], 10);
+    var op = m[2].toLowerCase();
+    var b = parseInt(m[3], 10);
+    var val = null;
+    if (op === "+") val = a + b;
+    else if (op === "-") val = a - b;
+    else if (op === "*" || op === "x") val = a * b;
+    else if (op === "/" && b !== 0) val = Math.floor(a / b);
+    return val !== null ? String(val) : null;
+  }
+
+  async function tryFastClientOcr(imgEl, forceUppercase) {
+    try {
+      if (!imgEl) return { status: "fallback", reason: "no_element" };
+      var c = document.createElement("canvas");
+      var w = imgEl.naturalWidth || imgEl.width || imgEl.clientWidth || 120;
+      var h = imgEl.naturalHeight || imgEl.height || imgEl.clientHeight || 40;
+      c.width = w > 0 ? w : 120;
+      c.height = h > 0 ? h : 40;
+      var ctx = c.getContext("2d");
+      if (!ctx) return { status: "fallback", reason: "no_context" };
+      ctx.drawImage(imgEl, 0, 0, c.width, c.height);
+
+      // Pre-filter: noise check
+      var noiseCheck = inspectCanvasNoise(c);
+      if (!noiseCheck.isClean) {
+        return { status: "fallback", reason: noiseCheck.reason };
+      }
+
+      // Check / Load in-browser OCR
+      if (typeof window.OCRAD !== "function") {
+        await new Promise(function(resolve) {
+          try {
+            var script = document.createElement("script");
+            var baseUrl = apiBase ? apiBase.replace(/\/api\/v1\/?$/, "") : window.location.origin;
+            script.src = baseUrl + "/vendor/ocrad.js";
+            script.onload = function() { resolve(); };
+            script.onerror = function() { resolve(); };
+            document.head.appendChild(script);
+            setTimeout(resolve, 1500);
+          } catch (_) {
+            resolve();
+          }
+        });
+      }
+
+      var ocrFunc = typeof window.OCRAD === "function" ? window.OCRAD : null;
+      if (!ocrFunc) {
+        return { status: "fallback", reason: "ocr_unavailable" };
+      }
+
+      var rawOcr = ocrFunc(c);
+      var cleaned = (rawOcr || "").trim();
+
+      // Math check
+      var mathVal = evaluateClientMathExpression(cleaned);
+      if (mathVal !== null) {
+        return { status: "solved", text: mathVal, source: "local_math" };
+      }
+
+      // Alphanumeric post-filter
+      var alphaNum = cleaned.replace(/[^a-zA-Z0-9]/g, "");
+      if (alphaNum.length >= 4) {
+        return {
+          status: "solved",
+          text: forceUppercase ? alphaNum.toUpperCase() : alphaNum,
+          source: "tiny_ocr",
+        };
+      }
+
+      return { status: "fallback", reason: "ambiguous_text" };
+    } catch (err) {
+      return { status: "fallback", reason: "client_ocr_error: " + err };
+    }
+  }
+
+  function updateCaptchaHud(statusText, solveBtnMode, iconType) {
+    if (!hudCaptchaNotice) return;
+    hudCaptchaNotice.style.display = "flex";
+    var iconEl = hudCaptchaNotice.querySelector("#suitest-hud-captcha-icon");
+    if (iconEl && iconType && HUD_ICONS[iconType]) {
+      mountSvgIcon(iconEl, HUD_ICONS[iconType]);
+    }
+    var txtEl = hudCaptchaNotice.querySelector("#suitest-hud-captcha-text");
+    if (txtEl && typeof statusText === "string") {
+      txtEl.textContent = statusText;
+      txtEl.title = statusText;
+    }
+    var btn = hudCaptchaNotice.querySelector("#suitest-hud-solve-captcha");
+    if (btn && solveBtnMode) {
+      if (solveBtnMode === "resolve" || solveBtnMode.indexOf("Re-solve") !== -1) {
+        mountSvgIcon(btn, HUD_ICONS.refresh, "Re-solve");
+      } else {
+        mountSvgIcon(btn, HUD_ICONS.scan, "Solve & Fill");
+      }
+    }
+  }
+
+  async function sendCaptchaSolveApi(payload) {
+    var query = workspaceId ? "?workspaceId=" + encodeURIComponent(workspaceId) : "";
+    var url = apiBase + "/generators/recorder/sessions/" + encodeURIComponent(sessionId) + "/solve-captcha" + query;
+    var res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(workspaceId ? { "X-Workspace-Id": workspaceId } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      throw new Error("HTTP " + res.status + " " + (await res.text()));
+    }
+    return await res.json();
+  }
+
+  function applyLiveCaptchaResult(imgEl, inputEl, solvedText, solveState, options) {
+    var safeText = String(solvedText || "").trim().slice(0, 64);
+    if (!shouldApplySolvedText(inputEl, safeText, solveState, options)) {
+      if (solveState && solveState.userTyped) {
+        updateCaptchaHud("User typed manually (AI discarded)", "resolve", "scan");
+      } else {
+        updateCaptchaHud('Solved: "' + safeText + '"', "resolve", "check");
+      }
+      return;
+    }
+    inputEl._suitest_last_solved_value = safeText;
+    fillCaptchaValue(inputEl, safeText);
+    updateCaptchaHud('Solved: "' + safeText + '"', "resolve", "check");
+
+    var safeSelector = sanitizeString(getSelector(imgEl), 256);
+    var safeInputSelector = sanitizeString(getSelector(inputEl), 256);
+    var safeRefreshTarget = options && options.refresh_target ? sanitizeString(options.refresh_target, 256) : undefined;
+    var safeUrl = sanitizeString(getCurrentVirtualUrl(), 1024);
+
+    postEvent({
+      kind: "solve_captcha",
+      timestamp: new Date().toISOString(),
+      selector: safeSelector,
+      data: {
+        input_selector: safeInputSelector,
+        captcha_type: sanitizeString((options && options.captcha_type) || "auto", 32),
+        force_uppercase: Boolean(options && options.force_uppercase),
+        max_retries: 1,
+        ...(safeRefreshTarget ? { refresh_target: safeRefreshTarget } : {}),
+      },
+      url: safeUrl,
+    });
+  }
+
+  var activeCaptchaSolves = new WeakMap();
+
+  async function triggerLiveCaptchaSolve(imgEl, inputEl, options) {
+    if (!imgEl || !inputEl) return;
+    if (activeCaptchaSolves.get(inputEl) && (!options || !options.force)) return;
+
+    var solveState = { userTyped: false };
+    activeCaptchaSolves.set(inputEl, solveState);
+
+    function onUserInput() {
+      solveState.userTyped = true;
+    }
+    inputEl.addEventListener("input", onUserInput, { once: true });
+
+    var origPlaceholder = inputEl.getAttribute("placeholder") || "";
+    var origOutline = inputEl.style.outline;
+    inputEl.setAttribute("placeholder", "Membaca CAPTCHA...");
+    inputEl.style.outline = "2px solid #a855f7";
+    updateCaptchaHud("AI reading CAPTCHA...", null, "spin");
+
+    var payload = {
+      image_base64: extractImageBase64(imgEl) || undefined,
+      image_selector: getSelector(imgEl),
+      input_selector: getSelector(inputEl),
+      captcha_type: (options && options.captcha_type) || "auto",
+      force_uppercase: Boolean(options && options.force_uppercase),
+    };
+
+    try {
+      // 1. In-browser Fast OCR & Math cascade (< 150ms)
+      var clientRes = await tryFastClientOcr(imgEl, Boolean(options && options.force_uppercase));
+      if (clientRes && clientRes.status === "solved" && typeof clientRes.text === "string") {
+        var cleanClientText = clientRes.text.trim().slice(0, 32);
+        if (/^[a-zA-Z0-9\s\+\-\*\/]+$/.test(cleanClientText)) {
+          console.info("[Suitest Recorder] Solved CAPTCHA via in-browser fast OCR:", cleanClientText, clientRes.source);
+          var validatedCleanText = sanitizeString(cleanClientText, 32);
+          applyLiveCaptchaResult(imgEl, inputEl, validatedCleanText, solveState, options);
+          return;
+        }
+      }
+
+      // 2. Cascade to Vision LLM fallback
+      var data = await sendCaptchaSolveApi(payload);
+      if (data && data.status === "error") {
+        var errMsg = data.error || "CAPTCHA solve failed";
+        console.warn("[Suitest Recorder] Captcha solve error:", errMsg);
+        updateCaptchaHud(errMsg, "solve", "warn");
+        return;
+      }
+      var solvedText = data && typeof data.text === "string" ? data.text.trim().slice(0, 32) : "";
+      if (!solvedText) {
+        updateCaptchaHud("CAPTCHA unreadable", "solve", "warn");
+        return;
+      }
+      var validatedSolvedText = sanitizeString(solvedText, 32);
+      applyLiveCaptchaResult(imgEl, inputEl, validatedSolvedText, solveState, options);
+    } catch (err) {
+      console.warn("[Suitest Recorder] Failed live captcha solve:", err);
+      var msg = "CAPTCHA solve failed";
+      if (err && err.message && err.message.includes("404")) {
+        msg = "Server API perlu restart (404)";
+      }
+      updateCaptchaHud(msg, "solve", "warn");
+    } finally {
+      activeCaptchaSolves.delete(inputEl);
+      inputEl.removeEventListener("input", onUserInput);
+      if (inputEl.getAttribute("placeholder") === "Membaca CAPTCHA...") {
+        inputEl.setAttribute("placeholder", origPlaceholder);
+      }
+      inputEl.style.outline = origOutline;
+    }
+  }
+
+  var hookedCaptchaInputs = new WeakSet();
+
+  function onCaptchaFieldEvent(e) {
+    var inputEl = e.currentTarget;
+    if (!inputEl || !(inputEl instanceof HTMLElement) || inputEl._suitest_auto_filling || (inputEl.value && inputEl.value !== "")) return;
+    var img = findNearestCaptchaImage(inputEl);
+    if (img && img instanceof HTMLElement) {
+      triggerLiveCaptchaSolve(img, inputEl);
+    }
+  }
+
+  var pendingImageClickTimer = null;
+
+  function onCaptchaImageClick(e) {
+    var img = e.currentTarget;
+    var form = img.closest("form") || img.closest(".card, .login-box, .auth-box, div") || document.body;
+    var input = form.querySelector("input[data-suitest-captcha='true']");
+    if (!input) return;
+    var refreshSelector = getSelector(img);
+    if (pendingImageClickTimer) safeClearTimeout(pendingImageClickTimer);
+    updateCaptchaHud("Menunggu CAPTCHA baru...", null, "spin");
+    pendingImageClickTimer = safeSetTimeout(function () {
+      pendingImageClickTimer = null;
+      if (typeof document === "undefined" || !document) return;
+      waitForImageReady(img).then(function () {
+        triggerLiveCaptchaSolve(img, input, { refresh_target: refreshSelector, force: true });
+      });
+    }, 350);
+  }
+
+  function bindCaptchaField(inputEl) {
+    if (!inputEl || hookedCaptchaInputs.has(inputEl)) return;
+    hookedCaptchaInputs.add(inputEl);
+    inputEl.setAttribute("data-suitest-captcha", "true");
+
+    var img = findNearestCaptchaImage(inputEl);
+    if (!img) return;
+
+    pendingCaptcha.imgEl = img;
+    pendingCaptcha.inputEl = inputEl;
+    updateCaptchaHud("CAPTCHA: " + getSelector(img), "solve", "scan");
+
+    inputEl.addEventListener("focus", onCaptchaFieldEvent);
+    inputEl.addEventListener("click", onCaptchaFieldEvent);
+    img.addEventListener("click", onCaptchaImageClick);
+  }
+
+  function setupCaptchaObserver() {
+    if (typeof document === "undefined" || !document.documentElement) return;
+
+    function checkCandidate(node) {
+      if (typeof document === "undefined" || !node || node.nodeType !== 1) return;
+      if (node.tagName && node.tagName.toLowerCase() === "input" && isCaptchaField(node)) {
+        bindCaptchaField(node);
+      } else if (node.querySelector) {
+        var found = node.querySelector("input");
+        if (found && isCaptchaField(found)) {
+          bindCaptchaField(found);
+        }
+      }
+    }
+
+    var initialInputs = Array.from(document.querySelectorAll("input"));
+    for (var i = 0; i < initialInputs.length; i++) {
+      if (isCaptchaField(initialInputs[i])) {
+        bindCaptchaField(initialInputs[i]);
+      }
+    }
+
+    if (!window.MutationObserver) return;
+    var pendingAddedNodes = [];
+    var captchaDebounceTimer = null;
+
+    function processPendingAddedNodes() {
+      if (typeof document === "undefined") return;
+      var nodes = pendingAddedNodes.splice(0, pendingAddedNodes.length);
+      for (var k = 0; k < nodes.length; k++) {
+        checkCandidate(nodes[k]);
+      }
+    }
+
+    var captchaObserver = new MutationObserver(function (mutations) {
+      if (typeof document === "undefined") return;
+      for (var j = 0; j < mutations.length; j++) {
+        var m = mutations[j];
+        if (m.type === "childList" && m.addedNodes && m.addedNodes.length) {
+          Array.prototype.push.apply(pendingAddedNodes, m.addedNodes);
+        }
+      }
+      if (pendingAddedNodes.length > 50) {
+        pendingAddedNodes.length = 50;
+      }
+      if (!captchaDebounceTimer) {
+        captchaDebounceTimer = safeSetTimeout(function () {
+          captchaDebounceTimer = null;
+          if (typeof document === "undefined") return;
+          processPendingAddedNodes();
+        }, 150);
+      }
+    });
+
+    captchaObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+    activeObservers.push(captchaObserver);
   }
 
   // 7. DOM Listeners
@@ -2484,7 +3282,7 @@
           return;
         }
 
-        clearTimeout(typingTimer);
+        safeClearTimeout(typingTimer);
         pendingTypingTarget = target;
         pendingTypingSelector = getSelector(target);
         pendingTypingMasked = isPasswordField(target);
@@ -2492,7 +3290,9 @@
         var val = target.value;
 
         // Debounce continuous typing so we send coalesced value after typing pauses
-        typingTimer = setTimeout(function () {
+        typingTimer = safeSetTimeout(function () {
+          typingTimer = null;
+          if (typeof document === "undefined" || !document) return;
           flushTyping();
         }, 1000);
       },
@@ -2612,6 +3412,7 @@
     );
 
     setupAlertObserver();
+    setupCaptchaObserver();
 
     // Listen for SPA navigation (pushState, replaceState, popstate, hashchange)
     var lastRecordedUrl = getCurrentVirtualUrl();
@@ -2731,6 +3532,15 @@
       checkAndEmitInitialNavigate();
     });
   }
+
+  window.__suitest_recorder_helpers__ = {
+    isCaptchaField: isCaptchaField,
+    findNearestCaptchaImage: findNearestCaptchaImage,
+    fillCaptchaValue: fillCaptchaValue,
+    shouldApplySolvedText: shouldApplySolvedText,
+    triggerLiveCaptchaSolve: triggerLiveCaptchaSolve,
+    extractImageBase64: extractImageBase64,
+  };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start);

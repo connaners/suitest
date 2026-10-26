@@ -136,6 +136,15 @@ def detect_login_form(page: PageInfo, *, ignore_testids: bool = False) -> LoginF
     error = next((e for e in page.inputs + page.buttons if "error" in _blob(e)), None)
     if error is not None:
         form.error = build_locator(error, ignore_testids=ignore_testids)
+
+    if page.has_captcha and page.captcha_input_selector:
+        form.captcha_input = page.captcha_input_selector
+        form.captcha_image = page.captcha_image_selector
+    else:
+        has_c, c_in, c_img, _, _ = detect_captcha_form(page)
+        if has_c:
+            form.captcha_input = c_in
+            form.captcha_image = c_img
     return form
 
 
@@ -167,3 +176,34 @@ def detect_page_pattern(page: PageInfo) -> str:
     if re.search(r"/\d+$|/[0-9a-f-]{8,}$", page.route):
         return "detail"
     return "unknown"
+
+
+def detect_captcha_form(page: PageInfo) -> tuple[bool, str, str, str, str]:
+    """Detect if page contains a CAPTCHA input + image pairing.
+
+    Returns (has_captcha, input_selector, image_selector, captcha_type, refresh_target).
+    """
+    if page.has_captcha and page.captcha_input_selector:
+        return (
+            True,
+            page.captcha_input_selector,
+            page.captcha_image_selector,
+            page.captcha_type or "auto",
+            page.refresh_target or page.captcha_image_selector,
+        )
+
+    for el in page.inputs:
+        blob = _blob(el)
+        if "captcha" in blob or "security_code" in blob or "verify_code" in blob:
+            in_sel = (
+                f"#{el.dom_id}"
+                if el.dom_id
+                else (f"input[name='{el.name}']" if el.name else "input")
+            )
+            if el.frame_selector:
+                in_sel = f"{el.frame_selector} >> {in_sel}"
+            img_sel = "#img-captcha"
+            if el.frame_selector:
+                img_sel = f"{el.frame_selector} >> {img_sel}"
+            return True, in_sel, img_sel, "auto", img_sel
+    return False, "", "", "", ""

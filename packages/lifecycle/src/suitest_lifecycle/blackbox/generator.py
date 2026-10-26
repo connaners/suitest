@@ -14,7 +14,7 @@ SafeMode invariants:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from suitest_lifecycle.models import PlanCase, PlanStep, Priority
 
@@ -45,6 +45,13 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:80]
 
 
+def _find_first_file_input(inputs: list[Any]) -> Any | None:
+    for e in inputs:
+        if getattr(e, "input_type", "") == "file":
+            return e
+    return None
+
+
 def _case(
     n: int,
     title: str,
@@ -70,15 +77,37 @@ def _login_snippet(discovery: DiscoveryResult) -> str:
     form = discovery.login
     if form is None:
         return ""
+    captcha_snippet = ""
+    if form.captcha_input:
+        c_in_repr = repr(form.captcha_input)
+        desc_repr = repr(f"Solve CAPTCHA for {form.captcha_input}")
+        captcha_snippet = f"""
+    _begin("action", {desc_repr})
+    try:
+        c_loc = page.locator({c_in_repr})
+        if await c_loc.count() > 0:
+            await c_loc.fill("CAPTCHA_SOLVE")
+    except Exception:
+        pass
+    await _ok(page)"""
     return f'''
 async def _bb_login(page):
-    _begin("action", "Open the login page")
+    _state = os.path.join(_TMP, "storage_state.json")
+    if not os.path.exists(_state):
+        _state = os.path.join(_TMP, "blackbox", "storage_state.json")
+    if os.path.isfile(_state) and os.path.getsize(_state) > 0:
+        try:
+            await page.goto(f"{{BASE_URL}}/", wait_until="domcontentloaded")
+            if "{form.route}" not in page.url:
+                return
+        except Exception:
+            pass
     await page.goto(f"{{BASE_URL}}{form.route}", wait_until="domcontentloaded")
     await _ok(page)
     _begin("action", "Fill the username and password")
     await {form.username}.fill(USERNAME)
     await {form.password}.fill(PASSWORD)
-    await _ok(page)
+    await _ok(page){captcha_snippet}
     _begin("action", "Submit the login form")
     await {form.submit}.click()
     try:
@@ -423,6 +452,90 @@ async def _body(page):
 ''',
                 )
             )
+            if p.has_captcha:
+                c_in = p.captcha_input_selector
+                out.append(
+                    (
+                        _case(
+                            nid(),
+                            f"captcha_on_{_slugify(p.route)}_is_handled",
+                            f"Verifies the CAPTCHA field on {p.route} can be located and solved.",
+                            "Forms",
+                            Priority.HIGH,
+                            f"bb:captcha {p.route}",
+                            [
+                                ("action", f"Open {p.route}"),
+                                ("action", f"Solve CAPTCHA for {c_in}"),
+                                ("assertion", "CAPTCHA input field is populated"),
+                            ],
+                        ),
+                        f"""
+async def _body(page):
+{prelude}    _begin("action", "Open {p.route}")
+    await page.goto(f"{{BASE_URL}}{p.route}", wait_until="domcontentloaded")
+    await page.wait_for_timeout(600)
+    await _ok(page)
+    _begin("action", {f"Solve CAPTCHA for {c_in}"!r})
+    c_loc = page.locator({c_in!r})
+    await c_loc.fill("TEST_CAPTCHA")
+    await _ok(page)
+    _begin("assertion", "CAPTCHA input field is populated")
+    val = await c_loc.input_value()
+    assert len(val) > 0, "captcha input remained empty"
+    await _ok(page)
+""",
+                    )
+                )
+            fin = _find_first_file_input(p.inputs)
+            if fin is not None:
+                from suitest_lifecycle.blackbox.selector import build_locator as _bl
+                from suitest_lifecycle.blackbox.selector import describe as _desc
+
+                f_loc = _bl(fin)
+                desc_text = "multiple files" if fin.is_multiple else "file"
+                upload_arg_code = (
+                    "upload_files = [f1, f2]" if fin.is_multiple else "upload_files = f1"
+                )
+                out.append(
+                    (
+                        _case(
+                            nid(),
+                            f"file_upload_on_{_slugify(p.route)}_accepts_{'multiple_files' if fin.is_multiple else 'file'}",
+                            f"Verifies the file upload input on {p.route} accepts {desc_text}.",
+                            "Forms",
+                            Priority.MEDIUM,
+                            f"bb:upload {p.route}",
+                            [
+                                ("action", f"Open {p.route}"),
+                                ("action", f"Set {desc_text} on {_desc(fin)}"),
+                                ("assertion", "File input has files assigned"),
+                            ],
+                        ),
+                        f"""
+async def _body(page):
+{prelude}    _begin("action", "Open {p.route}")
+    await page.goto(f"{{BASE_URL}}{p.route}", wait_until="domcontentloaded")
+    await page.wait_for_timeout(600)
+    await _ok(page)
+    _begin("action", "Set {desc_text} on file input")
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tf1, tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tf2:
+        tf1.write(b"Suitest test upload 1")
+        tf2.write(b"Suitest test upload 2")
+        tf1.flush()
+        tf2.flush()
+        f1, f2 = tf1.name, tf2.name
+    {upload_arg_code}
+    await {f_loc}.set_input_files(upload_files)
+    await page.wait_for_timeout(600)
+    await _ok(page)
+    _begin("assertion", "File input received files")
+    files_count = await page.evaluate("el => el.files ? el.files.length : 0", await {f_loc}.element_handle())
+    assert files_count >= 1, "no files detected on file input"
+    await _ok(page)
+""",
+                    )
+                )
 
     # -- modal open/close ------------------------------------------------------------
     modal_pages = [p for p in crawled if p.has_modal][:1]

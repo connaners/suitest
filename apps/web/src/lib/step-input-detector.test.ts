@@ -230,5 +230,21 @@ describe("step-input-detector", () => {
       const updated = applyStepInputUpdate(step, "fresh_name");
       expect(updated.action).toBe("Type 'fresh_name' into input#name");
     });
+
+    it("updates captcha solve step and parameterizes value", () => {
+      const step: StepLike = {
+        id: "step-c",
+        order: 4,
+        action: "Solve CAPTCHA",
+        code: JSON.stringify({
+          tool: "browser_solve_captcha",
+          arguments: { selector: "#img-captcha", input_selector: "#captcha", captcha_type: "auto" },
+        }),
+      };
+
+      const updated = applyStepInputUpdate(step, "{{captcha_val}}");
+      const parsed = JSON.parse(updated.code!);
+      expect(parsed.arguments.value).toBe("{{captcha_val}}");
+    });
   });
 });

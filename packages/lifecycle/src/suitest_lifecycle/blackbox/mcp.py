@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,6 +49,316 @@ def _case_steps_payload(raw_steps: list[dict[str, object]]) -> list[dict[str, ob
         }
         for index, step in enumerate(raw_steps)
     ]
+
+
+def _parse_fill_call(f: re.Match[str]) -> dict[str, object]:
+    loc = f.group(1).strip()
+    raw = f.group(2).strip()
+    val = raw[1:-1] if raw.startswith(('"', "'")) and raw.endswith(('"', "'")) else raw
+
+    field_name = "field"
+    m_ph = re.search(
+        r'placeholder\s*=\s*["\'](.*?)["\']|get_by_placeholder\s*\(\s*["\'](.*?)["\']',
+        loc,
+    )
+    if m_ph:
+        field_name = m_ph.group(1) or m_ph.group(2)
+    elif "name=" in loc:
+        m_n = re.search(r'name=["\'](.*?)["\']', loc)
+        if m_n:
+            field_name = m_n.group(1)
+
+    m_loc = re.search(r'locator\s*\(\s*["\'](.*?)["\']\s*\)', loc)
+    sel = f'[placeholder="{field_name}"]' if m_ph else (m_loc.group(1) if m_loc else loc)
+    if (".first" in loc or m_ph or "name=" in loc) and "nth=" not in sel:
+        sel = f"{sel} >> nth=0"
+    return {
+        "action": f"Fill {field_name}",
+        "expected": "",
+        "code": json.dumps(
+            {
+                "tool": "browser_type",
+                "arguments": {"target": sel, "selector": sel, "text": val},
+            }
+        ),
+        "mcp_provider": "playwright-mcp",
+        "target_kind": "FE_WEB",
+    }
+
+
+def extract_steps_from_automation_code(
+    code: str,
+    target_url: str = "",
+    fallback_steps: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    """Parse a generated Playwright test file into executable TCM steps with tool code."""
+    import re
+
+    if not code:
+        return _case_steps_payload(fallback_steps or [])
+    executed_code = code
+    body_match = re.search(
+        r"async def _body\(page\):(.*?)(?=async def run_test|\Z)", code, re.DOTALL
+    )
+    if body_match:
+        body_code = body_match.group(1)
+        if "_bb_login" not in body_code:
+            executed_code = body_code
+
+    pattern = re.compile(
+        r'_begin\s*\(\s*["\'](action|assertion)["\']\s*,\s*["\'](.*?)["\']\s*\)(.*?)(?=_begin|\Z)',
+        re.DOTALL,
+    )
+    extracted: list[dict[str, object]] = []
+
+    for m in pattern.finditer(executed_code):
+        st_type = m.group(1)
+        st_desc = m.group(2)
+        st_body = m.group(3)
+
+        fill_calls = list(re.finditer(r"await\s+(.+?)\.fill\((.*?)\)", st_body))
+        click_calls = list(re.finditer(r"await\s+(.+?)\.click\(\)", st_body))
+        goto_calls = list(re.finditer(r'goto\s*\(\s*f?["\'](.*?)["\']', st_body))
+        upload_calls = list(re.finditer(r"set_input_files\s*\((.*?)\)", st_body))
+
+        if st_type != "assertion" and (
+            "captcha" in st_desc.lower() or "captcha" in st_body.lower()
+        ):
+            c_input = "#captcha"
+            c_img = "#img-captcha"
+            m_in = re.search(r'locator\s*\(\s*["\'](.*?)["\']\s*\)', st_body)
+            if m_in:
+                c_input = m_in.group(1)
+            extracted.append(
+                {
+                    "action": st_desc,
+                    "expected": "",
+                    "code": json.dumps(
+                        {
+                            "tool": "browser_solve_captcha",
+                            "arguments": {
+                                "selector": c_img,
+                                "input_selector": c_input,
+                                "captcha_type": "auto",
+                                "refresh_target": c_img,
+                            },
+                        }
+                    ),
+                    "mcp_provider": "playwright-mcp",
+                    "target_kind": "FE_WEB",
+                }
+            )
+        elif len(fill_calls) > 1:
+            for f in fill_calls:
+                extracted.append(_parse_fill_call(f))
+        elif len(fill_calls) == 1:
+            loc = fill_calls[0].group(1).strip()
+            raw = fill_calls[0].group(2).strip()
+            val = raw[1:-1] if raw.startswith(('"', "'")) and raw.endswith(('"', "'")) else raw
+            m_ph = re.search(
+                r'placeholder\s*=\s*["\'](.*?)["\']|get_by_placeholder\s*\(\s*["\'](.*?)["\']',
+                loc,
+            )
+            m_loc = re.search(r'locator\s*\(\s*["\'](.*?)["\']\s*\)', loc)
+            sel = (
+                f'[placeholder="{m_ph.group(1) or m_ph.group(2)}"]'
+                if m_ph
+                else (m_loc.group(1) if m_loc else loc)
+            )
+            if (".first" in loc or m_ph) and "nth=" not in sel:
+                sel = f"{sel} >> nth=0"
+            extracted.append(
+                {
+                    "action": st_desc,
+                    "expected": "",
+                    "code": json.dumps(
+                        {
+                            "tool": "browser_type",
+                            "arguments": {"target": sel, "selector": sel, "text": val},
+                        }
+                    ),
+                    "mcp_provider": "playwright-mcp",
+                    "target_kind": "FE_WEB",
+                }
+            )
+        elif goto_calls:
+            raw_url = goto_calls[0].group(1)
+            clean_url = (
+                raw_url.replace("{BASE_URL}", target_url.rstrip("/")) if target_url else raw_url
+            )
+            extracted.append(
+                {
+                    "action": st_desc,
+                    "expected": "",
+                    "code": json.dumps(
+                        {"tool": "browser_navigate", "arguments": {"url": clean_url}}
+                    ),
+                    "mcp_provider": "playwright-mcp",
+                    "target_kind": "FE_WEB",
+                }
+            )
+        elif click_calls:
+            loc = click_calls[0].group(1).strip()
+            sel = (
+                'button[type="submit"] >> nth=0'
+                if ("submit" in loc or "Login" in loc)
+                else "button >> nth=0"
+            )
+            extracted.append(
+                {
+                    "action": st_desc,
+                    "expected": "",
+                    "code": json.dumps(
+                        {
+                            "tool": "browser_click",
+                            "arguments": {"target": sel, "selector": sel},
+                        }
+                    ),
+                    "mcp_provider": "playwright-mcp",
+                    "target_kind": "FE_WEB",
+                }
+            )
+        elif upload_calls:
+            raw_upload = upload_calls[0].group(1).strip()
+            file_paths = ["test.txt"]
+            if raw_upload.startswith("["):
+                with suppress(Exception):
+                    file_paths = json.loads(raw_upload.replace("'", '"'))
+            extracted.append(
+                {
+                    "action": st_desc,
+                    "expected": "",
+                    "code": json.dumps(
+                        {
+                            "tool": "browser_upload_file",
+                            "arguments": {
+                                "target": "input[type='file']",
+                                "selector": "input[type='file']",
+                                "paths": file_paths,
+                            },
+                        }
+                    ),
+                    "mcp_provider": "playwright-mcp",
+                    "target_kind": "FE_WEB",
+                }
+            )
+        elif st_type == "assertion":
+            m_text = re.search(
+                r'(?:to_have_text|contains|to_contain_text)\s*\(\s*["\'](.*?)["\']\)',
+                st_body,
+            )
+            assert_text = m_text.group(1).strip() if m_text else ""
+            if not assert_text and "not in page.url" not in st_body:
+                m_quote = re.search(r'["\']([^"\']{3,})["\']', st_desc)
+                if m_quote:
+                    assert_text = m_quote.group(1).strip()
+
+            wait_args: dict[str, object] = (
+                {"text": assert_text} if (assert_text and len(assert_text) >= 2) else {"time": 1}
+            )
+            extracted.append(
+                {
+                    "action": st_desc,
+                    "expected": st_desc,
+                    "code": json.dumps({"tool": "browser_wait_for", "arguments": wait_args}),
+                    "mcp_provider": "playwright-mcp",
+                    "target_kind": "FE_WEB",
+                }
+            )
+
+    if not extracted:
+        return _case_steps_payload(fallback_steps or [])
+
+    for idx, s in enumerate(extracted):
+        s["order"] = idx + 1
+    return extracted
+
+
+def _parameterize_single_step(
+    st: dict[str, object],
+    schema: list[str],
+    row_values: dict[str, str],
+) -> dict[str, object]:
+    st_copy = dict(st)
+    code_str = str(st["code"] if "code" in st and st["code"] else "")  # noqa: RUF019
+    if not code_str:
+        return st_copy
+
+    parsed: dict[str, Any] | None = None
+    with suppress(json.JSONDecodeError, TypeError, ValueError):
+        loaded = json.loads(code_str)
+        if isinstance(loaded, dict):
+            parsed = loaded
+
+    if parsed is not None:
+        tool_val = parsed["tool"] if "tool" in parsed and parsed["tool"] else ""  # noqa: RUF019
+        step_tool_name = str(tool_val).lower()
+        step_payload_args = parsed["arguments"] if "arguments" in parsed else None  # noqa: SIM401
+        if isinstance(step_payload_args, dict) and step_tool_name in (
+            "browser_type",
+            "browser.type",
+        ):
+            raw_text = (
+                str(step_payload_args["text"])
+                if "text" in step_payload_args and step_payload_args["text"]  # noqa: RUF019
+                else ""
+            )
+            if "target" in step_payload_args:
+                target_val = step_payload_args["target"]
+            elif "selector" in step_payload_args:
+                target_val = step_payload_args["selector"]
+            else:
+                target_val = ""
+            target = str(target_val or "").lower()
+            act_val = st["action"] if "action" in st else ""  # noqa: SIM401
+            act = str(act_val or "").lower()
+
+            var_name = ""
+            if "user" in target or "user" in act:
+                var_name = "username"
+            elif "pass" in target or "pass" in act:
+                var_name = "password"
+            elif "email" in target or "email" in act:
+                var_name = "email"
+
+            if (
+                var_name
+                and raw_text
+                and not (raw_text.startswith("{{") and raw_text.endswith("}}"))
+            ):
+                if var_name not in schema:
+                    schema.append(var_name)
+                row_values[var_name] = raw_text
+                step_payload_args["text"] = f"{{{{{var_name}}}}}"
+                parsed["arguments"] = step_payload_args
+                st_copy["code"] = json.dumps(parsed)
+    return st_copy
+
+
+def build_default_dataset_from_steps(
+    steps: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[str], list[dict[str, Any]]]:
+    """Auto-parameterize steps into clean {{var}} bindings and build a default DDT scenario."""
+    schema: list[str] = []
+    row_values: dict[str, str] = {}
+    parameterized_steps: list[dict[str, object]] = []
+
+    parameterized_steps = [_parameterize_single_step(st, schema, row_values) for st in steps]
+
+    rows: list[dict[str, Any]] = []
+    if schema:
+        rows.append(
+            {
+                "id": "row-default",
+                "name": "Default Scenario",
+                "enabled": True,
+                "is_default": True,
+                "isDefault": True,
+                "values": row_values,
+            }
+        )
+
+    return parameterized_steps, schema, rows
 
 
 def _missing_screenshots(raw_steps: list[dict[str, Any]]) -> int:
@@ -107,7 +418,15 @@ def _resolve(
             ui.auth.password = cfg.auth.password
         out_dir = cfg.output_dir
     if url:
-        ui.target_url = url.rstrip("/")
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(url)
+        if parsed.scheme and parsed.netloc:
+            ui.target_url = f"{parsed.scheme}://{parsed.netloc}"
+            if parsed.path and parsed.path != "/":
+                ui.auth.login_url = parsed.path
+        else:
+            ui.target_url = url.rstrip("/")
     if username:
         ui.auth.username = username
     if password:
@@ -466,6 +785,40 @@ def bootstrap_project(**kwargs: Any) -> dict[str, Any]:
 _PRIO_TO_P = {"High": "P1", "Medium": "P2", "Low": "P3"}
 
 
+def _build_published_case_payload(
+    c: dict[str, Any],
+    paths: Paths,
+    target_url: str,
+) -> dict[str, Any]:
+    code = ""
+    if c.get("automation_file"):
+        fp = paths.test_file(str(c["automation_file"]))
+        if fp.is_file():
+            code = fp.read_text(encoding="utf-8")
+    steps_extracted = extract_steps_from_automation_code(
+        code,
+        target_url=target_url,
+        fallback_steps=c.get("steps", []),
+    )
+    param_steps, ddt_cols, ddt_rows = build_default_dataset_from_steps(steps_extracted)
+    return {
+        "sourceRef": c.get("source_ref", "bb:blackbox"),
+        "name": c["title"],
+        "slug": c["title"],
+        "description": c.get("description", ""),
+        "source": "MCP",
+        "priority": _PRIO_TO_P.get(str(c.get("priority")), "P2"),
+        "category": c.get("category", "Blackbox"),
+        "tags": ["blackbox"],
+        "automationFilePath": c.get("automation_file", ""),
+        "automationCode": code,
+        "generatedBy": "suitest-blackbox",
+        "steps": param_steps,
+        "datasetSchema": ddt_cols if ddt_cols else None,
+        "datasetRows": ddt_rows if ddt_rows else None,
+    }
+
+
 def blackbox_publish_results(**kwargs: Any) -> dict[str, Any]:
     """Publish the blackbox suite + latest run (with video/screenshot evidence)
     to the Suitest server so it shows up in the web TCM (Cases + Runs).
@@ -604,28 +957,8 @@ def blackbox_publish_results(**kwargs: Any) -> dict[str, Any]:
 
             cases_payload: list[dict[str, Any]] = []
             results_payload: list[dict[str, Any]] = []
+            cases_payload = [_build_published_case_payload(c, paths, ui.target_url) for c in plan]
             for c in plan:
-                code = ""
-                if c.get("automation_file"):
-                    fp = paths.test_file(str(c["automation_file"]))
-                    if fp.is_file():
-                        code = fp.read_text(encoding="utf-8")
-                cases_payload.append(
-                    {
-                        "sourceRef": c.get("source_ref", "bb:blackbox"),
-                        "name": c["title"],
-                        "slug": c["title"],
-                        "description": c.get("description", ""),
-                        "source": "MCP",
-                        "priority": _PRIO_TO_P.get(str(c.get("priority")), "P2"),
-                        "category": c.get("category", "Blackbox"),
-                        "tags": ["blackbox"],
-                        "automationFilePath": c.get("automation_file", ""),
-                        "automationCode": code,
-                        "generatedBy": "suitest-blackbox",
-                        "steps": _case_steps_payload(c.get("steps", [])),
-                    }
-                )
                 side = _sidecar(str(c["id"]))
                 if not side:
                     continue

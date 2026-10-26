@@ -39,6 +39,9 @@ class ElementInfo:
     href: str = ""
     css: str = ""  # stable-ish css path fallback
     required: bool = False
+    frame_selector: str = ""  # selector for containing iframe/frame
+    is_multiple: bool = False  # e.g. for multi-file upload or multi-select
+    accept: str = ""  # file input accept pattern
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -64,6 +67,8 @@ class LoginForm:
     submit: str = ""
     remember: str = ""
     error: str = ""  # error region locator (may be empty until observed)
+    captcha_input: str = ""
+    captcha_image: str = ""
 
     def found(self) -> bool:
         return bool(self.username and self.password and self.submit)
@@ -123,6 +128,12 @@ class PageInfo:
     screenshot: str = ""  # evidence path
     blank: bool = False
     visible_text_sample: str = ""
+    has_captcha: bool = False
+    captcha_input_selector: str = ""
+    captcha_image_selector: str = ""
+    captcha_type: str = "auto"
+    refresh_target: str = ""
+    landmark_text: str = ""
 
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
@@ -172,6 +183,7 @@ class DiscoveryResult:
     pages: list[PageInfo] = field(default_factory=list)
     skipped_routes: list[str] = field(default_factory=list)  # safeMode / excluded
     errors: list[str] = field(default_factory=list)
+    storage_state_path: str = ""
 
     def page(self, route: str) -> PageInfo | None:
         for p in self.pages:
@@ -187,6 +199,7 @@ class DiscoveryResult:
             "pages": [p.to_json() for p in self.pages],
             "skippedRoutes": self.skipped_routes,
             "errors": self.errors,
+            "storageStatePath": self.storage_state_path,
         }
 
     @staticmethod
@@ -198,6 +211,7 @@ class DiscoveryResult:
             pages=[PageInfo.from_json(p) for p in raw.get("pages", [])],
             skipped_routes=list(raw.get("skippedRoutes", [])),
             errors=list(raw.get("errors", [])),
+            storage_state_path=str(raw.get("storageStatePath", "")),
         )
 
 
