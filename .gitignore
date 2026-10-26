@@ -114,3 +114,4 @@ apps/web/.forgeguard/
 .forgeguard/
 .agents/mcp_config.json
 /fixtures/
+.hermes/

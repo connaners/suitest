@@ -24,6 +24,10 @@ const EXPECTED_TOOLS = [
   "bootstrap_project",
   "blackbox_discover_app",
   "blackbox_run_playwright_tests",
+  "edit_test_case_inputs",
+  "manage_test_case_dataset",
+  "get_workspace_variables",
+  "set_workspace_variable",
 ];
 
 function fail(msg) {

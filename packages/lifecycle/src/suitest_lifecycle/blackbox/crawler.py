@@ -32,32 +32,47 @@ if TYPE_CHECKING:
 # Rich per-element capture: every attribute the selector strategy ranks.
 _EXTRACT_JS = r"""
 () => {
-  const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-  const labelFor = (el) => {
-    if (el.id) { const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`); if (l) return l.innerText.trim(); }
-    const wrap = el.closest('label'); return wrap ? wrap.innerText.trim().slice(0, 80) : '';
+  const vis = (el) => {
+    try {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    } catch {
+      return false;
+    }
+  };
+  const labelFor = (doc, el) => {
+    try {
+      if (el.id) { const l = doc.querySelector(`label[for="${CSS.escape(el.id)}"]`); if (l) return l.innerText.trim(); }
+      const wrap = el.closest('label'); return wrap ? wrap.innerText.trim().slice(0, 80) : '';
+    } catch {
+      return '';
+    }
   };
   const cssPath = (el) => {
-    const parts = [];
-    let cur = el;
-    for (let i = 0; cur && cur.nodeType === 1 && i < 5; i++) {
-      let part = cur.tagName.toLowerCase();
-      if (cur.id) { parts.unshift(`#${cur.id}`); break; }
-      const sibs = cur.parentElement ? [...cur.parentElement.children].filter(c => c.tagName === cur.tagName) : [];
-      if (sibs.length > 1) part += `:nth-of-type(${sibs.indexOf(cur) + 1})`;
-      parts.unshift(part);
-      cur = cur.parentElement;
+    try {
+      const parts = [];
+      let cur = el;
+      for (let i = 0; cur && cur.nodeType === 1 && i < 5; i++) {
+        let part = cur.tagName.toLowerCase();
+        if (cur.id) { parts.unshift(`#${cur.id}`); break; }
+        const sibs = cur.parentElement ? [...cur.parentElement.children].filter(c => c.tagName === cur.tagName) : [];
+        if (sibs.length > 1) part += `:nth-of-type(${sibs.indexOf(cur) + 1})`;
+        parts.unshift(part);
+        cur = cur.parentElement;
+      }
+      return parts.join(' > ');
+    } catch {
+      return '';
     }
-    return parts.join(' > ');
   };
-  const info = (el, kind) => ({
+  const info = (doc, el, kind, frameSel = '') => ({
     tag: el.tagName.toLowerCase(),
     kind,
     testid: el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-test') || '',
     testid_attr: el.hasAttribute('data-testid') ? 'data-testid' : el.hasAttribute('data-cy') ? 'data-cy' : el.hasAttribute('data-test') ? 'data-test' : '',
     role: el.getAttribute('role') || '',
     aria_label: el.getAttribute('aria-label') || '',
-    label: labelFor(el),
+    label: labelFor(doc, el),
     placeholder: el.getAttribute('placeholder') || '',
     name: el.getAttribute('name') || '',
     input_type: (el.getAttribute('type') || '').toLowerCase(),
@@ -67,15 +82,111 @@ _EXTRACT_JS = r"""
     href: el.getAttribute && el.tagName === 'A' ? (el.getAttribute('href') || '') : '',
     css: cssPath(el),
     required: el.required === true || el.getAttribute('aria-required') === 'true',
+    frame_selector: frameSel,
+    is_multiple: el.multiple === true,
+    accept: el.getAttribute('accept') || '',
   });
-  const inputs = [...document.querySelectorAll('input,textarea,select')].filter(vis).map(e => info(e, e.tagName === 'SELECT' ? 'select' : (e.type === 'checkbox' ? 'checkbox' : 'input')));
-  const buttons = [...document.querySelectorAll('button,[role=button],input[type=submit],a[role=button]')].filter(vis).map(e => info(e, 'button'));
-  const links = [...document.querySelectorAll('a[href]')].filter(vis).map(e => info(e, 'link')).filter(l => l.href.startsWith('/'));
+  const extractDoc = (doc, frameSel = '') => {
+    try {
+      const ins = [...doc.querySelectorAll('input,textarea,select')].filter(vis).map(e => info(doc, e, e.tagName === 'SELECT' ? 'select' : (e.type === 'checkbox' ? 'checkbox' : 'input'), frameSel));
+      const btns = [...doc.querySelectorAll('button,[role=button],input[type=submit],a[role=button]')].filter(vis).map(e => info(doc, e, 'button', frameSel));
+      const lnks = [...doc.querySelectorAll('a[href]')].filter(vis).map(e => info(doc, e, 'link', frameSel)).filter(l => l.href.startsWith('/'));
+      return { inputs: ins, buttons: btns, links: lnks };
+    } catch {
+      return { inputs: [], buttons: [], links: [] };
+    }
+  };
+  const rootExtracted = extractDoc(document, '');
+  const inputs = [...rootExtracted.inputs];
+  const buttons = [...rootExtracted.buttons];
+  const links = [...rootExtracted.links];
+
+  // Frame traversal (piercing iframes)
+  try {
+    const iframes = [...document.querySelectorAll('iframe,frame')].filter(vis);
+    for (const ifr of iframes) {
+      try {
+        const idoc = ifr.contentDocument || ifr.contentWindow?.document;
+        if (!idoc) continue;
+        let frameSel = '';
+        if (ifr.id) frameSel = `iframe#${ifr.id}`;
+        else if (ifr.name) frameSel = `iframe[name="${ifr.name}"]`;
+        else if (ifr.src) {
+          try {
+            const u = new URL(ifr.src, window.location.href);
+            frameSel = `iframe[src*="${u.pathname}"]`;
+          } catch {
+            frameSel = `iframe[src="${ifr.src}"]`;
+          }
+        } else {
+          frameSel = 'iframe';
+        }
+        const fData = extractDoc(idoc, frameSel);
+        inputs.push(...fData.inputs);
+        buttons.push(...fData.buttons);
+        links.push(...fData.links);
+      } catch {}
+    }
+  } catch {}
+
+  // CAPTCHA detection
+  let hasCaptcha = false;
+  let captchaInputSelector = '';
+  let captchaImageSelector = '';
+  let captchaType = 'auto';
+  let refreshTarget = '';
+  const checkCaptchaInDoc = (doc, frameSel = '') => {
+    try {
+      const cInput = [...doc.querySelectorAll('input')].filter(vis).find(e => {
+        const blob = ((e.name || '') + ' ' + (e.id || '') + ' ' + (e.placeholder || '') + ' ' + (e.getAttribute('aria-label') || '')).toLowerCase();
+        return blob.includes('captcha') || blob.includes('security_code') || blob.includes('verify_code');
+      });
+      if (!cInput) return null;
+      let inSel = cInput.id ? `#${cInput.id}` : (cInput.name ? `input[name="${cInput.name}"]` : 'input[type="text"]');
+      if (frameSel) inSel = `${frameSel} >> ${inSel}`;
+      const container = cInput.closest('form') || cInput.parentElement?.parentElement || doc.body;
+      let imgSel = '';
+      const cImg = container ? container.querySelector('img[src*="captcha" i], img#img-captcha, img#captcha, canvas#captcha, img[alt*="captcha" i], canvas') : null;
+      if (cImg) {
+        imgSel = cImg.id ? `#${cImg.id}` : (cImg.tagName === 'CANVAS' ? 'canvas' : (cImg.getAttribute('src') && cImg.getAttribute('src').toLowerCase().includes('captcha') ? 'img[src*="captcha" i]' : 'img'));
+        if (frameSel) imgSel = `${frameSel} >> ${imgSel}`;
+      }
+      return { hasCaptcha: true, inputSelector: inSel, imageSelector: imgSel, refreshTarget: imgSel };
+    } catch {
+      return null;
+    }
+  };
+  const cap = checkCaptchaInDoc(document, '');
+  if (cap) {
+    hasCaptcha = cap.hasCaptcha;
+    captchaInputSelector = cap.inputSelector;
+    captchaImageSelector = cap.imageSelector;
+    refreshTarget = cap.refreshTarget;
+  } else {
+    try {
+      const iframes = [...document.querySelectorAll('iframe,frame')].filter(vis);
+      for (const ifr of iframes) {
+        try {
+          const idoc = ifr.contentDocument || ifr.contentWindow?.document;
+          if (!idoc) continue;
+          const frameSel = ifr.id ? `iframe#${ifr.id}` : (ifr.name ? `iframe[name="${ifr.name}"]` : 'iframe');
+          const ifrCap = checkCaptchaInDoc(idoc, frameSel);
+          if (ifrCap) {
+            hasCaptcha = ifrCap.hasCaptcha;
+            captchaInputSelector = ifrCap.inputSelector;
+            captchaImageSelector = ifrCap.imageSelector;
+            refreshTarget = ifrCap.refreshTarget;
+            break;
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
   const tables = document.querySelectorAll('table tbody tr, [role=row], [role=grid] [role=row]');
   let rowSelector = '';
   if (document.querySelector('table tbody tr')) rowSelector = 'table tbody tr';
   else if (document.querySelector('[role=grid] [role=row]')) rowSelector = '[role=grid] [role=row]';
-  // repeated-testid rows (list rendered as divs)
   const counts = {};
   document.querySelectorAll('[data-testid]').forEach(e => { const t = e.getAttribute('data-testid'); counts[t] = (counts[t] || 0) + 1; });
   const repeated = Object.entries(counts).filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]);
@@ -91,13 +202,20 @@ _EXTRACT_JS = r"""
     hasTable: tables.length >= 1 || !!rowSelector,
     rowSelector,
     hasModal: !!document.querySelector('[role=dialog],[aria-modal=true],dialog[open]'),
-    searchInfo: search ? info(search, 'input') : null,
-    pagerInfo: pager ? info(pager, 'button') : null,
+    searchInfo: search ? info(document, search, 'input') : null,
+    pagerInfo: pager ? info(document, pager, 'button') : null,
     textSample: (document.body ? document.body.innerText : '').trim().slice(0, 1500),
     elementCount: document.body ? document.body.querySelectorAll('*').length : 0,
+    hasCaptcha,
+    captchaInputSelector,
+    captchaImageSelector,
+    captchaType,
+    refreshTarget,
+    landmarkText: ((document.querySelector('h1, h2, [role="heading"], .navbar-brand, .brand')?.innerText || '').trim() || document.title || '').trim().slice(0, 80),
   };
 }
 """
+
 
 _SAFE_SKIP_HREF = re.compile(
     r"(logout|log-out|sign-?out|delete|remove|destroy|billing|payment|checkout|subscribe"
@@ -168,6 +286,12 @@ async def _snapshot(
         screenshot=shot,
         visible_text_sample=str(data.get("textSample", "")),
         blank=int(data.get("elementCount", 0)) < 5 or not str(data.get("textSample", "")).strip(),
+        has_captcha=bool(data.get("hasCaptcha")),
+        captcha_input_selector=str(data.get("captchaInputSelector", "")),
+        captcha_image_selector=str(data.get("captchaImageSelector", "")),
+        captcha_type=str(data.get("captchaType", "auto")),
+        refresh_target=str(data.get("refreshTarget", "")),
+        landmark_text=str(data.get("landmarkText", "")),
     )
     from suitest_lifecycle.blackbox.selector import build_locator
 
@@ -262,8 +386,13 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
                 landed = _route_of(page.url, base)
                 probe.landed_route = landed
                 probe.success = landed != login_route
+                if probe.success:
+                    state_file = evidence_dir / "storage_state.json"
+                    with contextlib.suppress(Exception):
+                        await ctx.storage_state(path=str(state_file))
+                        if state_file.is_file():
+                            result.storage_state_path = str(state_file)
                 if not probe.success:
-                    # still on login — look for an error region to report
                     err = await page.evaluate(
                         "() => { const e = document.querySelector('[role=alert],"
                         "[class*=error],[data-testid*=error]');"
@@ -376,7 +505,12 @@ async def _analyze_one(cfg: BlackboxUiConfig, url: str, evidence_dir: Path) -> P
             lambda m: console_errors.append(m.text[:300]) if m.type == "error" else None,
         )
         page.on("pageerror", lambda e: console_errors.append(str(e)[:300]))
-        target = url if url.startswith("http") else base + url
+        if url.startswith("http"):
+            target = url
+        elif base.endswith(url):
+            target = base
+        else:
+            target = base + url
         await _goto(page, target)
         route = _route_of(page.url, base)
         info = await _snapshot(

@@ -158,10 +158,17 @@ async def run_test():
             slow_mo=_SLOWMO_MS if _EVIDENCE else 0,
             args=["--window-size=1280,720", "--disable-dev-shm-usage", "--ipc=host"],
         )
-        # Create a new browser context that records video of the whole run.
-        context = await browser.new_context(
-            record_video_dir=_VIDEO_DIR, viewport={"width": 1280, "height": 720}
-        )
+        # Create a new browser context (with optional pre-authenticated storage_state).
+        _ctx_kwargs: dict[str, object] = {
+            "record_video_dir": _VIDEO_DIR,
+            "viewport": {"width": 1280, "height": 720},
+        }
+        _state_file = os.path.join(_TMP, "storage_state.json")
+        if not os.path.exists(_state_file):
+            _state_file = os.path.join(_TMP, "blackbox", "storage_state.json")
+        if os.path.isfile(_state_file) and os.path.getsize(_state_file) > 0:
+            _ctx_kwargs["storage_state"] = _state_file
+        context = await browser.new_context(**_ctx_kwargs)
         # Wider default timeout so auto-waiting Playwright APIs inherit it.
         context.set_default_timeout(TIMEOUT)
         page = await context.new_page()

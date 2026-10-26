@@ -1,4 +1,4 @@
-export type DetectedInputType = "text" | "password" | "select" | "upload" | "url";
+export type DetectedInputType = "text" | "password" | "select" | "upload" | "url" | "captcha";
 
 export interface DetectedInputStep {
   stepId: string;
@@ -170,6 +170,28 @@ export function detectInputSteps(steps: StepLike[]): DetectedInputStep[] {
         });
         continue;
       }
+
+      // 5. CAPTCHA Solve
+      if (
+        tool === "browser_solve_captcha" ||
+        tool === "browser.solve_captcha" ||
+        tool === "solve_captcha"
+      ) {
+        const inputSel = String(args.input_selector || args.target || args.selector || "#captcha");
+        const val = String(args.value || args.text || args.captcha_type || "auto");
+        detected.push({
+          stepId: step.id,
+          order: step.order,
+          type: "captcha",
+          label: cleanLabel(inputSel, "CAPTCHA Input"),
+          selector: inputSel,
+          currentValue: val,
+          isManual: false,
+          originalAction: step.action,
+          originalCode: step.code,
+        });
+        continue;
+      }
     }
 
     // Tier 2: Heuristics on step.action for manual steps or plain code
@@ -288,6 +310,76 @@ export function detectInputSteps(steps: StepLike[]): DetectedInputStep[] {
 }
 
 /**
+ * Derives a clean, human-friendly semantic variable name for DDT columns.
+ */
+export function deriveSemanticVarName(
+  item: DetectedInputStep,
+  existingSchema: string[] = [],
+): string {
+  // 1. If value is already {{var_name}}, keep that exact var_name
+  const val = item.currentValue || "";
+  const varMatch = val.match(/^\{\{([a-zA-Z0-9_.-]+)\}\}$/);
+  if (varMatch && varMatch[1]) {
+    return varMatch[1];
+  }
+
+  // 2. Normalize by type and label/selector
+  const label = (item.label || "").toLowerCase();
+  const sel = (item.selector || "").toLowerCase();
+  const act = (item.originalAction || "").toLowerCase();
+  const combined = `${label} ${sel} ${act}`;
+
+  if (item.type === "password" || combined.includes("pass") || combined.includes("sandi")) {
+    const match = existingSchema.find((k) => k.toLowerCase().includes("pass"));
+    return match || "password";
+  }
+  if (combined.includes("user") || combined.includes("username") || combined.includes("pengguna")) {
+    const match = existingSchema.find((k) => k.toLowerCase().includes("user"));
+    return match || "username";
+  }
+  if (combined.includes("email") || combined.includes("e-mail")) {
+    const match = existingSchema.find((k) => k.toLowerCase().includes("email"));
+    return match || "email";
+  }
+  if (
+    item.type === "url" ||
+    combined.includes("url") ||
+    combined.includes("link") ||
+    combined.includes("domain")
+  ) {
+    return "base_url";
+  }
+  if (
+    item.type === "upload" ||
+    combined.includes("file") ||
+    combined.includes("upload") ||
+    combined.includes("dokumen")
+  ) {
+    return "upload_file";
+  }
+  if (item.type === "captcha" || combined.includes("captcha")) {
+    return "captcha_code";
+  }
+
+  // 3. Fallback: clean words from label if sensible
+  const clean = label
+    .replace(/[^a-zA-Z0-9_]/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  if (
+    clean &&
+    clean.length >= 3 &&
+    clean.length <= 20 &&
+    !clean.startsWith("input") &&
+    !clean.startsWith("step")
+  ) {
+    return clean;
+  }
+
+  return `var_step_${item.order}`;
+}
+
+/**
  * Apply updated input values to a step, synchronizing both code and action.
  */
 export function applyStepInputUpdate<T extends StepLike>(
@@ -374,6 +466,20 @@ export function applyStepInputUpdate<T extends StepLike>(
         parsed.arguments.url = newValue;
         if (oldUrl && updatedAction.includes(oldUrl)) {
           updatedAction = updatedAction.replace(oldUrl, newValue);
+        }
+      } else if (
+        tool === "browser_solve_captcha" ||
+        tool === "browser.solve_captcha" ||
+        tool === "solve_captcha"
+      ) {
+        if (newValue.startsWith("{{") && newValue.endsWith("}}")) {
+          parsed.arguments.value = newValue;
+        } else if (["auto", "alphanumeric", "numeric", "math"].includes(newValue.toLowerCase())) {
+          parsed.arguments.captcha_type = newValue.toLowerCase();
+          delete parsed.arguments.value;
+          delete parsed.arguments.text;
+        } else {
+          parsed.arguments.value = newValue;
         }
       }
 

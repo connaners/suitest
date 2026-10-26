@@ -637,8 +637,8 @@ class _VideoManager:
         )
         try:
             vp_parts = self.viewport_dim.split("x")
-            vp_w = int(vp_parts[0]) if len(vp_parts) == 2 else 1920
-            vp_h = int(vp_parts[1]) if len(vp_parts) == 2 else 1080
+            vp_w = int(vp_parts[0]) if len(vp_parts) == 2 else 1280
+            vp_h = int(vp_parts[1]) if len(vp_parts) == 2 else 850
             await self.invoker.invoke(
                 explicit_provider=self.target_pw_provider,
                 tool="browser_resize",
@@ -1627,7 +1627,7 @@ def _build_runtime_managers(
     elif raw_vp and isinstance(raw_vp, dict) and "width" in raw_vp and "height" in raw_vp:
         viewport_dim = f"{raw_vp['width']}x{raw_vp['height']}"
     else:
-        viewport_dim = "1920x1080"
+        viewport_dim = "1280x850" if not headless_mode else "1920x1080"
     registry.register_provider(
         workspace_id,
         build_playwright_provider(

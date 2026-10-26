@@ -85,6 +85,8 @@ _LEGACY_TOOL_ALIASES: dict[str, str] = {
     "browser.file_upload": "browser_upload_file",
     "browser.upload_file": "browser_upload_file",
     "browser.solve_captcha": "browser_solve_captcha",
+    "browser_assert_visible": "browser_wait_for",
+    "browser.assert_visible": "browser_wait_for",
 }
 
 
@@ -517,6 +519,10 @@ async def _invoke_tool(
     action_description: str | None = None,
 ) -> McpToolResult:
     normalized_tool = _normalize_tool_name(tool)
+    if normalized_tool == "browser_type" and "selector" in arguments and "target" not in arguments:
+        arguments["target"] = arguments["selector"]
+    elif "target" in arguments and "selector" not in arguments:
+        arguments["selector"] = arguments["target"]
     if normalized_tool in ("browser_solve_captcha", "browser.solve_captcha"):
         return await _handle_solve_captcha_operation(
             invoker=invoker,
@@ -742,15 +748,55 @@ async def _invoke_tool(
     clean_invoke_args = (
         {k: v for k, v in arguments.items() if k not in ("_skip_captcha_detect", "_detect_captcha")}
         if ("_skip_captcha_detect" in arguments or "_detect_captcha" in arguments)
-        else arguments
+        else dict(arguments)
     )
-    click_res = await invoker.invoke(
-        explicit_provider=explicit_provider,
-        tool=normalized_tool,
-        arguments=clean_invoke_args,
-        ctx=ctx,
-    )
-
+    if normalized_tool == "browser_wait_for":
+        wait_args: dict[str, object] = {}
+        if "text" in clean_invoke_args:
+            wait_args["text"] = str(clean_invoke_args["text"])
+        elif "textGone" in clean_invoke_args:
+            wait_args["textGone"] = str(clean_invoke_args["textGone"])
+        elif "time" in clean_invoke_args:
+            try:
+                wait_args["time"] = float(str(clean_invoke_args["time"]))
+            except Exception:
+                wait_args["time"] = 1.0
+        else:
+            wait_args["time"] = 1.0
+        clean_invoke_args = wait_args
+    try:
+        click_res = await invoker.invoke(
+            explicit_provider=explicit_provider,
+            tool=normalized_tool,
+            arguments=clean_invoke_args,
+            ctx=ctx,
+        )
+    except McpToolFailed as exc:
+        if "strict mode violation" in str(exc):
+            strict_target = str(
+                clean_invoke_args.get("target") or clean_invoke_args.get("selector") or ""
+            )
+            if strict_target and "nth=" not in strict_target:
+                healed_target = f"{strict_target} >> nth=0"
+                retry_args = dict(clean_invoke_args)
+                retry_args["target"] = healed_target
+                if "selector" in retry_args:
+                    retry_args["selector"] = healed_target
+                log.info(
+                    "step_executor.auto_heal.strict_mode_nth0",
+                    original=strict_target,
+                    healed=healed_target,
+                )
+                click_res = await invoker.invoke(
+                    explicit_provider=explicit_provider,
+                    tool=normalized_tool,
+                    arguments=retry_args,
+                    ctx=ctx,
+                )
+            else:
+                raise
+        else:
+            raise
     # Post-failure fallback: only trigger DOM inspection when a submit action actually fails
     target = str(arguments.get("target") or arguments.get("selector") or "")
     if (

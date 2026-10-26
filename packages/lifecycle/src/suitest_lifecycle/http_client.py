@@ -55,6 +55,7 @@ class SuitestClient:
         # workspaceId from suitest.config.json (a reinstall, or a config shared
         # between people who each have their own workspace) would break every
         # publish for no gain, so the key wins whenever there is one.
+        self._workspace_id = workspace_id or ""
         if workspace_id and not token:
             self._headers["X-Workspace-Id"] = workspace_id
 
@@ -66,6 +67,50 @@ class SuitestClient:
 
     def close(self) -> None:  # urllib is connectionless — kept for SDK parity
         return None
+
+    @property
+    def workspace_id(self) -> str:
+        return getattr(self, "_workspace_id", "") or self._headers.get("X-Workspace-Id", "")
+
+    def get(
+        self,
+        path: str,
+        params: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        return self._request("GET", path, params=params, headers=headers)
+
+    def post(
+        self,
+        path: str,
+        json_body: Any = None,
+        *,
+        json: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        return self._request(
+            "POST", path, json_body=json_body if json_body is not None else json, headers=headers
+        )
+
+    def patch(
+        self,
+        path: str,
+        json_body: Any = None,
+        *,
+        json: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        return self._request(
+            "PATCH", path, json_body=json_body if json_body is not None else json, headers=headers
+        )
+
+    def delete(
+        self,
+        path: str,
+        params: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        return self._request("DELETE", path, params=params, headers=headers)
 
     # -- low level ----------------------------------------------------------
     def _request(
