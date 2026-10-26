@@ -14,7 +14,7 @@ SafeMode invariants:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from suitest_lifecycle.models import PlanCase, PlanStep, Priority
 
@@ -43,6 +43,13 @@ def _slugify(text: str) -> str:
     import re
 
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:80]
+
+
+def _find_first_file_input(inputs: list[Any]) -> Any | None:
+    for e in inputs:
+        if getattr(e, "input_type", "") == "file":
+            return e
+    return None
 
 
 def _case(
@@ -479,9 +486,8 @@ async def _body(page):
 """,
                     )
                 )
-            first_file_input = next((e for e in p.inputs if e.input_type == "file"), None)
-            if first_file_input is not None:
-                fin = first_file_input
+            fin = _find_first_file_input(p.inputs)
+            if fin is not None:
                 from suitest_lifecycle.blackbox.selector import build_locator as _bl
                 from suitest_lifecycle.blackbox.selector import describe as _desc
 
