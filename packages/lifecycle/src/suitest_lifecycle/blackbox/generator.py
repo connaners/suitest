@@ -479,8 +479,9 @@ async def _body(page):
 """,
                     )
                 )
-            file_inputs = [e for e in p.inputs if e.input_type == "file"]
-            for fin in file_inputs[:1]:
+            first_file_input = next((e for e in p.inputs if e.input_type == "file"), None)
+            if first_file_input is not None:
+                fin = first_file_input
                 from suitest_lifecycle.blackbox.selector import build_locator as _bl
                 from suitest_lifecycle.blackbox.selector import describe as _desc
 

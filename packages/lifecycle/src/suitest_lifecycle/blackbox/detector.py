@@ -194,7 +194,7 @@ def detect_captcha_form(page: PageInfo) -> tuple[bool, str, str, str, str]:
 
     for el in page.inputs:
         blob = _blob(el)
-        if any(k in blob for k in ("captcha", "security_code", "verify_code")):
+        if "captcha" in blob or "security_code" in blob or "verify_code" in blob:
             in_sel = (
                 f"#{el.dom_id}"
                 if el.dom_id

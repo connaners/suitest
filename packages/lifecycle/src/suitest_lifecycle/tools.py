@@ -12,6 +12,7 @@ target not ready) — those become ``success=false`` envelopes with ``errors``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from contextlib import suppress
@@ -30,6 +31,8 @@ from suitest_lifecycle.serialize import (
     summary_to_json,
 )
 from suitest_lifecycle.tool_result import envelope as _envelope
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_load(config_path: str) -> tuple[Config | None, dict[str, object] | None]:
@@ -268,9 +271,8 @@ def edit_test_case_inputs(
         try:
             cfg = load_config(config_path)
             out_dir = cfg.output_dir
-        except Exception:
-            pass
-
+        except (ConfigError, OSError, ValueError) as err:
+            logger.debug("Could not read output_dir from config %s: %s", config_path, err)
     paths = build_paths(out_dir, Mode.FRONTEND)
     mode_dir = paths.mode_dir
 
@@ -289,10 +291,11 @@ def edit_test_case_inputs(
                             "stepCount": len(c.get("steps", [])),
                         }
                     )
-            except Exception:
-                pass
+            except (OSError, json.JSONDecodeError, ValueError) as err:
+                logger.debug("Could not read test plan %s: %s", plan_path, err)
         if not cases_summary and mode_dir.is_dir():
-            for f in sorted(mode_dir.glob("TC*.py")):
+            tc_files = sorted(mode_dir.glob("TC*.py"))
+            for f in tc_files:
                 cases_summary.append({"id": f.stem.split("_")[0], "title": f.stem, "file": f.name})
         return _envelope(
             True,
@@ -302,18 +305,18 @@ def edit_test_case_inputs(
 
     target_file: Path | None = None
     if mode_dir.is_dir():
-        candidates = sorted(mode_dir.glob(f"{case_id}_*.py")) or sorted(
+        specific_matches = sorted(mode_dir.glob(f"{case_id}_*.py")) or sorted(
             mode_dir.glob(f"{case_id}.py")
         )
-        for candidate in candidates:
-            target_file = candidate
-            break
-        if target_file is None:
-            for candidate in sorted(mode_dir.glob("*.py")):
-                if case_id.lower() in candidate.name.lower():
+        if specific_matches:
+            target_file = specific_matches[0]
+        else:
+            all_py_files = sorted(mode_dir.glob("*.py"))
+            case_lower = case_id.lower()
+            for candidate in all_py_files:
+                if case_lower in candidate.name.lower():
                     target_file = candidate
                     break
-
     if target_file is None or not target_file.is_file():
         return _envelope(
             False,
@@ -435,16 +438,20 @@ def edit_test_case_inputs(
 
     updated_count = 0
     new_source = source
+    inputs_by_sel = {str(inp.get("selector", "")): inp for inp in discovered_inputs}
     for upd in updates:
         step_ord = upd.get("step_order")
         target_input = None
         if step_ord is not None and 1 <= int(step_ord) <= len(discovered_inputs):
             target_input = discovered_inputs[int(step_ord) - 1]
         elif upd.get("selector"):
-            target_input = next(
-                (inp for inp in discovered_inputs if str(upd["selector"]) in inp["selector"]),
-                None,
-            )
+            sel_key = str(upd["selector"])
+            target_input = inputs_by_sel.get(sel_key)
+            if not target_input:
+                for inp in discovered_inputs:
+                    if sel_key in str(inp.get("selector", "")):
+                        target_input = inp
+                        break
 
         if not target_input:
             continue
@@ -534,9 +541,8 @@ def manage_test_case_dataset(
         try:
             cfg = load_config(config_path)
             out_dir = cfg.output_dir
-        except Exception:
-            pass
-
+        except (ConfigError, OSError, ValueError) as err:
+            logger.debug("Could not read output_dir from config %s: %s", config_path, err)
     paths = build_paths(out_dir, Mode.FRONTEND)
     mode_dir = paths.mode_dir
 
@@ -570,8 +576,8 @@ def manage_test_case_dataset(
                         or [],
                         "rows": case_res.get("dataset_rows") or case_res.get("datasetRows") or [],
                     }
-            except Exception:
-                pass
+            except Exception as err:
+                logger.debug("Could not retrieve remote dataset for %s: %s", case_id, err)
         return _envelope(
             True,
             f"dataset for {case_id}: {len(current_data.get('schema', []))} columns, {len(current_data.get('rows', []))} rows",
@@ -615,9 +621,8 @@ def manage_test_case_dataset(
                         f"/api/v1/test-cases/{case_id}",
                         json={"dataset_schema": new_cols, "dataset_rows": new_rows},
                     )
-            except Exception:
-                pass
-
+            except Exception as err:
+                logger.debug("Could not patch remote dataset schema for %s: %s", case_id, err)
         return _envelope(
             True,
             f"renamed column '{old_col}' to '{new_col}' in {case_id} dataset",
@@ -643,9 +648,8 @@ def manage_test_case_dataset(
                         f"/api/v1/test-cases/{case_id}",
                         json={"dataset_schema": cols, "dataset_rows": matrix_rows},
                     )
-            except Exception:
-                pass
-
+            except Exception as err:
+                logger.debug("Could not patch remote dataset rows for %s: %s", case_id, err)
         return _envelope(
             True,
             f"saved dataset for {case_id}: {len(cols)} columns, {len(matrix_rows)} scenario rows",

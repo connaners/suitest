@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,6 +49,41 @@ def _case_steps_payload(raw_steps: list[dict[str, object]]) -> list[dict[str, ob
         }
         for index, step in enumerate(raw_steps)
     ]
+
+
+def _parse_fill_call(f: re.Match[str]) -> dict[str, object]:
+    loc = f.group(1).strip()
+    raw = f.group(2).strip()
+    val = raw[1:-1] if raw.startswith(('"', "'")) and raw.endswith(('"', "'")) else raw
+
+    field_name = "field"
+    m_ph = re.search(
+        r'placeholder\s*=\s*["\'](.*?)["\']|get_by_placeholder\s*\(\s*["\'](.*?)["\']',
+        loc,
+    )
+    if m_ph:
+        field_name = m_ph.group(1) or m_ph.group(2)
+    elif "name=" in loc:
+        m_n = re.search(r'name=["\'](.*?)["\']', loc)
+        if m_n:
+            field_name = m_n.group(1)
+
+    m_loc = re.search(r'locator\s*\(\s*["\'](.*?)["\']\s*\)', loc)
+    sel = f'[placeholder="{field_name}"]' if m_ph else (m_loc.group(1) if m_loc else loc)
+    if (".first" in loc or m_ph or "name=" in loc) and "nth=" not in sel:
+        sel = f"{sel} >> nth=0"
+    return {
+        "action": f"Fill {field_name}",
+        "expected": "",
+        "code": json.dumps(
+            {
+                "tool": "browser_type",
+                "arguments": {"target": sel, "selector": sel, "text": val},
+            }
+        ),
+        "mcp_provider": "playwright-mcp",
+        "target_kind": "FE_WEB",
+    }
 
 
 def extract_steps_from_automation_code(
@@ -114,42 +150,7 @@ def extract_steps_from_automation_code(
             )
         elif len(fill_calls) > 1:
             for f in fill_calls:
-                loc = f.group(1).strip()
-                raw = f.group(2).strip()
-                val = raw[1:-1] if raw.startswith(('"', "'")) and raw.endswith(('"', "'")) else raw
-
-                field_name = "field"
-                m_ph = re.search(
-                    r'placeholder\s*=\s*["\'](.*?)["\']|get_by_placeholder\s*\(\s*["\'](.*?)["\']',
-                    loc,
-                )
-                if m_ph:
-                    field_name = m_ph.group(1) or m_ph.group(2)
-                elif "name=" in loc:
-                    m_n = re.search(r'name=["\'](.*?)["\']', loc)
-                    if m_n:
-                        field_name = m_n.group(1)
-
-                m_loc = re.search(r'locator\s*\(\s*["\'](.*?)["\']\s*\)', loc)
-                sel = (
-                    f'[placeholder="{field_name}"]' if m_ph else (m_loc.group(1) if m_loc else loc)
-                )
-                if (".first" in loc or m_ph or "name=" in loc) and "nth=" not in sel:
-                    sel = f"{sel} >> nth=0"
-                extracted.append(
-                    {
-                        "action": f"Fill {field_name}",
-                        "expected": "",
-                        "code": json.dumps(
-                            {
-                                "tool": "browser_type",
-                                "arguments": {"target": sel, "selector": sel, "text": val},
-                            }
-                        ),
-                        "mcp_provider": "playwright-mcp",
-                        "target_kind": "FE_WEB",
-                    }
-                )
+                extracted.append(_parse_fill_call(f))
         elif len(fill_calls) == 1:
             loc = fill_calls[0].group(1).strip()
             raw = fill_calls[0].group(2).strip()
@@ -285,14 +286,23 @@ def build_default_dataset_from_steps(
         st_copy = dict(st)
         code_str = str(st.get("code") or "")
         if code_str:
-            try:
-                parsed = json.loads(code_str)
-                tool = str(parsed.get("tool") or "").lower()
-                args = parsed.get("arguments") or {}
+            parsed: dict[str, Any] | None = None
+            with suppress(json.JSONDecodeError, TypeError, ValueError):
+                loaded = json.loads(code_str)
+                if isinstance(loaded, dict):
+                    parsed = loaded
 
-                if tool in ("browser_type", "browser.type"):
-                    raw_text = str(args.get("text", ""))
-                    target = str(args.get("target") or args.get("selector") or "").lower()
+            if parsed is not None:
+                step_tool_name = str(parsed.get("tool") or "").lower()
+                step_payload_args = parsed.get("arguments")
+                if isinstance(step_payload_args, dict) and step_tool_name in (
+                    "browser_type",
+                    "browser.type",
+                ):
+                    raw_text = str(step_payload_args.get("text", ""))
+                    target = str(
+                        step_payload_args.get("target") or step_payload_args.get("selector") or ""
+                    ).lower()
                     act = str(st.get("action") or "").lower()
 
                     var_name = ""
@@ -311,11 +321,9 @@ def build_default_dataset_from_steps(
                         if var_name not in schema:
                             schema.append(var_name)
                         row_values[var_name] = raw_text
-                        args["text"] = f"{{{{{var_name}}}}}"
-                        parsed["arguments"] = args
+                        step_payload_args["text"] = f"{{{{{var_name}}}}}"
+                        parsed["arguments"] = step_payload_args
                         st_copy["code"] = json.dumps(parsed)
-            except Exception:
-                pass
         parameterized_steps.append(st_copy)
 
     rows: list[dict[str, Any]] = []
