@@ -27,6 +27,7 @@ describe("Recorder Agent CAPTCHA Detection & Pairing", () => {
       window.__suitest_recorder_cleanup__();
     }
     vi.clearAllTimers();
+    document.body.innerHTML = "";
   });
 
   it("detects captcha input fields by name, id, placeholder, and aria-label", () => {
