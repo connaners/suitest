@@ -76,9 +76,13 @@ def classify_button_intent(el: ElementInfo) -> str:
     Returns: 'SEARCH', 'LOOKUP_MODAL', 'CREATE', 'EDIT', 'DELETE', 'UPLOAD', 'CALENDAR', 'SUBMIT', or 'CUSTOM'.
     """
     blob = _blob(el)
+    if el.input_type == "submit" or any(
+        k in blob for k in ("submit", "simpan", "save", "kirim", "lanjut", "next", "continue")
+    ):
+        return "SUBMIT"
     if is_destructive(el):
         return "DELETE"
-    if "lookup" in blob or "modal" in blob:
+    if "lookup" in blob or "modal-trigger" in blob or "modal-toggle" in blob:
         return "LOOKUP_MODAL"
     if any(k in blob for k in ("search", "icon:search", "fa-search", "cari")):
         return "SEARCH"
@@ -90,8 +94,6 @@ def classify_button_intent(el: ElementInfo) -> str:
         return "UPLOAD"
     if any(k in blob for k in ("calendar", "icon:calendar", "kalender", "date", "jadwal")):
         return "CALENDAR"
-    if any(k in blob for k in ("submit", "simpan", "save", "kirim", "lanjut", "next", "continue")):
-        return "SUBMIT"
     return "CUSTOM"
 
 

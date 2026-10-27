@@ -106,8 +106,6 @@ class InteractiveSession:
             self.context.close()
         with contextlib.suppress(Exception):
             self.browser.close()
-        with contextlib.suppress(Exception):
-            self.playwright.stop()
 
 
 class InteractiveSessionManager:
@@ -118,13 +116,14 @@ class InteractiveSessionManager:
 
     def __init__(self) -> None:
         self._sessions: dict[str, InteractiveSession] = {}
+        self._playwright: Any = None
 
     def reap_expired(self) -> list[str]:
         """Close and remove sessions that exceeded inactivity TTL."""
         expired_ids: list[str] = []
         for sess_id, sess in list(self._sessions.items()):
             if sess.is_expired(self.DEFAULT_TTL):
-                logger.info("interactive_browser.session_expired", session_id=sess_id)
+                logger.info("interactive_browser.session_expired: %s", sess_id)
                 sess.close()
                 del self._sessions[sess_id]
                 expired_ids.append(sess_id)
@@ -143,11 +142,13 @@ class InteractiveSessionManager:
                 "Close an active session using suitest_browser_close."
             )
 
-        from playwright.sync_api import sync_playwright
+        if self._playwright is None:
+            from playwright.sync_api import sync_playwright
+
+            self._playwright = sync_playwright().start()
 
         vp = viewport or {"width": 1280, "height": 800}
-        pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=headless)
+        browser = self._playwright.chromium.launch(headless=headless)
 
         context_kwargs: dict[str, Any] = {"viewport": vp}
         if storage_state_path and Path(storage_state_path).is_file():
@@ -159,7 +160,7 @@ class InteractiveSessionManager:
         session_id = f"sess_{uuid.uuid4().hex[:12]}"
         session = InteractiveSession(
             session_id=session_id,
-            playwright_obj=pw,
+            playwright_obj=self._playwright,
             browser=browser,
             context=ctx,
             page=page,
@@ -216,6 +217,10 @@ class InteractiveSessionManager:
         for sess in self._sessions.values():
             sess.close()
         self._sessions.clear()
+        if self._playwright is not None:
+            with contextlib.suppress(Exception):
+                self._playwright.stop()
+            self._playwright = None
 
 
 # Global module singleton for the MCP stdio runtime process
@@ -408,12 +413,12 @@ def suitest_browser_solve_captcha(
             solved_text = str(res.get("text") or "")
             source = str(res.get("source") or "tiny_ocr")
 
-        if not solved_text:
-            classified = classify_ocr_output(str(res.get("rawOcr") or ""))
+        raw_ocr = str(res.get("rawOcr") or "") if isinstance(res, dict) else ""
+        if not solved_text and raw_ocr:
+            classified = classify_ocr_output(raw_ocr)
             if classified.get("status") == "solved":
                 solved_text = str(classified.get("text") or "")
                 source = str(classified.get("source") or "local_math")
-
         filled = False
         if solved_text and input_target:
             with contextlib.suppress(Exception):

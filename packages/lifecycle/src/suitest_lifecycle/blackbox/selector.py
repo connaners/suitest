@@ -53,13 +53,7 @@ def _role_of(el: ElementInfo) -> str:
 
 
 def _accessible_name(el: ElementInfo) -> str:
-    return (
-        el.aria_label
-        or el.label
-        or el.text.strip()
-        or el.tooltip.strip()
-        or (el.icon_hint.strip() if not el.icon_hint.startswith("[lookup:") else "")
-    )
+    return el.aria_label or el.label or el.text.strip() or el.tooltip.strip()
 
 
 def build_locator(el: ElementInfo, *, ignore_testids: bool = False) -> str:

@@ -28,7 +28,7 @@ def _safe_value(kind, label="", name="", placeholder=""):
     import datetime
     import re
     k = (kind or "").lower()
-    combined = f"{name or ''} {label or ''} {placeholder or ''}".lower()
+    combined = re.sub(r"[-_]+", " ", f"{name or ''} {label or ''} {placeholder or ''}").lower()
     if re.search(r"\\b(nib|nomor\\s*induk\\s*berusaha)\\b", combined):
         return "0123456789012"
     if re.search(r"\\b(npwp|nomor\\s*pokok\\s*wajib\\s*pajak|tax\\s*id)\\b", combined):
@@ -41,14 +41,14 @@ def _safe_value(kind, label="", name="", placeholder=""):
         return "081234567890"
     if re.search(r"\\b(nominal|harga|price|amount|luas|biaya|tarif|salary|gaji|nilai|total)\\b", combined):
         return "100000"
+    if re.search(r"\\b(kodepos|kode\\s*pos|zip|postal)\\b", combined):
+        return "12345"
     if k == "number" or re.search(r"\\b(qty|quantity|jumlah|kuantitas|count|unit)\\b", combined):
         return "1"
     if k == "date" or re.search(r"\\b(date|tanggal|tgl|birth|dob)\\b", combined):
         return datetime.date.today().isoformat()
     if k == "url" or re.search(r"\\b(url|website|web|link|situs)\\b", combined):
         return "https://example.com"
-    if re.search(r"\\b(kodepos|kode\\s*pos|zip|postal)\\b", combined):
-        return "12345"
     if re.search(r"\\b(address|alamat|domisili)\\b", combined):
         return "Jl. Jenderal Sudirman No. 42"
     if re.search(r"\\b(company|perusahaan|instansi|nama\\s*pt|pt|cv)\\b", combined):

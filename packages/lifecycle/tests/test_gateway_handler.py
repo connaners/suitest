@@ -87,3 +87,41 @@ async def test_handle_gateway_flow(tmp_path: Path) -> None:
     mock_trigger.wait_for.assert_awaited_once_with(state="visible", timeout=10000)
     mock_trigger.click.assert_awaited_once()
     mock_input.fill.assert_awaited_once_with("DIR_3100")
+    mock_browser.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_gateway_closes_browser_on_failure(tmp_path: Path) -> None:
+    cfg = BlackboxUiConfig(target_url="http://enterprise.local/login")
+    mock_browser = MagicMock()
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+
+    mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+    mock_browser.close = AsyncMock()
+    mock_ctx.new_page = AsyncMock(return_value=mock_page)
+    mock_page.goto = AsyncMock()
+    mock_page.wait_for_load_state = AsyncMock()
+    mock_page.wait_for_selector = AsyncMock()
+    mock_page.on = MagicMock()
+
+    # Trigger wait_for raises TimeoutError
+    mock_trigger = MagicMock()
+    mock_trigger.wait_for = AsyncMock(side_effect=TimeoutError("Trigger selector not found"))
+    mock_trigger.first = mock_trigger
+    mock_page.locator = MagicMock(return_value=mock_trigger)
+
+    mock_playwright = MagicMock()
+    mock_playwright.chromium.launch = AsyncMock(return_value=mock_browser)
+
+    with patch("playwright.async_api.async_playwright") as pw_patch:
+        pw_patch.return_value.__aenter__.return_value = mock_playwright
+        with pytest.raises(TimeoutError, match="Trigger selector not found"):
+            await _handle_gateway(
+                cfg,
+                tmp_path,
+                "#non_existent_btn",
+            )
+
+    # Verify browser.close() was awaited despite the exception
+    mock_browser.close.assert_awaited_once()

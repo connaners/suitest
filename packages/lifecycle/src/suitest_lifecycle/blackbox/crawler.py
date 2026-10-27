@@ -94,18 +94,20 @@ _EXTRACT_JS = r"""
       }
       let iconName = '';
       if (iconClass) {
-        const m = iconClass.match(/\\b(?:fa|bi|lucide|icon)-([a-z0-9-]+)\\b/i);
+        const m = iconClass.match(/\b(?:fa|bi|lucide|icon)-([a-z0-9-]+)\b/i);
         if (m) {
           iconName = m[1].replace(/-(alt|outline|fill|circle|square)/gi, '');
         }
       }
       let lookupHint = '';
-      const inputGroup = el.closest('.input-group, .form-group, .search-box');
-      if (inputGroup) {
-        const sibInput = inputGroup.querySelector('input');
-        if (sibInput) {
-          const sibDesc = sibInput.name || sibInput.placeholder || sibInput.id || '';
-          if (sibDesc) lookupHint = `[lookup:${sibDesc.slice(0, 30)}]`;
+      if (el.tagName.toLowerCase() !== 'input') {
+        const inputGroup = el.closest('.input-group, .form-group, .search-box');
+        if (inputGroup) {
+          const sibInput = inputGroup.querySelector('input');
+          if (sibInput && sibInput !== el) {
+            const sibDesc = sibInput.name || sibInput.placeholder || sibInput.id || '';
+            if (sibDesc) lookupHint = `[lookup:${sibDesc.slice(0, 30)}]`;
+          }
         }
       }
       const iconHint = iconName ? `[icon:${iconName}]` : (svgTitle || lookupHint);
@@ -133,7 +135,7 @@ _EXTRACT_JS = r"""
       name: el.getAttribute('name') || '',
       input_type: (el.getAttribute('type') || '').toLowerCase(),
       autocomplete: el.getAttribute('autocomplete') || '',
-      text: rawText || iconData.tooltip || iconData.iconHint || '',
+      text: rawText || iconData.tooltip || '',
       dom_id: el.id || '',
       href: el.getAttribute && el.tagName === 'A' ? (el.getAttribute('href') || '') : '',
       css: cssPath(el),
@@ -715,47 +717,53 @@ async def _handle_gateway(
         )
         page.on("pageerror", lambda e: console_errors.append(str(e)[:300]))
 
-        login_route = cfg.auth.login_url or "/login"
         try:
-            await _goto(page, base + login_route)
-        except Exception:
-            await _goto(page, base + "/")
+            login_route = cfg.auth.login_url or "/login"
+            if login_route.startswith("http"):
+                target_nav = login_route
+            else:
+                target_nav = base.rstrip("/") + "/" + login_route.lstrip("/")
+            try:
+                await _goto(page, target_nav)
+            except Exception:
+                await _goto(page, base.rstrip("/") + "/")
 
-        if target_value:
+            if target_value:
+                with contextlib.suppress(Exception):
+                    inp = page.locator(
+                        "input:not([type=hidden]):not([type=checkbox]):not([type=radio])"
+                    ).first
+                    if await inp.count() > 0:
+                        await inp.fill(target_value)
+
+            trigger = page.locator(action_trigger)
+            if hasattr(trigger, "first"):
+                trigger = trigger.first
+            await trigger.wait_for(state="visible", timeout=10000)
+            await trigger.click()
+
+            await _smart_settle(page, quiet_sec=1.5, timeout_sec=5.0)
+
+            landed = _route_of(page.url, base)
+            evidence_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+            out_state_file = evidence_dir / "storage_state.json"
             with contextlib.suppress(Exception):
-                inp = page.locator(
-                    "input:not([type=hidden]):not([type=checkbox]):not([type=radio])"
-                ).first
-                if await inp.count() > 0:
-                    await inp.fill(target_value)
+                await ctx.storage_state(path=str(out_state_file))
 
-        trigger = page.locator(action_trigger)
-        if hasattr(trigger, "first"):
-            trigger = trigger.first
-        await trigger.wait_for(state="visible", timeout=10000)
-        await trigger.click()
+            shot_path = evidence_dir / f"gateway_{gateway_type}.png"
+            with contextlib.suppress(Exception):
+                await page.screenshot(path=str(shot_path))
 
-        await _smart_settle(page, quiet_sec=1.5, timeout_sec=5.0)
-
-        landed = _route_of(page.url, base)
-        evidence_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
-        out_state_file = evidence_dir / "storage_state.json"
-        with contextlib.suppress(Exception):
-            await ctx.storage_state(path=str(out_state_file))
-
-        shot_path = evidence_dir / f"gateway_{gateway_type}.png"
-        with contextlib.suppress(Exception):
-            await page.screenshot(path=str(shot_path))
-
-        await browser.close()
-        return {
-            "success": True,
-            "gateway_type": gateway_type,
-            "action_trigger": action_trigger,
-            "landed_route": landed,
-            "storage_state_path": str(out_state_file) if out_state_file.is_file() else "",
-            "screenshot": str(shot_path) if shot_path.is_file() else "",
-        }
+            return {
+                "success": True,
+                "gateway_type": gateway_type,
+                "action_trigger": action_trigger,
+                "landed_route": landed,
+                "storage_state_path": str(out_state_file) if out_state_file.is_file() else "",
+                "screenshot": str(shot_path) if shot_path.is_file() else "",
+            }
+        finally:
+            await browser.close()
 
 
 def handle_gateway(

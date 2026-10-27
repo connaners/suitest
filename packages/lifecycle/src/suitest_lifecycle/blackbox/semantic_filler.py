@@ -51,7 +51,7 @@ def synthesize_semantic_value(
 ) -> str:
     """Synthesize a schema-compliant realistic string for a form input element."""
     k = (kind or "").lower()
-    combined = f"{name or ''} {label or ''} {placeholder or ''}".lower()
+    combined = re.sub(r"[-_]+", " ", f"{name or ''} {label or ''} {placeholder or ''}").lower()
 
     if _NIB_RE.search(combined):
         return "0123456789012"
@@ -65,14 +65,14 @@ def synthesize_semantic_value(
         return "081234567890"
     if _NOMINAL_RE.search(combined):
         return "100000"
+    if _POSTAL_RE.search(combined):
+        return "12345"
     if k == "number" or _NUMBER_RE.search(combined):
         return "1"
     if k == "date" or _DATE_RE.search(combined):
         return datetime.date.today().isoformat()
     if k == "url" or _URL_RE.search(combined):
         return "https://example.com"
-    if _POSTAL_RE.search(combined):
-        return "12345"
     if _ADDRESS_RE.search(combined):
         return "Jl. Jenderal Sudirman No. 42"
     if _COMPANY_RE.search(combined):

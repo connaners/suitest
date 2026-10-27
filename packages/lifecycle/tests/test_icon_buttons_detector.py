@@ -19,7 +19,7 @@ def test_icon_only_button_accessible_name() -> None:
         icon_hint="[icon:search]",
         is_icon_only=True,
     )
-    assert _accessible_name(el_icon) == "[icon:search]"
+    assert _accessible_name(el_icon) == ""
     assert describe(el_icon) == "[icon:search]"
 
 

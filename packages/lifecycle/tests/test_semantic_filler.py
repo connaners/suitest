@@ -55,3 +55,18 @@ def test_synthesize_element_adapter() -> None:
 
     el_company = ElementInfo(tag="input", label="Nama PT / Perusahaan Pemohon")
     assert "PT" in synthesize_for_element(el_company)
+
+
+def test_synthesize_snake_case_and_postal_code() -> None:
+    # Snake case attributes normalized with space
+    val_name = synthesize_semantic_value(name="user_first_name")
+    assert val_name == "Budi Santoso"
+
+    val_company = synthesize_semantic_value(name="company_name")
+    assert "PT" in val_company
+
+    # Postal code with type="number" prioritized over generic number "1"
+    val_postal = synthesize_semantic_value(
+        kind="number", name="postal_code", placeholder="Kode Pos"
+    )
+    assert val_postal == "12345"
