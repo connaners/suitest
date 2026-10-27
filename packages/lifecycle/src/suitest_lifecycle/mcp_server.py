@@ -101,6 +101,10 @@ _BLACKBOX_INPUT_SCHEMA: dict[str, object] = {
         "username": {"type": "string", "description": "Test credential username/email"},
         "password": {"type": "string", "description": "Test credential password"},
         "max_routes": {"type": "integer", "description": "Crawl route cap"},
+        "storage_state_path": {
+            "type": "string",
+            "description": "Path to storage_state.json to reuse existing session and bypass login/captcha",
+        },
         "page_url": {
             "type": "string",
             "description": "Route or absolute URL (blackbox_analyze_page only)",

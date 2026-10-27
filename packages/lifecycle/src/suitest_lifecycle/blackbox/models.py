@@ -270,6 +270,7 @@ class BlackboxUiConfig:
     test_generation: BlackboxTestGeneration = field(default_factory=BlackboxTestGeneration)
     headed: bool = False
     record_video: bool = True
+    storage_state_path: str = ""
 
     @staticmethod
     def from_raw(raw: dict[str, Any]) -> BlackboxUiConfig:
@@ -310,4 +311,5 @@ class BlackboxUiConfig:
             ),
             headed=bool(raw.get("headed", False)),
             record_video=bool(raw.get("recordVideo", True)),
+            storage_state_path=str(raw.get("storageStatePath", raw.get("storage_state_path", ""))),
         )

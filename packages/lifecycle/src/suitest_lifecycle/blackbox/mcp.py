@@ -410,6 +410,7 @@ def _resolve(
     username: str = "",
     password: str = "",
     max_routes: int = 0,
+    storage_state_path: str = "",
     **_: Any,
 ) -> tuple[BlackboxUiConfig, Paths]:
     ui = BlackboxUiConfig()
@@ -444,6 +445,8 @@ def _resolve(
         ui.auth.password = password
     if max_routes:
         ui.crawl.max_routes = int(max_routes)
+    if storage_state_path:
+        ui.storage_state_path = storage_state_path
     if not ui.target_url:
         raise ValueError("no target: pass url=… or a config_path with ui.targetUrl/baseUrl")
     paths = build_paths(out_dir, Mode.FRONTEND)

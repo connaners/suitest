@@ -22,10 +22,15 @@ from suitest_lifecycle.blackbox.models import (
     BlackboxUiConfig,
     DiscoveryResult,
     ElementInfo,
+    LoginForm,
     LoginProbe,
     PageInfo,
 )
 
+try:
+    from suitest_shared.ocr import solve_captcha_in_page
+except ImportError:
+    solve_captcha_in_page = None
 if TYPE_CHECKING:
     from playwright.async_api import Locator, Page
 
@@ -224,13 +229,48 @@ _SAFE_SKIP_HREF = re.compile(
 )
 
 
-async def _goto(page: Page, url: str) -> None:
-    """Navigate like the real internet works: DOMContentLoaded is the contract;
-    networkidle is only a short best-effort settle (analytics/long-polling on
-    public sites keep the network busy forever)."""
-    await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+async def _smart_settle(
+    page: Page,
+    *,
+    quiet_sec: float = 1.5,
+    timeout_sec: float = 4.0,
+) -> None:
+    """Smart navigation settle: commit, body attached, and network quiescence."""
     with contextlib.suppress(Exception):
-        await page.wait_for_load_state("networkidle", timeout=3000)
+        await page.wait_for_load_state("domcontentloaded", timeout=5000)
+    with contextlib.suppress(Exception):
+        await page.wait_for_selector("body", state="attached", timeout=5000)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=int(quiet_sec * 1000))
+    except Exception:
+        with contextlib.suppress(Exception):
+            await page.wait_for_timeout(min(int(quiet_sec * 1000), int(timeout_sec * 1000)))
+
+
+async def _goto(page: Page, url: str) -> None:
+    """Navigate like the real internet works: DOMContentLoaded or commit with smart settle."""
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+    except Exception:
+        await page.goto(url, wait_until="commit", timeout=20000)
+    await _smart_settle(page, quiet_sec=1.5, timeout_sec=4.0)
+
+
+async def _solve_captcha_for_form(page: Page, form: LoginForm, login_page: PageInfo) -> str:
+    """Solve detected CAPTCHA using shared in-browser OCR, falling back safely."""
+    if not form.captcha_input:
+        return ""
+    img_sel = (
+        form.captcha_image
+        or getattr(login_page, "captcha_image_selector", "")
+        or "img[src*='captcha' i], #img-captcha, #captcha, canvas"
+    )
+    if solve_captcha_in_page is not None:
+        with contextlib.suppress(Exception):
+            res = await solve_captcha_in_page(page, img_sel, timeout_ms=6000)
+            if res.get("status") == "solved" and res.get("text"):
+                return str(res["text"])
+    return "CAPTCHA_SOLVE"
 
 
 def _route_of(url: str, base: str) -> str:
@@ -317,7 +357,10 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=not cfg.headed)
-        ctx = await browser.new_context(viewport={"width": 1280, "height": 720})
+        context_kwargs: dict[str, object] = {"viewport": {"width": 1280, "height": 720}}
+        if cfg.storage_state_path and Path(cfg.storage_state_path).is_file():  # noqa: ASYNC240
+            context_kwargs["storage_state"] = str(cfg.storage_state_path)
+        ctx = await browser.new_context(**context_kwargs)
         page = await ctx.new_page()
         page.on(
             "console",
@@ -369,47 +412,78 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
         if cfg.selectors.login_submit:
             form.submit = _as_locator(cfg.selectors.login_submit)
         result.login = form if form.found() else None
-
         # ---- 2. perform login -------------------------------------------------
-        if result.login and cfg.auth.username and cfg.auth.password:
+        if cfg.storage_state_path and Path(cfg.storage_state_path).is_file():  # noqa: ASYNC240
+            result.storage_state_path = str(cfg.storage_state_path)
+            landed_initial = _route_of(page.url, base)
+            initial_login_route = cfg.auth.login_url or "/login"
+            if landed_initial != initial_login_route or not (result.login and result.login.found()):
+                result.login_probe = LoginProbe(
+                    attempted=True,
+                    success=True,
+                    landed_route=landed_initial,
+                    detail="authenticated via imported storage_state",
+                )
+
+        if (
+            not result.login_probe.success
+            and result.login
+            and cfg.auth.username
+            and cfg.auth.password
+        ):
             probe = LoginProbe(attempted=True)
-            try:
-                await _eval_locator(page, form.username).fill(cfg.auth.username)
-                await _eval_locator(page, form.password).fill(cfg.auth.password)
-                if form.captcha_input:
+            max_login_attempts = 3 if form.captcha_input else 1
+            for attempt in range(max_login_attempts):
+                try:
+                    await _eval_locator(page, form.username).fill(cfg.auth.username)
+                    await _eval_locator(page, form.password).fill(cfg.auth.password)
+                    if form.captcha_input:
+                        solved_c = await _solve_captcha_for_form(page, form, login_page)
+                        if solved_c:
+                            with contextlib.suppress(Exception):
+                                c_loc = page.locator(form.captcha_input)
+                                if await c_loc.count() > 0:
+                                    await c_loc.fill(solved_c)
+                    await _eval_locator(page, form.submit).click()
                     with contextlib.suppress(Exception):
-                        c_loc = page.locator(form.captcha_input)
-                        if await c_loc.count() > 0:
-                            await c_loc.fill("CAPTCHA_SOLVE")
-                await _eval_locator(page, form.submit).click()
-                with contextlib.suppress(Exception):
-                    await page.wait_for_url(
-                        lambda u: _route_of(u, base) != login_route, timeout=10000
-                    )
-                with contextlib.suppress(Exception):
-                    await page.wait_for_load_state("networkidle", timeout=5000)
-                landed = _route_of(page.url, base)
-                probe.landed_route = landed
-                probe.success = landed != login_route
-                if probe.success:
-                    state_file = evidence_dir / "storage_state.json"
-                    with contextlib.suppress(Exception):
-                        await ctx.storage_state(path=str(state_file))
-                        if state_file.is_file():
-                            result.storage_state_path = str(state_file)
-                if not probe.success:
+                        await page.wait_for_url(
+                            lambda u: _route_of(u, base) != login_route, timeout=8000
+                        )
+                    await _smart_settle(page, quiet_sec=1.5, timeout_sec=4.0)
+                    landed = _route_of(page.url, base)
+                    probe.landed_route = landed
+                    probe.success = landed != login_route
+                    if probe.success:
+                        state_file = evidence_dir / "storage_state.json"
+                        with contextlib.suppress(Exception):
+                            await ctx.storage_state(path=str(state_file))
+                            if state_file.is_file():
+                                result.storage_state_path = str(state_file)
+                        break
                     err = await page.evaluate(
                         "() => { const e = document.querySelector('[role=alert],"
                         "[class*=error],[data-testid*=error]');"
                         " return e ? (e.innerText || '').slice(0, 120) : ''; }"
                     )
-                    probe.detail = f"stayed on {landed}; error: {err or 'none shown'}"
-            except Exception as exc:
-                probe.detail = f"login interaction failed: {exc}"[:300]
+                    probe.detail = (
+                        f"attempt {attempt + 1}: stayed on {landed}; error: {err or 'none shown'}"
+                    )
+                    if attempt < max_login_attempts - 1 and form.captcha_input:
+                        refresh_sel = (
+                            getattr(login_page, "refresh_target", "")
+                            or form.captcha_image
+                            or ".refresh-captcha, img[src*='captcha' i], #img-captcha"
+                        )
+                        with contextlib.suppress(Exception):
+                            r_loc = page.locator(refresh_sel)
+                            if await r_loc.count() > 0:
+                                await r_loc.first.click()
+                                await page.wait_for_timeout(600)
+                except Exception as exc:
+                    probe.detail = f"login interaction failed on attempt {attempt + 1}: {exc}"[:300]
             result.login_probe = probe
-        elif result.login:
+        elif not result.login_probe.success and result.login:
             result.login_probe = LoginProbe(attempted=False, detail="no credentials configured")
-
         # ---- 3. BFS crawl ------------------------------------------------------
         # Seed from everywhere we already know: where we landed, the root, the
         # nav links captured on the entry page, and config includes. Without
@@ -504,14 +578,14 @@ async def _analyze_one(cfg: BlackboxUiConfig, url: str, evidence_dir: Path) -> P
     network_errors: list[str] = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=not cfg.headed)
-        state_file = evidence_dir / "storage_state.json"
-        if not state_file.is_file():
-            alt_state = evidence_dir / "blackbox" / "storage_state.json"
-            if alt_state.is_file():
-                state_file = alt_state
-        state_arg = (
-            str(state_file) if state_file.is_file() and state_file.stat().st_size > 0 else None
-        )
+        state_file = None
+        if cfg.storage_state_path and Path(cfg.storage_state_path).is_file():  # noqa: ASYNC240
+            state_file = Path(cfg.storage_state_path)
+        elif (evidence_dir / "storage_state.json").is_file():
+            state_file = evidence_dir / "storage_state.json"
+        elif (evidence_dir / "blackbox" / "storage_state.json").is_file():
+            state_file = evidence_dir / "blackbox" / "storage_state.json"
+        state_arg = str(state_file) if state_file and state_file.stat().st_size > 0 else None
         ctx = await browser.new_context(
             viewport={"width": 1280, "height": 720},
             storage_state=state_arg,
