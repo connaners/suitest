@@ -42,6 +42,9 @@ class ElementInfo:
     frame_selector: str = ""  # selector for containing iframe/frame
     is_multiple: bool = False  # e.g. for multi-file upload or multi-select
     accept: str = ""  # file input accept pattern
+    tooltip: str = ""  # title, data-original-title, etc.
+    icon_hint: str = ""  # icon class / action, e.g. [icon:search]
+    is_icon_only: bool = False  # button has icon/tooltip but no text
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)

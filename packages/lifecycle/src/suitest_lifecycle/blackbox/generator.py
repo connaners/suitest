@@ -24,17 +24,39 @@ if TYPE_CHECKING:
 
 # Heuristic safe-fill values (docs/BLACKBOX_UI_TESTING.md §safe form filling).
 SAFE_FILL_SNIPPET = """
-def _safe_value(kind, label=""):
+def _safe_value(kind, label="", name="", placeholder=""):
     import datetime
-    l = (label or "").lower()
-    if kind == "email" or "email" in l:
+    import re
+    k = (kind or "").lower()
+    combined = f"{name or ''} {label or ''} {placeholder or ''}".lower()
+    if re.search(r"\\b(nib|nomor\\s*induk\\s*berusaha)\\b", combined):
+        return "0123456789012"
+    if re.search(r"\\b(npwp|nomor\\s*pokok\\s*wajib\\s*pajak|tax\\s*id)\\b", combined):
+        return "0123456789012345"
+    if re.search(r"\\b(nik|ktp|no\\s*identitas|id\\s*card)\\b", combined):
+        return "3171012345670001"
+    if k == "email" or re.search(r"\\b(email|surel|e-mail)\\b", combined):
         return "qa+" + uuid.uuid4().hex[:6] + "@example.com"
-    if kind == "number":
+    if k == "tel" or re.search(r"\\b(phone|telp|telepon|hp|handphone|mobile|wa|whatsapp)\\b", combined):
+        return "081234567890"
+    if re.search(r"\\b(nominal|harga|price|amount|luas|biaya|tarif|salary|gaji|nilai|total)\\b", combined):
+        return "100000"
+    if k == "number" or re.search(r"\\b(qty|quantity|jumlah|kuantitas|count|unit)\\b", combined):
         return "1"
-    if kind == "date":
+    if k == "date" or re.search(r"\\b(date|tanggal|tgl|birth|dob)\\b", combined):
         return datetime.date.today().isoformat()
-    if kind == "textarea":
-        return "Automated QA test value"
+    if k == "url" or re.search(r"\\b(url|website|web|link|situs)\\b", combined):
+        return "https://example.com"
+    if re.search(r"\\b(kodepos|kode\\s*pos|zip|postal)\\b", combined):
+        return "12345"
+    if re.search(r"\\b(address|alamat|domisili)\\b", combined):
+        return "Jl. Jenderal Sudirman No. 42"
+    if re.search(r"\\b(company|perusahaan|instansi|nama\\s*pt|pt|cv)\\b", combined):
+        return "PT Enterprise Testing Global"
+    if re.search(r"\\b(name|nama|fullname|nama\\s*lengkap|pic)\\b", combined):
+        return "Budi Santoso"
+    if k == "textarea" or re.search(r"\\b(notes|catatan|keterangan|desc|description|deskripsi)\\b", combined):
+        return "Keterangan uji coba sistem otomatis enterprise"
     return "Test value"
 """
 

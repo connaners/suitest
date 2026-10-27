@@ -21,6 +21,7 @@ from typing import Any
 
 from suitest_lifecycle.blackbox.mcp import BLACKBOX_TOOLS
 from suitest_lifecycle.config import Config, ConfigError, load_config
+from suitest_lifecycle.interactive_browser import INTERACTIVE_BROWSER_TOOLS
 from suitest_lifecycle.models import Mode
 from suitest_lifecycle.orchestrator import LifecycleResult, generate_only, run_lifecycle
 from suitest_lifecycle.paths import build_paths
@@ -997,12 +998,14 @@ TOOLS = {
     "create_test_case": create_test_case,
     "run_test_case": run_test_case,
     **BLACKBOX_TOOLS,
+    **INTERACTIVE_BROWSER_TOOLS,
 }
 
 # Tools that take structured kwargs (url/username/case_id/…), not just config_path.
 KWARG_TOOLS = frozenset(
     {
         *BLACKBOX_TOOLS,
+        *INTERACTIVE_BROWSER_TOOLS,
         "edit_test_case_inputs",
         "manage_test_case_dataset",
         "get_workspace_variables",

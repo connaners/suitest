@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from suitest_lifecycle.blackbox.detector import detect_login_form, detect_page_pattern
 from suitest_lifecycle.blackbox.models import (
@@ -70,27 +70,82 @@ _EXTRACT_JS = r"""
       return '';
     }
   };
-  const info = (doc, el, kind, frameSel = '') => ({
-    tag: el.tagName.toLowerCase(),
-    kind,
-    testid: el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-test') || '',
-    testid_attr: el.hasAttribute('data-testid') ? 'data-testid' : el.hasAttribute('data-cy') ? 'data-cy' : el.hasAttribute('data-test') ? 'data-test' : '',
-    role: el.getAttribute('role') || '',
-    aria_label: el.getAttribute('aria-label') || '',
-    label: labelFor(doc, el),
-    placeholder: el.getAttribute('placeholder') || '',
-    name: el.getAttribute('name') || '',
-    input_type: (el.getAttribute('type') || '').toLowerCase(),
-    autocomplete: el.getAttribute('autocomplete') || '',
-    text: (el.innerText || el.value || '').trim().slice(0, 80),
-    dom_id: el.id || '',
-    href: el.getAttribute && el.tagName === 'A' ? (el.getAttribute('href') || '') : '',
-    css: cssPath(el),
-    required: el.required === true || el.getAttribute('aria-required') === 'true',
-    frame_selector: frameSel,
-    is_multiple: el.multiple === true,
-    accept: el.getAttribute('accept') || '',
-  });
+  const resolveIconOrTooltip = (el) => {
+    try {
+      const tooltip = (
+        el.getAttribute('title') ||
+        el.getAttribute('data-original-title') ||
+        el.getAttribute('data-bs-original-title') ||
+        el.getAttribute('tooltip') ||
+        ''
+      ).trim();
+      const iconEl = el.querySelector('i, svg, span[class*="icon" i], [class*="fa-" i], [class*="lucide" i], [class*="bi-" i]');
+      let iconClass = '';
+      if (iconEl) {
+        if (typeof iconEl.className === 'string') {
+          iconClass = iconEl.className;
+        } else if (iconEl.className && iconEl.className.baseVal) {
+          iconClass = iconEl.className.baseVal;
+        }
+      }
+      let svgTitle = '';
+      if (iconEl && iconEl.tagName && iconEl.tagName.toLowerCase() === 'svg') {
+        svgTitle = (iconEl.querySelector('title')?.textContent || iconEl.getAttribute('aria-label') || '').trim();
+      }
+      let iconName = '';
+      if (iconClass) {
+        const m = iconClass.match(/\\b(?:fa|bi|lucide|icon)-([a-z0-9-]+)\\b/i);
+        if (m) {
+          iconName = m[1].replace(/-(alt|outline|fill|circle|square)/gi, '');
+        }
+      }
+      let lookupHint = '';
+      const inputGroup = el.closest('.input-group, .form-group, .search-box');
+      if (inputGroup) {
+        const sibInput = inputGroup.querySelector('input');
+        if (sibInput) {
+          const sibDesc = sibInput.name || sibInput.placeholder || sibInput.id || '';
+          if (sibDesc) lookupHint = `[lookup:${sibDesc.slice(0, 30)}]`;
+        }
+      }
+      const iconHint = iconName ? `[icon:${iconName}]` : (svgTitle || lookupHint);
+      return {
+        tooltip: tooltip.slice(0, 80),
+        iconHint: iconHint.slice(0, 80),
+      };
+    } catch {
+      return { tooltip: '', iconHint: '' };
+    }
+  };
+  const info = (doc, el, kind, frameSel = '') => {
+    const iconData = resolveIconOrTooltip(el);
+    const rawText = (el.innerText || el.value || '').trim().slice(0, 80);
+    const isIconOnly = !rawText && Boolean(iconData.tooltip || iconData.iconHint);
+    return {
+      tag: el.tagName.toLowerCase(),
+      kind,
+      testid: el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-test') || '',
+      testid_attr: el.hasAttribute('data-testid') ? 'data-testid' : el.hasAttribute('data-cy') ? 'data-cy' : el.hasAttribute('data-test') ? 'data-test' : '',
+      role: el.getAttribute('role') || '',
+      aria_label: el.getAttribute('aria-label') || '',
+      label: labelFor(doc, el),
+      placeholder: el.getAttribute('placeholder') || '',
+      name: el.getAttribute('name') || '',
+      input_type: (el.getAttribute('type') || '').toLowerCase(),
+      autocomplete: el.getAttribute('autocomplete') || '',
+      text: rawText || iconData.tooltip || iconData.iconHint || '',
+      dom_id: el.id || '',
+      href: el.getAttribute && el.tagName === 'A' ? (el.getAttribute('href') || '') : '',
+      css: cssPath(el),
+      required: el.required === true || el.getAttribute('aria-required') === 'true',
+      frame_selector: frameSel,
+      is_multiple: el.multiple === true,
+      accept: el.getAttribute('accept') || '',
+      tooltip: iconData.tooltip,
+      icon_hint: iconData.iconHint,
+      is_icon_only: isIconOnly,
+    };
+  };
   const extractDoc = (doc, frameSel = '') => {
     try {
       const ins = [...doc.querySelectorAll('input,textarea,select')].filter(vis).map(e => info(doc, e, e.tagName === 'SELECT' ? 'select' : (e.type === 'checkbox' ? 'checkbox' : 'input'), frameSel));
@@ -622,4 +677,105 @@ def analyze_single_page(cfg: BlackboxUiConfig, url: str, evidence_dir: str | Pat
     return asyncio.run(_analyze_one(cfg, url, Path(evidence_dir)))
 
 
-__all__ = ["analyze_single_page", "discover"]
+async def _handle_gateway(
+    cfg: BlackboxUiConfig,
+    evidence_dir: Path,
+    action_trigger: str,
+    *,
+    gateway_type: str = "role_or_tenant",
+    target_value: str = "",
+) -> dict[str, Any]:
+    from playwright.async_api import async_playwright
+
+    base = cfg.target_url.rstrip("/")
+    if "://" in base and "/" in base.split("://", 1)[1]:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(base)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+    console_errors: list[str] = []
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=not cfg.headed)
+        state_file = None
+        if cfg.storage_state_path and Path(cfg.storage_state_path).is_file():  # noqa: ASYNC240
+            state_file = Path(cfg.storage_state_path)
+        elif (evidence_dir / "storage_state.json").is_file():
+            state_file = evidence_dir / "storage_state.json"
+        elif (evidence_dir / "blackbox" / "storage_state.json").is_file():
+            state_file = evidence_dir / "blackbox" / "storage_state.json"
+        state_arg = str(state_file) if state_file and state_file.stat().st_size > 0 else None
+        ctx = await browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            storage_state=state_arg,
+        )
+        page = await ctx.new_page()
+        page.on(
+            "console", lambda m: console_errors.append(m.text[:300]) if m.type == "error" else None
+        )
+        page.on("pageerror", lambda e: console_errors.append(str(e)[:300]))
+
+        login_route = cfg.auth.login_url or "/login"
+        try:
+            await _goto(page, base + login_route)
+        except Exception:
+            await _goto(page, base + "/")
+
+        if target_value:
+            with contextlib.suppress(Exception):
+                inp = page.locator(
+                    "input:not([type=hidden]):not([type=checkbox]):not([type=radio])"
+                ).first
+                if await inp.count() > 0:
+                    await inp.fill(target_value)
+
+        trigger = page.locator(action_trigger)
+        if hasattr(trigger, "first"):
+            trigger = trigger.first
+        await trigger.wait_for(state="visible", timeout=10000)
+        await trigger.click()
+
+        await _smart_settle(page, quiet_sec=1.5, timeout_sec=5.0)
+
+        landed = _route_of(page.url, base)
+        evidence_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+        out_state_file = evidence_dir / "storage_state.json"
+        with contextlib.suppress(Exception):
+            await ctx.storage_state(path=str(out_state_file))
+
+        shot_path = evidence_dir / f"gateway_{gateway_type}.png"
+        with contextlib.suppress(Exception):
+            await page.screenshot(path=str(shot_path))
+
+        await browser.close()
+        return {
+            "success": True,
+            "gateway_type": gateway_type,
+            "action_trigger": action_trigger,
+            "landed_route": landed,
+            "storage_state_path": str(out_state_file) if out_state_file.is_file() else "",
+            "screenshot": str(shot_path) if shot_path.is_file() else "",
+        }
+
+
+def handle_gateway(
+    cfg: BlackboxUiConfig,
+    evidence_dir: str | Path,
+    action_trigger: str,
+    *,
+    gateway_type: str = "role_or_tenant",
+    target_value: str = "",
+) -> dict[str, Any]:
+    """Sync entry: execute intermediate gateway interaction and update storage_state."""
+    return asyncio.run(
+        _handle_gateway(
+            cfg,
+            Path(evidence_dir),
+            action_trigger,
+            gateway_type=gateway_type,
+            target_value=target_value,
+        )
+    )
+
+
+__all__ = ["analyze_single_page", "discover", "handle_gateway"]

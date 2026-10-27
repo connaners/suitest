@@ -569,6 +569,52 @@ def blackbox_analyze_page(**kwargs: Any) -> dict[str, Any]:
     )
 
 
+def blackbox_handle_gateway(
+    action_trigger: str = "",
+    gateway_type: str = "role_or_tenant",
+    target_value: str = "",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Execute post-login intermediate gateway interaction (role/tenant, terms, OTP)."""
+    from suitest_lifecycle.blackbox.crawler import handle_gateway
+
+    if not action_trigger:
+        return _envelope(
+            success=False,
+            summary="missing action_trigger",
+            errors=["action_trigger is required"],
+        )
+    try:
+        ui, paths = _resolve(**kwargs)
+        res = handle_gateway(
+            ui,
+            _evidence_dir(paths),
+            action_trigger,
+            gateway_type=gateway_type,
+            target_value=target_value,
+        )
+        artifacts = []
+        if res.get("storage_state_path"):
+            artifacts.append(res["storage_state_path"])
+        if res.get("screenshot"):
+            artifacts.append(res["screenshot"])
+        return _envelope(
+            success=res.get("success", False),
+            summary=(
+                f"gateway '{gateway_type}' handled via {action_trigger} — "
+                f"landed on {res.get('landed_route', '/')}"
+            ),
+            data=res,
+            artifacts=artifacts,
+        )
+    except Exception as exc:
+        return _envelope(
+            success=False,
+            summary=f"gateway handling failed: {exc}"[:200],
+            errors=[str(exc)],
+        )
+
+
 def blackbox_build_interaction_graph(**kwargs: Any) -> dict[str, Any]:
     """Build the interaction graph from the saved discovery artifact."""
     from suitest_lifecycle.blackbox.graph import build_graph
@@ -1056,6 +1102,7 @@ _BROWSER_DRIVING = frozenset(
         "blackbox_perform_login",
         "blackbox_crawl_routes",
         "blackbox_analyze_page",
+        "blackbox_handle_gateway",
         "blackbox_run_playwright_tests",
     }
 )
@@ -1093,6 +1140,7 @@ _RAW_BLACKBOX_TOOLS = {
     "blackbox_run_playwright_tests": blackbox_run_playwright_tests,
     "blackbox_collect_evidence": blackbox_collect_evidence,
     "blackbox_summarize_findings": blackbox_summarize_findings,
+    "blackbox_handle_gateway": blackbox_handle_gateway,
 }
 
 BLACKBOX_TOOLS = {
