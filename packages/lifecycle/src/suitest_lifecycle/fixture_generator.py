@@ -17,36 +17,42 @@ from suitest_lifecycle.tool_result import envelope as _envelope
 
 
 def _generate_pdf(out_path: Path, target_bytes: int, title: str = "Test Document") -> None:
-    lines = [
-        "%PDF-1.4",
-        "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
-        "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
-        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj",
-        f"4 0 obj << /Length {len(title) + 30} >> stream",
-        f"BT /F1 24 Tf 100 700 Td ({title}) Tj ET",
-        "endstream",
-        "endobj",
-        "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
-        "xref",
-        "0 6",
-        "0000000000 65535 f",
-        "0000000009 00000 n",
-        "0000000058 00000 n",
-        "0000000115 00000 n",
-        "0000000266 00000 n",
-        "0000000373 00000 n",
-        "trailer << /Size 6 /Root 1 0 R >>",
-        "startxref",
-        "456",
-        "%%EOF\n",
+    title_bytes = title.encode("utf-8")
+    stream_content = b"BT /F1 24 Tf 100 700 Td (" + title_bytes + b") Tj ET"
+    stream_len = len(stream_content)
+
+    header = b"%PDF-1.4\n"
+    obj1 = b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+    obj2 = b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n"
+    obj3 = b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n"
+    obj4 = (
+        f"4 0 obj << /Length {stream_len} >> stream\n".encode("ascii")
+        + stream_content
+        + b"\nendstream\nendobj\n"
+    )
+    obj5 = b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n"
+
+    body = header + obj1 + obj2 + obj3 + obj4 + obj5
+
+    if len(body) < target_bytes - 180:
+        pad_needed = target_bytes - 180 - len(body)
+        body += b"% " + (b"0" * max(0, pad_needed)) + b"\n"
+    offsets = [
+        0,
+        len(header),
+        len(header + obj1),
+        len(header + obj1 + obj2),
+        len(header + obj1 + obj2 + obj3),
+        len(header + obj1 + obj2 + obj3 + obj4),
     ]
-    base_data = "\n".join(lines).encode("ascii")
-    if len(base_data) < target_bytes:
-        pad_needed = target_bytes - len(base_data)
-        comment_pad = b"\n% " + (b"0" * max(0, pad_needed - 4)) + b"\n"
-        final_data = base_data.replace(b"trailer", comment_pad + b"trailer")
-    else:
-        final_data = base_data
+
+    xref_offset = len(body)
+    xref_entries = "".join(f"{off:010d} 00000 n \n" for off in offsets[1:])
+    xref_table = f"xref\n0 6\n0000000000 65535 f \n{xref_entries}"
+    trailer = f"trailer << /Size 6 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    final_data = body + xref_table.encode("ascii") + trailer.encode("ascii")
+    if len(final_data) < target_bytes:
+        final_data += b"% " + (b"0" * max(0, target_bytes - len(final_data) - 3)) + b"\n"
     out_path.write_bytes(final_data)
 
 
@@ -88,7 +94,7 @@ def _generate_image(out_path: Path, target_bytes: int) -> None:
 
     if len(base_png) < target_bytes:
         pad_needed = target_bytes - len(base_png)
-        text_data = b"Comment\x00" + (b"P" * max(0, pad_needed - 12))
+        text_data = b"Comment\x00" + (b"P" * max(0, pad_needed - 20))
         text_crc = struct.pack(">I", zlib.crc32(b"tEXt" + text_data))
         text_chunk = struct.pack(">I", len(text_data)) + b"tEXt" + text_data + text_crc
         final_png = signature + ihdr + text_chunk + idat + iend
@@ -111,9 +117,11 @@ def _generate_geojson(out_path: Path, target_bytes: int, filename: str) -> None:
     }
     raw = json.dumps(obj, indent=2).encode("utf-8")
     if len(raw) < target_bytes:
-        needed = target_bytes - len(raw)
-        obj["properties"] = {"padding": "X" * max(0, needed - 40)}
+        needed = max(0, target_bytes - len(raw))
+        obj["features"][0]["properties"]["padding"] = "X" * needed
         raw = json.dumps(obj, indent=2).encode("utf-8")
+    if len(raw) < target_bytes:
+        raw += b"\n" + (b" " * max(0, target_bytes - len(raw) - 1)) + b"\n"
     out_path.write_bytes(raw)
 
 

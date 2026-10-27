@@ -130,9 +130,14 @@ def suggest_selectors(failed_selector: str, dom: str = "") -> list[str]:
                 cand = f'page.get_by_placeholder("{m_ph.group(1)}")'
                 if cand not in suggestions:
                     suggestions.append(cand)
-            m_aria = re.search(r'(?:aria-label|title)=["\']([^"\']+)["\']', line, re.I)
+            m_aria = re.search(r'\baria-label=["\']([^"\']+)["\']', line, re.I)
             if m_aria:
                 cand = f'page.get_by_label("{m_aria.group(1)}")'
+                if cand not in suggestions:
+                    suggestions.append(cand)
+            m_title = re.search(r'\btitle=["\']([^"\']+)["\']', line, re.I)
+            if m_title:
+                cand = f'page.get_by_title("{m_title.group(1)}")'
                 if cand not in suggestions:
                     suggestions.append(cand)
             m_btn = re.search(r"<(button|a)\b[^>]*>([^<]+)</\1>", line, re.I)
@@ -174,7 +179,12 @@ def suggest_selectors(failed_selector: str, dom: str = "") -> list[str]:
                 if s not in suggestions:
                     suggestions.append(s)
 
+    _IGNORE_TOKENS = frozenset(
+        {"page", "get", "by", "role", "label", "text", "test", "id", "locator", "first"}
+    )
     for tok in tokens:
+        if tok.lower() in _IGNORE_TOKENS:
+            continue
         cand = f'[data-testid*="{tok}"]'
         if cand not in suggestions and cand != clean_sel:
             suggestions.append(cand)

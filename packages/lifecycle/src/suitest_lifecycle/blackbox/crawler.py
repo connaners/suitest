@@ -441,8 +441,9 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
                     or "/api/" in url_str
                     or "application/json" in str(getattr(r, "headers", {}).get("content-type", ""))
                 )
+                clean_url = url_str.split("?", 1)[0].split("#", 1)[0].lower()
                 if not is_api or any(
-                    url_str.endswith(ext)
+                    clean_url.endswith(ext)
                     for ext in (".png", ".jpg", ".jpeg", ".css", ".js", ".svg", ".woff2", ".ico")
                 ):
                     return

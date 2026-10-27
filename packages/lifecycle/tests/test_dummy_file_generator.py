@@ -4,6 +4,7 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
 from suitest_lifecycle.fixture_generator import (
     create_dummy_file,
     suitest_create_dummy_file,
@@ -86,6 +87,7 @@ def test_generate_geojson(tmp_path: Path) -> None:
         output_dir=str(tmp_path),
     )
     assert geo_path.is_file()
+    assert geo_path.stat().st_size >= 5 * 1024
     data = json.loads(geo_path.read_text(encoding="utf-8"))
     assert data["type"] == "FeatureCollection"
     assert len(data["features"]) >= 1
@@ -107,3 +109,29 @@ def test_suitest_create_dummy_file_envelope(tmp_path: Path) -> None:
     res_err = suitest_create_dummy_file(type="exe", filename="bad.exe")
     assert res_err["success"] is False
     assert "Unsupported fixture file_type" in res_err["summary"]
+
+
+def test_size_kb_boundaries(tmp_path: Path) -> None:
+    # Clamp size_kb < 1 to 1
+    f_small = create_dummy_file(
+        file_type="zip", filename="small.zip", size_kb=0, output_dir=str(tmp_path)
+    )
+    assert f_small.stat().st_size >= 1024
+
+    # Raise ValueError if size_kb > 51200 (50 MB)
+    with pytest.raises(ValueError, match="exceeds maximum allowed"):
+        create_dummy_file(
+            file_type="pdf", filename="huge.pdf", size_kb=60000, output_dir=str(tmp_path)
+        )
+
+
+def test_generate_pdf_with_unicode_metadata(tmp_path: Path) -> None:
+    pdf_path = create_dummy_file(
+        file_type="pdf",
+        filename="unicode.pdf",
+        size_kb=5,
+        output_dir=str(tmp_path),
+        metadata={"title": "Dokumen Persyaratan Teknis — PT Pemohon Mandiri"},
+    )
+    assert pdf_path.is_file()
+    assert b"Dokumen Persyaratan Teknis" in pdf_path.read_bytes()
