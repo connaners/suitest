@@ -114,11 +114,12 @@ stops until the workspace has a validated LLM. All completions use the server's
 
 ## What the agent gets
 
-22 tools, three workflows:
+33 tools, four workflows:
 
 | Workflow | Tools | Needs |
 |---|---|---|
 | Repo-based lifecycle | `analyze_project`, `generate_test_cases`, `run_tests`, `generate_report`, … | a checkout + `suitest.config.json` |
+| TCM Authoring & Running | `create_test_case`, `run_test_case`, `get_test_case`, `list_test_cases`, `list_suites` | `suite_id` / `case_id` + `SUITEST_API_KEY` |
 | Blackbox (no repo) | `bootstrap_project` (browser setup wizard), `blackbox_discover_app`, `blackbox_generate_playwright_tests`, `blackbox_run_playwright_tests`, `blackbox_summarize_findings`, … | a URL + credentials |
 | PRD-driven | `blackbox_generate_playwright_tests` with `prd_file` (markdown) | a PRD + a workspace LLM |
 

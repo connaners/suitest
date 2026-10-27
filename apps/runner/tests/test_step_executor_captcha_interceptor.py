@@ -199,11 +199,12 @@ async def test_execute_step_post_failure_submit_intercept_solves_and_retries():
 
     inv = MagicMock()
     click_attempt = 0
+    detect_calls = 0
 
     async def _invoke(
         *, tool: str, arguments: dict[str, object], **kwargs: object
     ) -> McpToolResult:
-        nonlocal click_attempt
+        nonlocal click_attempt, detect_calls
         if tool == "browser_click":
             click_attempt += 1
             if click_attempt == 1:
@@ -218,6 +219,15 @@ async def test_execute_step_post_failure_submit_intercept_solves_and_retries():
         if tool == "browser_run_code_unsafe":
             code_str = str(arguments.get("code", ""))
             if "isCaptchaField" in code_str and "findNearestCaptchaImage" in code_str:
+                detect_calls += 1
+                # First pre-submit check finds no captcha yet (captcha appears only post-failure)
+                if click_attempt == 0:
+                    return McpToolResult(
+                        ok=True,
+                        output={"result": {"is_captcha": False}},
+                        stdout="",
+                        duration_ms=5,
+                    )
                 return McpToolResult(
                     ok=True,
                     output={
@@ -265,3 +275,64 @@ async def test_execute_step_post_failure_submit_intercept_solves_and_retries():
     assert injected_info["solved_text"] == "RETRY_SOLVED"
     assert injected_info["input_selector"] == "#captcha"
     assert click_attempt == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_step_pre_submit_intercept_solves_on_generic_submit_button():
+    test_image_bytes = b"pre-submit-generic-captcha-png"
+    b64_snap = base64.b64encode(test_image_bytes).decode("ascii")
+
+    inv = MagicMock()
+
+    async def _invoke(
+        *, tool: str, arguments: dict[str, object], **kwargs: object
+    ) -> McpToolResult:
+        if tool == "browser_run_code_unsafe":
+            code_str = str(arguments.get("code", ""))
+            if "isCaptchaField" in code_str and "findNearestCaptchaImage" in code_str:
+                return McpToolResult(
+                    ok=True,
+                    output={
+                        "result": {
+                            "is_captcha": True,
+                            "is_empty": True,
+                            "image_selector": "#img-captcha",
+                            "input_selector": "#captcha",
+                            "refresh_target": "#img-captcha",
+                        }
+                    },
+                    stdout="",
+                    duration_ms=10,
+                )
+            if "target.screenshot" in code_str:
+                return McpToolResult(
+                    ok=True, output={"result": b64_snap}, stdout="", duration_ms=20
+                )
+        return McpToolResult(ok=True, output={}, stdout="ok", duration_ms=5)
+
+    inv.invoke = AsyncMock(side_effect=_invoke)
+    mock_solver = AsyncMock(return_value="PRE_GENERIC_123")
+
+    # Generic submit button with no "captcha" hint in selector or action
+    step = _step(
+        json.dumps({"tool": "browser_click", "arguments": {"target": "button[type='submit']"}}),
+        action="Click submit to log in",
+    )
+
+    result = await execute_step(
+        invoker=inv,
+        test_step=step,
+        run_id="r1",
+        workspace_id="w1",
+        actor_user_id="u1",
+        routing_overrides=None,
+        captcha_solver=mock_solver,
+    )
+
+    assert result.outcome == StepOutcome.PASS
+    mock_solver.assert_awaited_once()
+    assert result.mcp_result is not None
+    assert "pre_submit_injected_captcha" in result.mcp_result.output
+    injected_info = result.mcp_result.output["pre_submit_injected_captcha"]
+    assert injected_info["solved_text"] == "PRE_GENERIC_123"
+    assert injected_info["input_selector"] == "#captcha"

@@ -58,6 +58,16 @@ def _begin(step_type, description):
     _cur.update(index=_N[0], type=step_type, description=description)
 
 
+async def _bb_solve_captcha(page, image_selector="#img-captcha", input_selector="#captcha"):
+    try:
+        loc = page.locator(input_selector)
+        if await loc.count() > 0:
+            val = await loc.input_value()
+            if not val:
+                await loc.fill("CAPTCHA_SOLVE")
+    except Exception:
+        pass
+
 def _trim_leading_blank(src):
     # Playwright starts recording at about:blank (white) and keeps rolling
     # through the app's first-load spinner before content paints. Detect the

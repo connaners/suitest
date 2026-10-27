@@ -126,9 +126,19 @@ def extract_steps_from_automation_code(
         ):
             c_input = "#captcha"
             c_img = "#img-captcha"
-            m_in = re.search(r'locator\s*\(\s*["\'](.*?)["\']\s*\)', st_body)
-            if m_in:
-                c_input = m_in.group(1)
+            m_desc = re.search(r"Solve CAPTCHA on\s+(.+?)\s+into\s+(.+)", st_desc, re.I)
+            if m_desc:
+                c_img = m_desc.group(1).strip()
+                c_input = m_desc.group(2).strip()
+            else:
+                m_img = re.search(r'image_selector\s*=\s*["\'](.*?)["\']', st_body)
+                if m_img:
+                    c_img = m_img.group(1)
+                m_in = re.search(r'input_selector\s*=\s*["\'](.*?)["\']', st_body) or re.search(
+                    r'locator\s*\(\s*["\'](.*?)["\']\s*\)', st_body
+                )
+                if m_in:
+                    c_input = m_in.group(1)
             extracted.append(
                 {
                     "action": st_desc,
@@ -138,6 +148,7 @@ def extract_steps_from_automation_code(
                             "tool": "browser_solve_captcha",
                             "arguments": {
                                 "selector": c_img,
+                                "image_selector": c_img,
                                 "input_selector": c_input,
                                 "captcha_type": "auto",
                                 "refresh_target": c_img,

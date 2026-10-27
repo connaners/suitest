@@ -41,8 +41,8 @@ from suitest_shared.domain.enums import (
 from suitest_shared.schemas.pagination import Page, PageMeta
 
 from suitest_api.auth.db import get_async_session
+from suitest_api.deps.api_key import require_api_key_or_role, tenant_via_api_key_or_session
 from suitest_api.deps.arq import get_arq
-from suitest_api.deps.role import require_role
 from suitest_api.deps.run_dispatch import dispatch_run
 from suitest_api.deps.scope import TenantContext, require_workspace_membership
 from suitest_api.deps.tier import require_autonomy, workspace_llm_status
@@ -91,7 +91,7 @@ router = APIRouter(prefix="/api/v1", tags=["test-cases"])
 
 # Role gate shared by every mutating endpoint per docs/API.md §3.3.
 _WRITER_ROLES: set[Role] = {Role.QA, Role.ADMIN, Role.OWNER}
-_writer_dep = require_role(_WRITER_ROLES)
+_writer_dep = require_api_key_or_role(_WRITER_ROLES)
 
 # Surfacing tombstoned rows via ``?includeDeleted=true`` is an admin operation
 # per ``docs/API.md §3.3`` — QA cannot enumerate soft-deleted cases.
@@ -296,7 +296,7 @@ async def list_test_cases(
     cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     include_deleted: bool = Query(default=False, alias="includeDeleted"),
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
     session: AsyncSession = Depends(get_async_session),
 ) -> Page[TestCaseListItem]:
     """List cases by suite (filtered, paginated) or by project (all suites).
@@ -433,7 +433,7 @@ async def get_test_case(
     case_id: str,
     request: Request,
     include_deleted: bool = Query(default=False, alias="includeDeleted"),
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
     session: AsyncSession = Depends(get_async_session),
 ) -> TestCaseDetail:
     """Return a case with its ordered steps (+ executable) and tags; 404 if cross-ws.
@@ -541,7 +541,7 @@ async def get_test_case(
 async def get_test_case_steps(
     case_id: str,
     request: Request,
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[TestStepPublic]:
     """Return a case's steps only (step editor pre-load); 404 when cross-workspace."""

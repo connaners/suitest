@@ -17,11 +17,16 @@ CAPTCHA_HINT_PATTERN = re.compile(
 )
 
 
-def is_submit_action(target_selector: str, tool_name: str) -> bool:
-    """Check if target element selector or tool represents a form submission action."""
+def is_submit_action(
+    target_selector: str,
+    tool_name: str,
+    action_text: str | None = None,
+) -> bool:
+    """Check if target element selector or action description represents a form submission action."""
     if tool_name not in ("browser_click", "browser.click"):
         return False
-    return bool(SUBMIT_TRIGGER_PATTERN.search(target_selector))
+    combined = f"{target_selector or ''} {action_text or ''}"
+    return bool(SUBMIT_TRIGGER_PATTERN.search(combined))
 
 
 def has_captcha_hint(target_selector: str | None, action_text: str | None = None) -> bool:

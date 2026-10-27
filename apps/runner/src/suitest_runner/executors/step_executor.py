@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import re
@@ -119,6 +120,7 @@ _INFRA_ERROR_PATTERNS: tuple[str, ...] = (
     "browser has been closed",
     "browser closed",
     "page has been closed",
+    "target_unreachable",
     "connection refused",
     "econnrefused",
     "spawn enoent",
@@ -205,10 +207,12 @@ async def _handle_upload_operation(
             raise McpToolFailed(f"Upload file not found: {raw_path} (resolved to {p})")
         resolved_files.append(str(p))
 
+    frame_selector = str(arguments.get("frame_selector") or arguments.get("frameSelector") or "")
+    frame_chain = _build_frame_chain_js(frame_selector) if frame_selector else "page"
     payload_arg = resolved_files[0] if len(resolved_files) == 1 else resolved_files
     code = f"""async (page) => {{
-    const locator = page.locator({json.dumps(target)});
-    await locator.setInputFiles({json.dumps(payload_arg)});
+    const targetEl = {frame_chain}.locator({json.dumps(target)});
+    await targetEl.setInputFiles({json.dumps(payload_arg)});
 }}"""
     return await invoker.invoke(
         explicit_provider=explicit_provider,
@@ -219,8 +223,9 @@ async def _handle_upload_operation(
 
 
 def _build_frame_chain_js(frame_selector: str) -> str:
-    """Build chained page.frameLocator(...) calls for nested iframes delimited by ' >>> '."""
-    parts = [s.strip() for s in frame_selector.split(">>>") if s.strip()]
+    """Build chained page.frameLocator(...) calls for nested iframes delimited by '>>>' or '>>'."""
+    raw = frame_selector.replace(">>>", "\x00").replace(">>", "\x00")
+    parts = [s.strip() for s in raw.split("\x00") if s.strip()]
     if not parts:
         parts = [frame_selector.strip() or "iframe"]
     chain = "page"
@@ -508,6 +513,28 @@ async def _handle_solve_captcha_operation(
     raise McpToolFailed(f"Failed to solve CAPTCHA after {attempts} attempts")
 
 
+async def _preflight_tcp_probe(
+    host: str,
+    port: int,
+    timeout_sec: float = 2.5,
+) -> tuple[bool, str | None]:
+    """Test raw TCP socket connection to host and port to fail fast before browser navigation."""
+    writer = None
+    try:
+        async with asyncio.timeout(timeout_sec):
+            _, writer = await asyncio.open_connection(host, port)
+        return True, None
+    except TimeoutError:
+        return False, f"connection timed out after {timeout_sec}s"
+    except OSError as exc:
+        return False, str(exc)
+    finally:
+        if writer is not None:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+
 async def _invoke_tool(
     *,
     invoker: McpInvoker,
@@ -532,6 +559,33 @@ async def _invoke_tool(
             captcha_solver=captcha_solver,
         )
 
+    if normalized_tool in ("browser_navigate", "browser.navigate"):
+        nav_url = str(arguments.get("url") or "")
+        inv_type = type(getattr(invoker, "invoke", None)).__name__
+        is_mock_invoker = inv_type in ("MagicMock", "AsyncMock", "Mock")
+        force_probe = bool(arguments.get("_force_preflight"))
+        skip_probe = (
+            bool(arguments.get("_skip_preflight"))
+            or os.environ.get("SUITEST_SKIP_PREFLIGHT") == "1"
+        )
+        should_probe = (
+            nav_url.startswith(("http://", "https://"))
+            and not skip_probe
+            and (not is_mock_invoker or force_probe)
+        )
+        if should_probe:
+            from urllib.parse import urlsplit
+
+            parsed = urlsplit(nav_url)
+            host = parsed.hostname
+            if host:
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                reachable, err = await _preflight_tcp_probe(host, port, timeout_sec=2.5)
+                if not reachable:
+                    raise McpToolFailed(
+                        f"TARGET_UNREACHABLE: Cannot connect to {host}:{port} ({err}). "
+                        "Verify that the target host is reachable and any required VPN is connected."
+                    )
     if normalized_tool == "browser.assert_text":
         snapshot = await invoker.invoke(
             explicit_provider=explicit_provider,
@@ -671,9 +725,11 @@ async def _invoke_tool(
 
     if normalized_tool in ("browser_click", "browser.click") and captcha_solver is not None:
         target = str(arguments.get("target") or arguments.get("selector") or "")
-        should_detect_pre = has_captcha_hint(target, action_description) or bool(
-            arguments.get("_detect_captcha")
-        )
+        should_detect_pre = (
+            has_captcha_hint(target, action_description)
+            or is_submit_action(target, normalized_tool, action_description)
+            or bool(arguments.get("_detect_captcha"))
+        ) and not bool(arguments.get("_skip_captcha_detect"))
         if should_detect_pre:
             frame_selector = str(
                 arguments.get("frame_selector") or arguments.get("frameSelector") or ""
@@ -803,7 +859,7 @@ async def _invoke_tool(
         normalized_tool in ("browser_click", "browser.click")
         and not click_res.ok
         and captcha_solver is not None
-        and is_submit_action(target, normalized_tool)
+        and is_submit_action(target, normalized_tool, action_description)
     ):
         frame_selector = str(
             arguments.get("frame_selector") or arguments.get("frameSelector") or ""

@@ -73,9 +73,11 @@ def coerce_user_id(value: str | None) -> uuid.UUID | None:
     """
     if not value:
         return None
+    if isinstance(value, uuid.UUID):
+        return value
     try:
-        return uuid.UUID(value)
-    except ValueError:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
         return None
 
 

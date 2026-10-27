@@ -26,8 +26,8 @@ from suitest_db.repositories.suites import SuiteRepo
 from suitest_shared.domain.enums import Role, TestingApproach
 
 from suitest_api.auth.db import get_async_session
-from suitest_api.deps.role import require_role
-from suitest_api.deps.scope import TenantContext, require_workspace_membership
+from suitest_api.deps.api_key import require_api_key_or_role, tenant_via_api_key_or_session
+from suitest_api.deps.scope import TenantContext
 from suitest_api.schemas.project import SuitePublic
 from suitest_api.schemas.suite import SuiteCreate, SuiteUpdate
 from suitest_api.services.suite_service import (
@@ -41,7 +41,7 @@ router = APIRouter(prefix="/api/v1", tags=["suites"])
 
 # Role gate shared by every mutating endpoint per docs/API.md.
 _WRITER_ROLES: set[Role] = {Role.QA, Role.ADMIN, Role.OWNER}
-_writer_dep = require_role(_WRITER_ROLES)
+_writer_dep = require_api_key_or_role(_WRITER_ROLES)
 
 
 async def _project_in_scope(repo: ProjectRepo, project_id: str, workspace_id: str) -> bool:
@@ -88,7 +88,7 @@ async def _suite_public(
 @router.get("/suites", response_model=list[SuitePublic])
 async def list_suites(
     project_id: str = Query(alias="projectId"),
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[SuitePublic]:
     """List active (non-deleted) suites for a project; 404 cross-workspace."""
@@ -117,7 +117,7 @@ async def list_suites(
 @router.get("/suites/{suite_id}", response_model=SuitePublic)
 async def get_suite(
     suite_id: str,
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
     session: AsyncSession = Depends(get_async_session),
 ) -> SuitePublic:
     """Return one suite with its case_count; 404 when cross-workspace."""
