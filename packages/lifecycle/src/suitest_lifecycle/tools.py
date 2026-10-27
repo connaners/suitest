@@ -886,8 +886,8 @@ def create_test_case(
                     step_body_lines.append(
                         f"    await _bb_solve_captcha(page, image_selector={img_s!r}, input_selector={inp_s!r})"
                     )
-            except Exception:
-                pass
+            except (json.JSONDecodeError, TypeError, KeyError) as parse_err:
+                logger.debug("create_test_case.step_code_parse_failed: %s", parse_err)
             step_body_lines.append("    await _ok(page)")
         helper_defs = (
             "def _begin(step_type, description):\n"
