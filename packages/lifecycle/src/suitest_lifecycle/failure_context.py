@@ -106,6 +106,82 @@ def excerpt_dom(dom: str, *, failed_selector: str, max_chars: int = 2000) -> str
     return "\n".join(out_lines)[:max_chars]
 
 
+def suggest_selectors(failed_selector: str, dom: str = "") -> list[str]:
+    """Generate up to 3 candidate self-healing alternative selectors for a failed step."""
+    suggestions: list[str] = []
+    tokens = _selector_tokens(failed_selector)
+
+    if dom and tokens:
+        for line in dom.splitlines():
+            if not _line_matches_tokens(line, tokens):
+                continue
+            m_test = re.search(r'data-test(?:id)?=["\']([^"\']+)["\']', line, re.I)
+            if m_test:
+                cand = f'page.get_by_test_id("{m_test.group(1)}")'
+                if cand not in suggestions:
+                    suggestions.append(cand)
+            m_name = re.search(r'\bname=["\']([^"\']+)["\']', line, re.I)
+            if m_name:
+                cand = f'[name="{m_name.group(1)}"]'
+                if cand not in suggestions:
+                    suggestions.append(cand)
+            m_ph = re.search(r'\bplaceholder=["\']([^"\']+)["\']', line, re.I)
+            if m_ph:
+                cand = f'page.get_by_placeholder("{m_ph.group(1)}")'
+                if cand not in suggestions:
+                    suggestions.append(cand)
+            m_aria = re.search(r'(?:aria-label|title)=["\']([^"\']+)["\']', line, re.I)
+            if m_aria:
+                cand = f'page.get_by_label("{m_aria.group(1)}")'
+                if cand not in suggestions:
+                    suggestions.append(cand)
+            m_btn = re.search(r"<(button|a)\b[^>]*>([^<]+)</\1>", line, re.I)
+            if m_btn:
+                tag, text = m_btn.group(1).lower(), m_btn.group(2).strip()
+                role = "button" if tag == "button" else "link"
+                cand = f'page.get_by_role("{role}", name="{text}")'
+                if text and cand not in suggestions:
+                    suggestions.append(cand)
+            if len(suggestions) >= 3:
+                break
+
+    clean_sel = failed_selector.strip()
+    if clean_sel.startswith("#"):
+        tok = clean_sel.lstrip("#")
+        for s in (f'[name="{tok}"]', f'page.get_by_test_id("{tok}")', f"button#{tok}"):
+            if s not in suggestions and s != clean_sel:
+                suggestions.append(s)
+    elif 'name="' in clean_sel or "name='" in clean_sel:
+        m = re.search(r'name=["\']([^"\']+)["\']', clean_sel)
+        if m:
+            val = m.group(1)
+            for s in (
+                f"#{val}",
+                f'page.get_by_placeholder("{val.capitalize()}")',
+                f'[data-testid="{val}"]',
+            ):
+                if s not in suggestions:
+                    suggestions.append(s)
+    elif "get_by_role" in clean_sel:
+        m = re.search(r'name=["\']([^"\']+)["\']', clean_sel)
+        if m:
+            val = m.group(1)
+            for s in (
+                f'button:has-text("{val}")',
+                f'[aria-label="{val}"]',
+                f'.btn:has-text("{val}")',
+            ):
+                if s not in suggestions:
+                    suggestions.append(s)
+
+    for tok in tokens:
+        cand = f'[data-testid*="{tok}"]'
+        if cand not in suggestions and cand != clean_sel:
+            suggestions.append(cand)
+
+    return suggestions[:3]
+
+
 @dataclass
 class FailedCase:
     title: str
@@ -120,6 +196,7 @@ class FailedCase:
     network: list[dict[str, object]] = field(default_factory=list)
     evidence_links: dict[str, str] = field(default_factory=dict)
     classification: str = ""  # optional failure label (STALE/FLAKE/...) from run data
+    suggested_selectors: list[str] = field(default_factory=list)
 
 
 def build_failure_markdown(cases: list[FailedCase], *, budget_bytes: int = 8192) -> str:
@@ -161,6 +238,9 @@ def _render_case(c: FailedCase, budget: int) -> str:
     if c.evidence_links:
         links = " · ".join(f"[{k}]({v})" for k, v in c.evidence_links.items())
         parts.append(f"**Evidence**: {links}")
+    if c.suggested_selectors:
+        items = "\n".join(f"{i + 1}. `{s}`" for i, s in enumerate(c.suggested_selectors))
+        parts.append(f"**Suggested Selectors (Self-Healing)**:\n{items}")
     return "\n\n".join(parts)
 
 
@@ -275,6 +355,9 @@ def load_failed_cases(output_dir: Path) -> list[FailedCase]:
                 console=_dict_items(console),
                 network=_dict_items(network),
                 evidence_links=_evidence_links(result, mode_dir),
+                suggested_selectors=suggest_selectors(
+                    str(ctx.get("failedSelector", "")), str(ctx.get("dom", ""))
+                ),
             )
         )
     return cases

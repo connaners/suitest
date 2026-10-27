@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from suitest_lifecycle.blackbox.detector import detect_login_form, detect_page_pattern
 from suitest_lifecycle.blackbox.models import (
+    ApiCallInfo,
     BlackboxUiConfig,
     DiscoveryResult,
     ElementInfo,
@@ -424,12 +426,41 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
             lambda m: console_errors.append(m.text[:300]) if m.type == "error" else None,
         )
         page.on("pageerror", lambda e: console_errors.append(str(e)[:300]))
-        page.on(
-            "response",
-            lambda r: (
-                network_errors.append(f"{r.status} {r.url[:200]}") if r.status >= 500 else None
-            ),
-        )
+
+        def _on_response(r: Any) -> None:
+            try:
+                if getattr(r, "status", 0) >= 500:
+                    network_errors.append(f"{r.status} {str(r.url)[:200]}")
+                url_str = str(getattr(r, "url", "") or "")
+                req = getattr(r, "request", None)
+                if not req:
+                    return
+                res_type = str(getattr(req, "resource_type", "") or "")
+                is_api = (
+                    res_type in ("fetch", "xhr")
+                    or "/api/" in url_str
+                    or "application/json" in str(getattr(r, "headers", {}).get("content-type", ""))
+                )
+                if not is_api or any(
+                    url_str.endswith(ext)
+                    for ext in (".png", ".jpg", ".jpeg", ".css", ".js", ".svg", ".woff2", ".ico")
+                ):
+                    return
+                req_body = str(getattr(req, "post_data", "") or "")
+                result.intercepted_api_calls.append(
+                    ApiCallInfo(
+                        url=url_str,
+                        method=str(getattr(req, "method", "GET") or "GET").upper(),
+                        status=int(getattr(r, "status", 200) or 200),
+                        resource_type=res_type or "fetch",
+                        route=_route_of(page.url, base),
+                        request_body=req_body[:2000],
+                    )
+                )
+            except Exception:
+                pass
+
+        page.on("response", _on_response)
         page.on(
             "requestfailed",
             # ERR_ABORTED = request cancelled by navigation (Next.js RSC
@@ -584,6 +615,13 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
                 limit=cfg.crawl.max_routes * 3,
             )
 
+        api_calls_file = evidence_dir / "intercepted_api_calls.json"
+        with contextlib.suppress(Exception):
+            evidence_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+            api_calls_file.write_text(
+                json.dumps([c.to_json() for c in result.intercepted_api_calls], indent=2),
+                encoding="utf-8",
+            )
         await browser.close()
     return result
 

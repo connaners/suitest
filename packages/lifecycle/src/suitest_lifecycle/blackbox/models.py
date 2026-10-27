@@ -179,6 +179,28 @@ class LoginProbe:
 
 
 @dataclass
+class ApiCallInfo:
+    """Intercepted REST API call during crawling (Dual Crawling - Pilar 6)."""
+
+    url: str = ""
+    method: str = "GET"
+    status: int = 200
+    resource_type: str = "fetch"  # fetch | xhr
+    route: str = ""
+    request_body: str = ""
+    response_body: str = ""
+    timestamp: float = 0.0
+
+    def to_json(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_json(raw: dict[str, Any]) -> ApiCallInfo:
+        known = {f for f in ApiCallInfo.__dataclass_fields__}
+        return ApiCallInfo(**{k: v for k, v in raw.items() if k in known})
+
+
+@dataclass
 class DiscoveryResult:
     base_url: str = ""
     login: LoginForm | None = None
@@ -187,6 +209,7 @@ class DiscoveryResult:
     skipped_routes: list[str] = field(default_factory=list)  # safeMode / excluded
     errors: list[str] = field(default_factory=list)
     storage_state_path: str = ""
+    intercepted_api_calls: list[ApiCallInfo] = field(default_factory=list)
 
     def page(self, route: str) -> PageInfo | None:
         for p in self.pages:
@@ -203,6 +226,7 @@ class DiscoveryResult:
             "skippedRoutes": self.skipped_routes,
             "errors": self.errors,
             "storageStatePath": self.storage_state_path,
+            "interceptedApiCalls": [c.to_json() for c in self.intercepted_api_calls],
         }
 
     @staticmethod
@@ -215,6 +239,9 @@ class DiscoveryResult:
             skipped_routes=list(raw.get("skippedRoutes", [])),
             errors=list(raw.get("errors", [])),
             storage_state_path=str(raw.get("storageStatePath", "")),
+            intercepted_api_calls=[
+                ApiCallInfo.from_json(c) for c in raw.get("interceptedApiCalls", [])
+            ],
         )
 
 

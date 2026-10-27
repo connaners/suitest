@@ -21,6 +21,7 @@ from typing import Any
 
 from suitest_lifecycle.blackbox.mcp import BLACKBOX_TOOLS
 from suitest_lifecycle.config import Config, ConfigError, load_config
+from suitest_lifecycle.fixture_generator import suitest_create_dummy_file
 from suitest_lifecycle.interactive_browser import INTERACTIVE_BROWSER_TOOLS
 from suitest_lifecycle.models import Mode
 from suitest_lifecycle.orchestrator import LifecycleResult, generate_only, run_lifecycle
@@ -226,10 +227,24 @@ def get_failure_context(config_path: str) -> dict[str, object]:
             data={"failure_context": "", "failed_cases": 0},
         )
     md = build_failure_markdown(cases)
+    cases_summary = [
+        {
+            "title": c.title,
+            "failed_step": c.failed_step_index,
+            "failed_selector": c.failed_selector,
+            "suggested_selectors": c.suggested_selectors,
+            "error": c.error_message,
+        }
+        for c in cases
+    ]
     return _envelope(
         True,
         f"{len(cases)} failing case(s); context ready for repair",
-        data={"failure_context": md, "failed_cases": len(cases)},
+        data={
+            "failure_context": md,
+            "failed_cases": len(cases),
+            "cases": cases_summary,
+        },
     )
 
 
@@ -997,6 +1012,7 @@ TOOLS = {
     "get_test_case": get_test_case,
     "create_test_case": create_test_case,
     "run_test_case": run_test_case,
+    "suitest_create_dummy_file": suitest_create_dummy_file,
     **BLACKBOX_TOOLS,
     **INTERACTIVE_BROWSER_TOOLS,
 }
@@ -1006,6 +1022,7 @@ KWARG_TOOLS = frozenset(
     {
         *BLACKBOX_TOOLS,
         *INTERACTIVE_BROWSER_TOOLS,
+        "suitest_create_dummy_file",
         "edit_test_case_inputs",
         "manage_test_case_dataset",
         "get_workspace_variables",

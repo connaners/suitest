@@ -496,7 +496,16 @@ def blackbox_discover_app(**kwargs: Any) -> dict[str, Any]:
             f"login {'ok' if discovery.login_probe.success else ('detected' if discovery.login else 'not found')}"
         ),
         data=summarize(discovery, graph=graph),
-        artifacts=[disc_path, str(graph_path), report_path],
+        artifacts=[
+            disc_path,
+            str(graph_path),
+            report_path,
+            *(
+                [str(_evidence_dir(paths) / "intercepted_api_calls.json")]
+                if (_evidence_dir(paths) / "intercepted_api_calls.json").is_file()
+                else []
+            ),
+        ],
         errors=discovery.errors,
     )
 

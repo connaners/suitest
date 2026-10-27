@@ -96,6 +96,7 @@ _TOOL_DESCRIPTIONS = {
     "suitest_browser_solve_captcha": "Interactive: solve CAPTCHA image and fill input in active session.",
     "suitest_browser_snapshot": "Interactive: capture structured DOM elements and screenshot of active session.",
     "suitest_browser_close": "Interactive: close active browser session and optionally export action history as case.",
+    "suitest_create_dummy_file": "Generate a physically valid dummy test fixture file (PDF, ZIP, SHP, Image, GeoJSON) on disk.",
 }
 
 
@@ -484,7 +485,40 @@ _BROWSER_CLOSE_SCHEMA: dict[str, object] = {
 }
 
 
+_DUMMY_FILE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "type": {
+            "type": "string",
+            "enum": ["pdf", "zip", "shp", "image", "png", "jpg", "jpeg", "geojson"],
+            "default": "pdf",
+            "description": "File format type",
+        },
+        "size_kb": {
+            "type": "integer",
+            "default": 1024,
+            "maximum": 51200,
+            "description": "Target size in KB",
+        },
+        "filename": {"type": "string", "description": "Target filename e.g. proposal_teknis.pdf"},
+        "output_dir": {
+            "type": "string",
+            "default": "suitest-output/fixtures/",
+            "description": "Output directory",
+        },
+        "metadata": {"type": "object", "description": "Optional file metadata (title, author)"},
+    },
+    "required": ["type", "filename"],
+}
+
+
 def _tool_schema(name: str) -> dict[str, object]:
+    if name == "suitest_create_dummy_file":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _DUMMY_FILE_SCHEMA,
+        }
     if name == "suitest_browser_open":
         return {
             "name": name,
