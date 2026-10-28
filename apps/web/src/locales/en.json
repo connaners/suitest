@@ -67,6 +67,7 @@
   "auth.sendingResetLink": "Sending…",
   "auth.forgotPasswordSuccessTitle": "Check your email",
   "auth.forgotPasswordSuccessDesc": "If an account exists for that email, a password reset link has been dispatched.",
+  "auth.forgotPasswordError": "Could not submit password reset request. Please try again later.",
   "auth.backToLogin": "Back to sign in",
   "auth.resetPasswordTitle": "Choose a new password",
   "auth.resetPasswordDesc": "Please choose a secure password with at least 8 characters.",
@@ -79,5 +80,6 @@
   "auth.passwordsDoNotMatch": "Passwords do not match.",
   "auth.passwordTooShort": "Password must be at least 8 characters.",
   "auth.missingToken": "Invalid or missing reset token.",
-  "auth.resetTokenInvalid": "This reset link is invalid or has expired."
+  "auth.resetTokenInvalid": "This reset link is invalid or has expired.",
+  "auth.resetGenericError": "Could not reset your password. Please try requesting a new link."
 }

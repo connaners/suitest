@@ -67,6 +67,7 @@
   "auth.sendingResetLink": "Mengirim…",
   "auth.forgotPasswordSuccessTitle": "Periksa email Anda",
   "auth.forgotPasswordSuccessDesc": "Jika akun dengan email tersebut ditemukan, tautan reset kata sandi telah dikirimkan.",
+  "auth.forgotPasswordError": "Tidak dapat mengirim permintaan reset kata sandi. Silakan coba lagi nanti.",
   "auth.backToLogin": "Kembali ke halaman masuk",
   "auth.resetPasswordTitle": "Pilih kata sandi baru",
   "auth.resetPasswordDesc": "Gunakan kata sandi yang aman dengan minimal 8 karakter.",
@@ -79,5 +80,6 @@
   "auth.passwordsDoNotMatch": "Kata sandi tidak cocok.",
   "auth.passwordTooShort": "Kata sandi minimal harus 8 karakter.",
   "auth.missingToken": "Token reset tidak valid atau tidak ditemukan.",
-  "auth.resetTokenInvalid": "Tautan reset tidak valid atau telah kedaluwarsa."
+  "auth.resetTokenInvalid": "Tautan reset tidak valid atau telah kedaluwarsa.",
+  "auth.resetGenericError": "Tidak dapat mengatur ulang kata sandi Anda. Silakan coba minta tautan baru."
 }
