@@ -2,6 +2,13 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  AuthContainer,
+  AuthFooter,
+  AuthHeader,
+  AuthSubmitButton,
+} from "@/components/shared/AuthLayout";
+
 interface ResetPasswordSearch {
   token?: string;
 }
@@ -72,16 +79,13 @@ export function ResetPassword(): React.ReactElement {
   };
 
   return (
-    <section className="mx-auto max-w-md space-y-6 pt-16">
-      <div className="space-y-3 text-center">
-        <img src="/logo.svg" alt="Suitest" className="mx-auto h-12 w-12 rounded-xl" />
-        <h2 className="font-mono text-2xl font-semibold tracking-tight">
-          sui<span className="text-accent">test</span>
-        </h2>
-        <p className="text-[13px] text-fg-3">
-          {t("auth.resetPasswordDesc", "Please choose a secure password with at least 8 characters.")}
-        </p>
-      </div>
+    <AuthContainer>
+      <AuthHeader
+        subtitle={t(
+          "auth.resetPasswordDesc",
+          "Please choose a secure password with at least 8 characters.",
+        )}
+      />
 
       {!token ? (
         <div className="space-y-4 rounded-lg border border-red/30 bg-red/10 p-6 text-center">
@@ -165,15 +169,11 @@ export function ResetPassword(): React.ReactElement {
             </p>
           ) : null}
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="inline-flex w-full items-center justify-center rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-accent-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting
-              ? t("auth.resettingPassword", "Resetting…")
-              : t("auth.resetPasswordSubmit", "Reset password")}
-          </button>
+          <AuthSubmitButton
+            submitting={submitting}
+            label={t("auth.resetPasswordSubmit", "Reset password")}
+            loadingLabel={t("auth.resettingPassword", "Resetting…")}
+          />
 
           <div className="pt-2 text-center">
             <Link
@@ -186,10 +186,8 @@ export function ResetPassword(): React.ReactElement {
         </form>
       )}
 
-      <p className="pt-4 text-center text-[11px] text-fg-5">
-        © 2026 Suitest contributors · Apache-2.0 · open source
-      </p>
-    </section>
+      <AuthFooter />
+    </AuthContainer>
   );
 }
 
