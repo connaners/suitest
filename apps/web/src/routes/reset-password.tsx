@@ -11,6 +11,7 @@ import {
   AuthHeader,
   AuthPasswordInput,
   AuthSubmitButton,
+  AuthSuccessCard,
 } from "@/components/shared/AuthLayout";
 
 interface ResetPasswordSearch {
@@ -104,25 +105,16 @@ export function ResetPassword(): React.ReactElement {
           </Link>
         </div>
       ) : submitted ? (
-        <div className="space-y-4 rounded-lg border border-border bg-elev-1 p-6 text-center">
-          <div className="space-y-2">
-            <h3 className="text-[15px] font-semibold text-fg-1" data-testid="reset-password-success-title">
-              {t("auth.resetPasswordSuccessTitle", "Password updated")}
-            </h3>
-            <p className="text-[13px] text-fg-3" data-testid="reset-password-success-desc">
-              {t(
-                "auth.resetPasswordSuccessDesc",
-                "Your password has been reset successfully. You can now sign in.",
-              )}
-            </p>
-          </div>
-          <Link
-            to="/login"
-            className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-accent-fg hover:opacity-90"
-          >
-            {t("auth.backToLogin", "Back to sign in")}
-          </Link>
-        </div>
+        <AuthSuccessCard
+          title={t("auth.resetPasswordSuccessTitle", "Password updated")}
+          description={t(
+            "auth.resetPasswordSuccessDesc",
+            "Your password has been reset successfully. You can now sign in.",
+          )}
+          titleTestId="reset-password-success-title"
+          descTestId="reset-password-success-desc"
+          actionLabel={t("auth.backToLogin", "Back to sign in")}
+        />
       ) : (
         <AuthForm onSubmit={onSubmit}>
           <AuthPasswordInput

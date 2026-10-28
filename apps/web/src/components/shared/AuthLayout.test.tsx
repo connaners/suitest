@@ -17,6 +17,7 @@ import {
   AuthHeader,
   AuthPasswordInput,
   AuthSubmitButton,
+  AuthSuccessCard,
 } from "@/components/shared/AuthLayout";
 
 describe("AuthLayout components", () => {
@@ -99,5 +100,35 @@ describe("AuthLayout components", () => {
       "href",
       "/login",
     );
+  });
+
+  it("renders AuthSuccessCard with title, description, and action link", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const rootRoute = createRootRoute({
+      component: () => (
+        <AuthSuccessCard
+          title="Success Title"
+          description="Success Description"
+          titleTestId="test-title"
+          descTestId="test-desc"
+          actionLabel="Go to Login"
+        />
+      ),
+    });
+    const router = createRouter({
+      routeTree: rootRoute,
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+      context: { queryClient },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByTestId("test-title")).toHaveTextContent("Success Title");
+    expect(screen.getByTestId("test-desc")).toHaveTextContent("Success Description");
+    expect(screen.getByRole("link", { name: "Go to Login" })).toHaveAttribute("href", "/login");
   });
 });

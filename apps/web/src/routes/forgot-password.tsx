@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -10,6 +10,7 @@ import {
   AuthForm,
   AuthHeader,
   AuthSubmitButton,
+  AuthSuccessCard,
 } from "@/components/shared/AuthLayout";
 
 export function ForgotPassword(): React.ReactElement {
@@ -58,25 +59,16 @@ export function ForgotPassword(): React.ReactElement {
       />
 
       {submitted ? (
-        <div className="space-y-4 rounded-lg border border-border bg-elev-1 p-6 text-center">
-          <div className="space-y-2">
-            <h3 className="text-[15px] font-semibold text-fg-1" data-testid="forgot-password-success-title">
-              {t("auth.forgotPasswordSuccessTitle", "Check your email")}
-            </h3>
-            <p className="text-[13px] text-fg-3" data-testid="forgot-password-success-desc">
-              {t(
-                "auth.forgotPasswordSuccessDesc",
-                "If an account exists for that email, a password reset link has been dispatched.",
-              )}
-            </p>
-          </div>
-          <Link
-            to="/login"
-            className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-accent-fg hover:opacity-90"
-          >
-            {t("auth.backToLogin", "Back to sign in")}
-          </Link>
-        </div>
+        <AuthSuccessCard
+          title={t("auth.forgotPasswordSuccessTitle", "Check your email")}
+          description={t(
+            "auth.forgotPasswordSuccessDesc",
+            "If an account exists for that email, a password reset link has been dispatched.",
+          )}
+          titleTestId="forgot-password-success-title"
+          descTestId="forgot-password-success-desc"
+          actionLabel={t("auth.backToLogin", "Back to sign in")}
+        />
       ) : (
         <AuthForm onSubmit={onSubmit}>
           <div className="space-y-2">
