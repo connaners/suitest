@@ -121,9 +121,18 @@ def build_tiny_ocr_element_eval_script() -> str:
     Runs directly in the browser page context against an HTMLImageElement or HTMLCanvasElement.
     """
     ocrad_code = load_ocrad_source()
-    return f"""(img) => {{
+    return f"""async (img) => {{
         try {{
             if (!img) return {{ status: "fallback", reason: "element_not_found" }};
+            if (img.tagName && img.tagName.toLowerCase() === "img") {{
+                if (!img.complete || img.naturalWidth === 0) {{
+                    await new Promise((resolve) => {{
+                        img.addEventListener("load", () => resolve(true), {{ once: true }});
+                        img.addEventListener("error", () => resolve(false), {{ once: true }});
+                        setTimeout(() => resolve(img.complete && img.naturalWidth > 0), 4000);
+                    }});
+                }}
+            }}
             const c = document.createElement("canvas");
             const w = img.naturalWidth || img.width || img.clientWidth || 120;
             const h = img.naturalHeight || img.height || img.clientHeight || 40;

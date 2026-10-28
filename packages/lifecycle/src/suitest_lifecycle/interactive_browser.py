@@ -11,6 +11,7 @@ Provides step-by-step interactive browser control for LLMs/Agents with:
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import contextlib
 import json
 import logging
@@ -117,6 +118,10 @@ class InteractiveSessionManager:
     def __init__(self) -> None:
         self._sessions: dict[str, InteractiveSession] = {}
         self._playwright: Any = None
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+    def _run(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        return self._executor.submit(fn, *args, **kwargs).result()
 
     def reap_expired(self) -> list[str]:
         """Close and remove sessions that exceeded inactivity TTL."""
@@ -129,7 +134,7 @@ class InteractiveSessionManager:
                 expired_ids.append(sess_id)
         return expired_ids
 
-    def open_session(
+    def _open_session_impl(
         self,
         headless: bool = True,
         viewport: dict[str, int] | None = None,
@@ -168,6 +173,21 @@ class InteractiveSessionManager:
         self._sessions[session_id] = session
         return session_id
 
+    def open_session(
+        self,
+        headless: bool = True,
+        viewport: dict[str, int] | None = None,
+        storage_state_path: str = "",
+    ) -> str:
+        return self._run(self._open_session_impl, headless, viewport, storage_state_path)
+
+    def run_on_session(self, session_id: str, fn: Any) -> Any:
+        def _wrapper() -> Any:
+            sess = self.get_session(session_id)
+            return fn(sess)
+
+        return self._run(_wrapper)
+
     def get_session(self, session_id: str) -> InteractiveSession:
         self.reap_expired()
         session = self._sessions.get(session_id)
@@ -178,7 +198,7 @@ class InteractiveSessionManager:
         session.touch()
         return session
 
-    def close_session(
+    def _close_session_impl(
         self,
         session_id: str,
         save_as_case: bool = False,
@@ -213,7 +233,15 @@ class InteractiveSessionManager:
 
         return actions, case_file
 
-    def close_all(self) -> None:
+    def close_session(
+        self,
+        session_id: str,
+        save_as_case: bool = False,
+        output_dir: str = "suitest-output/cases",
+    ) -> tuple[list[dict[str, Any]], str]:
+        return self._run(self._close_session_impl, session_id, save_as_case, output_dir)
+
+    def _close_all_impl(self) -> None:
         for sess in self._sessions.values():
             sess.close()
         self._sessions.clear()
@@ -221,6 +249,9 @@ class InteractiveSessionManager:
             with contextlib.suppress(Exception):
                 self._playwright.stop()
             self._playwright = None
+
+    def close_all(self) -> None:
+        self._run(self._close_all_impl)
 
 
 # Global module singleton for the MCP stdio runtime process
@@ -270,17 +301,20 @@ def suitest_browser_navigate(
             False, "session_id and url are required", errors=["missing required parameters"]
         )
     try:
-        sess = _GLOBAL_MANAGER.get_session(session_id)
-        # Playwright wait_until accepts: 'load', 'domcontentloaded', 'networkidle', 'commit'
-        strategy = (
-            wait_strategy
-            if wait_strategy in ("load", "domcontentloaded", "networkidle", "commit")
-            else "domcontentloaded"
-        )
-        sess.page.goto(url, wait_until=strategy, timeout=25000)
-        curr_url = sess.page.url
-        title = sess.page.title()
-        sess.record_action("navigate", target="", value=url, current_url=curr_url, title=title)
+
+        def _nav(sess: InteractiveSession) -> tuple[str, str]:
+            strategy = (
+                wait_strategy
+                if wait_strategy in ("load", "domcontentloaded", "networkidle", "commit")
+                else "domcontentloaded"
+            )
+            sess.page.goto(url, wait_until=strategy, timeout=25000)
+            curr_url = sess.page.url
+            title = sess.page.title()
+            sess.record_action("navigate", target="", value=url, current_url=curr_url, title=title)
+            return curr_url, title
+
+        curr_url, title = _GLOBAL_MANAGER.run_on_session(session_id, _nav)
         return _envelope(
             success=True,
             summary=f"Navigated to '{url}' — landed on '{curr_url}'",
@@ -306,13 +340,16 @@ def suitest_browser_click(
             False, "session_id and target selector are required", errors=["missing parameters"]
         )
     try:
-        sess = _GLOBAL_MANAGER.get_session(session_id)
-        loc = sess.page.locator(target)
-        if hasattr(loc, "first"):
-            loc = loc.first
-        loc.wait_for(state="visible", timeout=timeout_ms)
-        loc.click()
-        sess.record_action("click", target=target)
+
+        def _click(sess: InteractiveSession) -> None:
+            loc = sess.page.locator(target)
+            if hasattr(loc, "first"):
+                loc = loc.first
+            loc.wait_for(state="visible", timeout=timeout_ms)
+            loc.click()
+            sess.record_action("click", target=target)
+
+        _GLOBAL_MANAGER.run_on_session(session_id, _click)
         return _envelope(
             success=True,
             summary=f"Clicked '{target}'",
@@ -337,13 +374,16 @@ def suitest_browser_type(
     if not session_id or not target:
         return _envelope(False, "session_id and target are required", errors=["missing parameters"])
     try:
-        sess = _GLOBAL_MANAGER.get_session(session_id)
-        loc = sess.page.locator(target)
-        if hasattr(loc, "first"):
-            loc = loc.first
-        loc.wait_for(state="visible", timeout=timeout_ms)
-        loc.fill(text)
-        sess.record_action("type", target=target, value=text)
+
+        def _type(sess: InteractiveSession) -> None:
+            loc = sess.page.locator(target)
+            if hasattr(loc, "first"):
+                loc = loc.first
+            loc.wait_for(state="visible", timeout=timeout_ms)
+            loc.fill(text)
+            sess.record_action("type", target=target, value=text)
+
+        _GLOBAL_MANAGER.run_on_session(session_id, _type)
         return _envelope(
             success=True,
             summary=f"Typed text into '{target}'",
@@ -368,13 +408,16 @@ def suitest_browser_select(
     if not session_id or not target:
         return _envelope(False, "session_id and target are required", errors=["missing parameters"])
     try:
-        sess = _GLOBAL_MANAGER.get_session(session_id)
-        loc = sess.page.locator(target)
-        if hasattr(loc, "first"):
-            loc = loc.first
-        loc.wait_for(state="visible", timeout=timeout_ms)
-        loc.select_option(value=value)
-        sess.record_action("select", target=target, value=value)
+
+        def _select(sess: InteractiveSession) -> None:
+            loc = sess.page.locator(target)
+            if hasattr(loc, "first"):
+                loc = loc.first
+            loc.wait_for(state="visible", timeout=timeout_ms)
+            loc.select_option(value=value)
+            sess.record_action("select", target=target, value=value)
+
+        _GLOBAL_MANAGER.run_on_session(session_id, _select)
         return _envelope(
             success=True,
             summary=f"Selected '{value}' in '{target}'",
@@ -398,44 +441,48 @@ def suitest_browser_solve_captcha(
     if not session_id:
         return _envelope(False, "session_id is required", errors=["missing session_id"])
     try:
-        sess = _GLOBAL_MANAGER.get_session(session_id)
-        img_loc = sess.page.locator(image_target)
-        if hasattr(img_loc, "first"):
-            img_loc = img_loc.first
-        img_loc.wait_for(state="visible", timeout=8000)
 
-        eval_script = build_tiny_ocr_element_eval_script()
-        res = img_loc.evaluate(eval_script)
+        def _solve(sess: InteractiveSession) -> tuple[str, str, bool]:
+            img_loc = sess.page.locator(image_target)
+            if hasattr(img_loc, "first"):
+                img_loc = img_loc.first
+            img_loc.wait_for(state="visible", timeout=8000)
 
-        solved_text = ""
-        source = "tiny_ocr"
-        if isinstance(res, dict) and res.get("status") == "solved":
-            solved_text = str(res.get("text") or "")
-            source = str(res.get("source") or "tiny_ocr")
+            eval_script = build_tiny_ocr_element_eval_script()
+            res = img_loc.evaluate(eval_script)
 
-        raw_ocr = str(res.get("rawOcr") or "") if isinstance(res, dict) else ""
-        if not solved_text and raw_ocr:
-            classified = classify_ocr_output(raw_ocr)
-            if classified.get("status") == "solved":
-                solved_text = str(classified.get("text") or "")
-                source = str(classified.get("source") or "local_math")
-        filled = False
-        if solved_text and input_target:
-            with contextlib.suppress(Exception):
-                inp = sess.page.locator(input_target)
-                if hasattr(inp, "first"):
-                    inp = inp.first
-                inp.fill(solved_text)
-                filled = True
+            solved_text = ""
+            source = "tiny_ocr"
+            if isinstance(res, dict) and res.get("status") == "solved":
+                solved_text = str(res.get("text") or "")
+                source = str(res.get("source") or "tiny_ocr")
 
-        sess.record_action(
-            "solve_captcha",
-            target=image_target,
-            value=solved_text,
-            input_target=input_target,
-            filled=filled,
-        )
+            raw_ocr = str(res.get("rawOcr") or "") if isinstance(res, dict) else ""
+            if not solved_text and raw_ocr:
+                classified = classify_ocr_output(raw_ocr)
+                if classified.get("status") == "solved":
+                    solved_text = str(classified.get("text") or "")
+                    source = str(classified.get("source") or "local_math")
 
+            filled = False
+            if solved_text and input_target:
+                with contextlib.suppress(Exception):
+                    inp = sess.page.locator(input_target)
+                    if hasattr(inp, "first"):
+                        inp = inp.first
+                    inp.fill(solved_text)
+                    filled = True
+
+            sess.record_action(
+                "solve_captcha",
+                target=image_target,
+                value=solved_text,
+                input_target=input_target,
+                filled=filled,
+            )
+            return solved_text, source, filled
+
+        solved_text, source, filled = _GLOBAL_MANAGER.run_on_session(session_id, _solve)
         return _envelope(
             success=bool(solved_text),
             summary=(
@@ -467,21 +514,21 @@ def suitest_browser_snapshot(
     if not session_id:
         return _envelope(False, "session_id is required", errors=["missing session_id"])
     try:
-        sess = _GLOBAL_MANAGER.get_session(session_id)
-        from suitest_lifecycle.blackbox.crawler import _EXTRACT_JS
 
-        data = sess.page.evaluate(_EXTRACT_JS)
-        b64_shot = ""
-        if include_screenshot:
-            with contextlib.suppress(Exception):
-                raw_bytes = sess.page.screenshot(type="png")
-                b64_shot = "data:image/png;base64," + base64.b64encode(raw_bytes).decode("ascii")
+        def _snap(sess: InteractiveSession) -> dict[str, Any]:
+            from suitest_lifecycle.blackbox.crawler import _EXTRACT_JS
 
-        sess.touch()
-        return _envelope(
-            success=True,
-            summary=f"Snapshot captured: '{sess.page.title()}' ({sess.page.url})",
-            data={
+            data = sess.page.evaluate(_EXTRACT_JS)
+            b64_shot = ""
+            if include_screenshot:
+                with contextlib.suppress(Exception):
+                    raw_bytes = sess.page.screenshot(type="png")
+                    b64_shot = "data:image/png;base64," + base64.b64encode(raw_bytes).decode(
+                        "ascii"
+                    )
+
+            sess.touch()
+            return {
                 "session_id": session_id,
                 "url": sess.page.url,
                 "title": sess.page.title(),
@@ -491,7 +538,13 @@ def suitest_browser_snapshot(
                 "inputs": data.get("inputs", []),
                 "buttons": data.get("buttons", []),
                 "screenshot_base64": b64_shot,
-            },
+            }
+
+        snap_data = _GLOBAL_MANAGER.run_on_session(session_id, _snap)
+        return _envelope(
+            success=True,
+            summary=f"Snapshot captured: '{snap_data['title']}' ({snap_data['url']})",
+            data=snap_data,
         )
     except Exception as exc:
         return _envelope(
