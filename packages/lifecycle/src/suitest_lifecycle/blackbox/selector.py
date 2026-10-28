@@ -53,7 +53,7 @@ def _role_of(el: ElementInfo) -> str:
 
 
 def _accessible_name(el: ElementInfo) -> str:
-    return el.aria_label or el.label or el.text.strip()
+    return el.aria_label or el.label or el.text.strip() or el.tooltip.strip()
 
 
 def build_locator(el: ElementInfo, *, ignore_testids: bool = False) -> str:
@@ -105,6 +105,8 @@ def describe(el: ElementInfo) -> str:
         or el.aria_label
         or el.placeholder
         or el.text.strip()
+        or el.tooltip.strip()
+        or el.icon_hint.strip()
         or el.name
         or el.testid
         or el.dom_id

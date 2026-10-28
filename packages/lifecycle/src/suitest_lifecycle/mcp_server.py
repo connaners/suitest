@@ -78,6 +78,7 @@ _TOOL_DESCRIPTIONS = {
     "blackbox_collect_evidence": "Blackbox: index all evidence (screenshots, videos, traces, report JSONs).",
     "blackbox_publish_results": "Publish the blackbox suite + latest run (video/screenshot evidence) into the Suitest web TCM. Needs project_id (or publish.projectId in config).",
     "blackbox_summarize_findings": "Blackbox: one JSON summary — route map, bug candidates, test outcomes — for agent reasoning.",
+    "blackbox_handle_gateway": "Blackbox: handle post-login intermediate gateway (role/tenant selection, terms dialog, OTP prompt).",
     "edit_test_case_inputs": "Inspect or update test case step input values, multiple file upload paths, and {{variable}} bindings programmatically.",
     "manage_test_case_dataset": "Inspect, define, or rename columns/rows of Data-Driven Testing (DDT) scenario matrices on a test case.",
     "get_workspace_variables": "List available workspace and suite variables for parameterization (secrets masked).",
@@ -87,6 +88,15 @@ _TOOL_DESCRIPTIONS = {
     "get_test_case": "TCM: Retrieve complete details and executable steps for a test case by case_id.",
     "create_test_case": "TCM: Create a new test case with executable steps, generating a local Playwright script mirror and syncing to TCM.",
     "run_test_case": "TCM: Trigger an immediate ad-hoc test run for a test case by case_id.",
+    "suitest_browser_open": "Interactive: open a new stateful browser session, returning session_id.",
+    "suitest_browser_navigate": "Interactive: navigate to URL in active browser session.",
+    "suitest_browser_click": "Interactive: click element matching selector in active session.",
+    "suitest_browser_type": "Interactive: type/fill text into input element in active session.",
+    "suitest_browser_select": "Interactive: select option in select dropdown in active session.",
+    "suitest_browser_solve_captcha": "Interactive: solve CAPTCHA image and fill input in active session.",
+    "suitest_browser_snapshot": "Interactive: capture structured DOM elements and screenshot of active session.",
+    "suitest_browser_close": "Interactive: close active browser session and optionally export action history as case.",
+    "suitest_create_dummy_file": "Generate a physically valid dummy test fixture file (PDF, ZIP, SHP, Image, GeoJSON) on disk.",
 }
 
 
@@ -101,6 +111,10 @@ _BLACKBOX_INPUT_SCHEMA: dict[str, object] = {
         "username": {"type": "string", "description": "Test credential username/email"},
         "password": {"type": "string", "description": "Test credential password"},
         "max_routes": {"type": "integer", "description": "Crawl route cap"},
+        "storage_state_path": {
+            "type": "string",
+            "description": "Path to storage_state.json to reuse existing session and bypass login/captcha",
+        },
         "page_url": {
             "type": "string",
             "description": "Route or absolute URL (blackbox_analyze_page only)",
@@ -223,6 +237,31 @@ _DATASET_SCHEMA: dict[str, object] = {
 }
 
 
+_GATEWAY_INPUT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "gateway_type": {
+            "type": "string",
+            "enum": ["role_or_tenant", "terms_dialog", "otp_prompt", "custom_button"],
+            "description": "Tipe interaksi gerbang pasca-login",
+            "default": "role_or_tenant",
+        },
+        "action_trigger": {
+            "type": "string",
+            "description": "Selector Playwright untuk tombol/link pemicu (contoh: button[data-code='3100'])",
+        },
+        "target_value": {
+            "type": "string",
+            "description": "Nilai input opsional (misal kode tenant atau teks konfirmasi)",
+        },
+        "config_path": {"type": "string", "default": "suitest.config.json"},
+        "url": {"type": "string", "description": "Target app URL (overrides config)"},
+        "storage_state_path": {"type": "string", "description": "Path to storage_state.json"},
+    },
+    "required": ["action_trigger"],
+}
+
+
 _GET_VARS_SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": {
@@ -337,8 +376,203 @@ _LIST_SUITES_SCHEMA: dict[str, object] = {
     "required": ["project_id"],
 }
 
+_BROWSER_OPEN_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "headless": {
+            "type": "boolean",
+            "default": True,
+            "description": "Run Chromium in headless mode",
+        },
+        "viewport": {"type": "object", "description": "Viewport dimensions {width, height}"},
+        "storage_state_path": {
+            "type": "string",
+            "description": "Optional path to storage_state.json",
+        },
+    },
+    "required": [],
+}
+
+_BROWSER_NAVIGATE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string", "description": "Active session ID"},
+        "url": {"type": "string", "description": "Target URL to navigate to"},
+        "wait_strategy": {
+            "type": "string",
+            "enum": ["domcontentloaded", "commit", "networkidle", "load"],
+            "default": "domcontentloaded",
+        },
+    },
+    "required": ["session_id", "url"],
+}
+
+_BROWSER_CLICK_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string", "description": "Active session ID"},
+        "target": {"type": "string", "description": "Playwright selector for the target element"},
+        "timeout_ms": {"type": "integer", "default": 10000},
+    },
+    "required": ["session_id", "target"],
+}
+
+_BROWSER_TYPE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string", "description": "Active session ID"},
+        "target": {"type": "string", "description": "Playwright selector for the input element"},
+        "text": {"type": "string", "description": "Text to fill into the input"},
+        "timeout_ms": {"type": "integer", "default": 10000},
+    },
+    "required": ["session_id", "target", "text"],
+}
+
+_BROWSER_SELECT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string", "description": "Active session ID"},
+        "target": {"type": "string", "description": "Playwright selector for the select element"},
+        "value": {"type": "string", "description": "Value of the option to select"},
+        "timeout_ms": {"type": "integer", "default": 10000},
+    },
+    "required": ["session_id", "target", "value"],
+}
+
+_BROWSER_CAPTCHA_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string", "description": "Active session ID"},
+        "image_target": {
+            "type": "string",
+            "default": "#img-captcha",
+            "description": "Selector for the CAPTCHA image/canvas",
+        },
+        "input_target": {
+            "type": "string",
+            "default": "#captcha",
+            "description": "Selector for the CAPTCHA input field to fill",
+        },
+    },
+    "required": ["session_id"],
+}
+
+_BROWSER_SNAPSHOT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string", "description": "Active session ID"},
+        "include_screenshot": {
+            "type": "boolean",
+            "default": True,
+            "description": "Include base64 PNG screenshot",
+        },
+    },
+    "required": ["session_id"],
+}
+
+_BROWSER_CLOSE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string", "description": "Active session ID"},
+        "save_as_case": {
+            "type": "boolean",
+            "default": False,
+            "description": "Save action history as a structured TCM test case",
+        },
+        "output_dir": {"type": "string", "default": "suitest-output/cases"},
+    },
+    "required": ["session_id"],
+}
+
+
+_DUMMY_FILE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "type": {
+            "type": "string",
+            "enum": ["pdf", "zip", "shp", "image", "png", "jpg", "jpeg", "geojson"],
+            "default": "pdf",
+            "description": "File format type",
+        },
+        "size_kb": {
+            "type": "integer",
+            "default": 1024,
+            "maximum": 51200,
+            "description": "Target size in KB",
+        },
+        "filename": {"type": "string", "description": "Target filename e.g. proposal_teknis.pdf"},
+        "output_dir": {
+            "type": "string",
+            "default": "suitest-output/fixtures/",
+            "description": "Output directory",
+        },
+        "metadata": {"type": "object", "description": "Optional file metadata (title, author)"},
+    },
+    "required": ["type", "filename"],
+}
+
 
 def _tool_schema(name: str) -> dict[str, object]:
+    if name == "suitest_create_dummy_file":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _DUMMY_FILE_SCHEMA,
+        }
+    if name == "suitest_browser_open":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _BROWSER_OPEN_SCHEMA,
+        }
+    if name == "suitest_browser_navigate":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _BROWSER_NAVIGATE_SCHEMA,
+        }
+    if name == "suitest_browser_click":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _BROWSER_CLICK_SCHEMA,
+        }
+    if name == "suitest_browser_type":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _BROWSER_TYPE_SCHEMA,
+        }
+    if name == "suitest_browser_select":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _BROWSER_SELECT_SCHEMA,
+        }
+    if name == "suitest_browser_solve_captcha":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _BROWSER_CAPTCHA_SCHEMA,
+        }
+    if name == "suitest_browser_snapshot":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _BROWSER_SNAPSHOT_SCHEMA,
+        }
+    if name == "suitest_browser_close":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _BROWSER_CLOSE_SCHEMA,
+        }
+    if name == "blackbox_handle_gateway":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _GATEWAY_INPUT_SCHEMA,
+        }
     if name == "create_test_case":
         return {
             "name": name,

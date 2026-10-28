@@ -59,6 +59,8 @@ def _blob(el: ElementInfo) -> str:
             el.aria_label,
             el.autocomplete,
             el.text,
+            el.tooltip,
+            el.icon_hint,
         )
     ).lower()
 
@@ -66,6 +68,33 @@ def _blob(el: ElementInfo) -> str:
 def is_destructive(el: ElementInfo) -> bool:
     """SafeMode gate — never click/submit these during crawl or generated tests."""
     return any(h in _blob(el) for h in _DESTRUCTIVE_HINTS)
+
+
+def classify_button_intent(el: ElementInfo) -> str:
+    """Classify the user intent of a button, including icon-only controls.
+
+    Returns: 'SEARCH', 'LOOKUP_MODAL', 'CREATE', 'EDIT', 'DELETE', 'UPLOAD', 'CALENDAR', 'SUBMIT', or 'CUSTOM'.
+    """
+    blob = _blob(el)
+    if el.input_type == "submit" or any(
+        k in blob for k in ("submit", "simpan", "save", "kirim", "lanjut", "next", "continue")
+    ):
+        return "SUBMIT"
+    if is_destructive(el):
+        return "DELETE"
+    if "lookup" in blob or "modal-trigger" in blob or "modal-toggle" in blob:
+        return "LOOKUP_MODAL"
+    if any(k in blob for k in ("search", "icon:search", "fa-search", "cari")):
+        return "SEARCH"
+    if any(k in blob for k in ("edit", "icon:pencil", "icon:edit", "ubah", "ganti")):
+        return "EDIT"
+    if any(k in blob for k in ("add", "icon:plus", "tambah", "new", "baru", "create")):
+        return "CREATE"
+    if any(k in blob for k in ("upload", "icon:upload", "unggah", "import")):
+        return "UPLOAD"
+    if any(k in blob for k in ("calendar", "icon:calendar", "kalender", "date", "jadwal")):
+        return "CALENDAR"
+    return "CUSTOM"
 
 
 def detect_login_form(page: PageInfo, *, ignore_testids: bool = False) -> LoginForm:

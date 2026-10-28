@@ -21,6 +21,8 @@ from typing import Any
 
 from suitest_lifecycle.blackbox.mcp import BLACKBOX_TOOLS
 from suitest_lifecycle.config import Config, ConfigError, load_config
+from suitest_lifecycle.fixture_generator import suitest_create_dummy_file
+from suitest_lifecycle.interactive_browser import INTERACTIVE_BROWSER_TOOLS
 from suitest_lifecycle.models import Mode
 from suitest_lifecycle.orchestrator import LifecycleResult, generate_only, run_lifecycle
 from suitest_lifecycle.paths import build_paths
@@ -225,10 +227,24 @@ def get_failure_context(config_path: str) -> dict[str, object]:
             data={"failure_context": "", "failed_cases": 0},
         )
     md = build_failure_markdown(cases)
+    cases_summary = [
+        {
+            "title": c.title,
+            "failed_step": c.failed_step_index,
+            "failed_selector": c.failed_selector,
+            "suggested_selectors": c.suggested_selectors,
+            "error": c.error_message,
+        }
+        for c in cases
+    ]
     return _envelope(
         True,
         f"{len(cases)} failing case(s); context ready for repair",
-        data={"failure_context": md, "failed_cases": len(cases)},
+        data={
+            "failure_context": md,
+            "failed_cases": len(cases),
+            "cases": cases_summary,
+        },
     )
 
 
@@ -886,6 +902,33 @@ def create_test_case(
                     step_body_lines.append(
                         f"    await _bb_solve_captcha(page, image_selector={img_s!r}, input_selector={inp_s!r})"
                     )
+                elif t in (
+                    "browser_select",
+                    "browser.select",
+                    "browser_select_option",
+                    "browser.select_option",
+                ):
+                    tgt = args.get("target") or args.get("selector") or ""
+                    raw_val = args.get("value") or (
+                        args.get("values", [""])[0] if isinstance(args.get("values"), list) else ""
+                    )
+                    step_body_lines.append(
+                        f"    await page.locator({tgt!r}).select_option({str(raw_val)!r})"
+                    )
+                elif t in ("browser_upload_file", "browser.upload_file", "browser_file_upload"):
+                    tgt = args.get("target") or args.get("selector") or ""
+                    f_path = (
+                        args.get("file")
+                        or args.get("path")
+                        or (
+                            args.get("files", [""])[0]
+                            if isinstance(args.get("files"), list)
+                            else ""
+                        )
+                    )
+                    step_body_lines.append(
+                        f"    await page.locator({tgt!r}).set_input_files({str(f_path)!r})"
+                    )
             except (json.JSONDecodeError, TypeError, KeyError) as parse_err:
                 logger.debug("create_test_case.step_code_parse_failed: %s", parse_err)
             step_body_lines.append("    await _ok(page)")
@@ -915,6 +958,29 @@ def create_test_case(
             formatted_steps = []
             for idx, s in enumerate(case_steps):
                 cd = s.get("code")
+                if isinstance(cd, dict):
+                    tool_name = cd.get("tool", "")
+                    if tool_name in ("browser_select", "browser.select", "browser.select_option"):
+                        cd["tool"] = "browser_select_option"
+                        c_args = cd.setdefault("arguments", {})
+                        if "value" in c_args and "values" not in c_args:
+                            val = c_args.pop("value")
+                            c_args["values"] = (
+                                [str(val)] if not isinstance(val, list) else [str(x) for x in val]
+                            )
+                        if "selector" in c_args and "target" not in c_args:
+                            c_args["target"] = c_args.pop("selector")
+                    elif tool_name in (
+                        "browser_upload_file",
+                        "browser.upload_file",
+                        "browser_file_upload",
+                    ):
+                        cd["tool"] = "browser_upload_file"
+                        c_args = cd.setdefault("arguments", {})
+                        if "path" in c_args and "file" not in c_args:
+                            c_args["file"] = c_args.pop("path")
+                        if "selector" in c_args and "target" not in c_args:
+                            c_args["target"] = c_args.pop("selector")
                 formatted_steps.append(
                     {
                         "action": s.get("action", f"Step {idx + 1}"),
@@ -996,13 +1062,17 @@ TOOLS = {
     "get_test_case": get_test_case,
     "create_test_case": create_test_case,
     "run_test_case": run_test_case,
+    "suitest_create_dummy_file": suitest_create_dummy_file,
     **BLACKBOX_TOOLS,
+    **INTERACTIVE_BROWSER_TOOLS,
 }
 
 # Tools that take structured kwargs (url/username/case_id/…), not just config_path.
 KWARG_TOOLS = frozenset(
     {
         *BLACKBOX_TOOLS,
+        *INTERACTIVE_BROWSER_TOOLS,
+        "suitest_create_dummy_file",
         "edit_test_case_inputs",
         "manage_test_case_dataset",
         "get_workspace_variables",

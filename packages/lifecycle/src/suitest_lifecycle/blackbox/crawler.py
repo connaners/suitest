@@ -13,21 +13,31 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from suitest_lifecycle.blackbox.detector import detect_login_form, detect_page_pattern
 from suitest_lifecycle.blackbox.models import (
+    ApiCallInfo,
     BlackboxUiConfig,
     DiscoveryResult,
     ElementInfo,
+    LoginForm,
     LoginProbe,
     PageInfo,
 )
 
+try:
+    from suitest_shared.ocr import solve_captcha_in_page
+except ImportError:
+    solve_captcha_in_page = None
 if TYPE_CHECKING:
     from playwright.async_api import Locator, Page
+_log = logging.getLogger(__name__)
+
 
 # Rich per-element capture: every attribute the selector strategy ranks.
 _EXTRACT_JS = r"""
@@ -65,27 +75,84 @@ _EXTRACT_JS = r"""
       return '';
     }
   };
-  const info = (doc, el, kind, frameSel = '') => ({
-    tag: el.tagName.toLowerCase(),
-    kind,
-    testid: el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-test') || '',
-    testid_attr: el.hasAttribute('data-testid') ? 'data-testid' : el.hasAttribute('data-cy') ? 'data-cy' : el.hasAttribute('data-test') ? 'data-test' : '',
-    role: el.getAttribute('role') || '',
-    aria_label: el.getAttribute('aria-label') || '',
-    label: labelFor(doc, el),
-    placeholder: el.getAttribute('placeholder') || '',
-    name: el.getAttribute('name') || '',
-    input_type: (el.getAttribute('type') || '').toLowerCase(),
-    autocomplete: el.getAttribute('autocomplete') || '',
-    text: (el.innerText || el.value || '').trim().slice(0, 80),
-    dom_id: el.id || '',
-    href: el.getAttribute && el.tagName === 'A' ? (el.getAttribute('href') || '') : '',
-    css: cssPath(el),
-    required: el.required === true || el.getAttribute('aria-required') === 'true',
-    frame_selector: frameSel,
-    is_multiple: el.multiple === true,
-    accept: el.getAttribute('accept') || '',
-  });
+  const resolveIconOrTooltip = (el) => {
+    try {
+      const tooltip = (
+        el.getAttribute('title') ||
+        el.getAttribute('data-original-title') ||
+        el.getAttribute('data-bs-original-title') ||
+        el.getAttribute('tooltip') ||
+        ''
+      ).trim();
+      const iconEl = el.querySelector('i, svg, span[class*="icon" i], [class*="fa-" i], [class*="lucide" i], [class*="bi-" i]');
+      let iconClass = '';
+      if (iconEl) {
+        if (typeof iconEl.className === 'string') {
+          iconClass = iconEl.className;
+        } else if (iconEl.className && iconEl.className.baseVal) {
+          iconClass = iconEl.className.baseVal;
+        }
+      }
+      let svgTitle = '';
+      if (iconEl && iconEl.tagName && iconEl.tagName.toLowerCase() === 'svg') {
+        svgTitle = (iconEl.querySelector('title')?.textContent || iconEl.getAttribute('aria-label') || '').trim();
+      }
+      let iconName = '';
+      if (iconClass) {
+        const m = iconClass.match(/\b(?:fa|bi|lucide|icon)-([a-z0-9-]+)\b/i);
+        if (m) {
+          iconName = m[1].replace(/-(alt|outline|fill|circle|square)/gi, '');
+        }
+      }
+      let lookupHint = '';
+      if (el.tagName.toLowerCase() !== 'input') {
+        const inputGroup = el.closest('.input-group, .form-group, .search-box');
+        if (inputGroup) {
+          const sibInput = inputGroup.querySelector('input');
+          if (sibInput && sibInput !== el) {
+            const sibDesc = sibInput.name || sibInput.placeholder || sibInput.id || '';
+            if (sibDesc) lookupHint = `[lookup:${sibDesc.slice(0, 30)}]`;
+          }
+        }
+      }
+      const iconHint = iconName ? `[icon:${iconName}]` : (svgTitle || lookupHint);
+      return {
+        tooltip: tooltip.slice(0, 80),
+        iconHint: iconHint.slice(0, 80),
+      };
+    } catch {
+      return { tooltip: '', iconHint: '' };
+    }
+  };
+  const info = (doc, el, kind, frameSel = '') => {
+    const iconData = resolveIconOrTooltip(el);
+    const rawText = (el.innerText || el.value || '').trim().slice(0, 80);
+    const isIconOnly = !rawText && Boolean(iconData.tooltip || iconData.iconHint);
+    return {
+      tag: el.tagName.toLowerCase(),
+      kind,
+      testid: el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-test') || '',
+      testid_attr: el.hasAttribute('data-testid') ? 'data-testid' : el.hasAttribute('data-cy') ? 'data-cy' : el.hasAttribute('data-test') ? 'data-test' : '',
+      role: el.getAttribute('role') || '',
+      aria_label: el.getAttribute('aria-label') || '',
+      label: labelFor(doc, el),
+      placeholder: el.getAttribute('placeholder') || '',
+      name: el.getAttribute('name') || '',
+      input_type: (el.getAttribute('type') || '').toLowerCase(),
+      autocomplete: el.getAttribute('autocomplete') || '',
+      text: rawText || iconData.tooltip || '',
+      dom_id: el.id || '',
+      href: el.getAttribute && el.tagName === 'A' ? (el.getAttribute('href') || '') : '',
+      css: cssPath(el),
+      required: el.required === true || el.getAttribute('aria-required') === 'true',
+      frame_selector: frameSel,
+      is_multiple: el.multiple === true,
+      accept: el.getAttribute('accept') || '',
+      tooltip: iconData.tooltip,
+      icon_hint: iconData.iconHint,
+      is_icon_only: isIconOnly,
+    };
+  };
   const extractDoc = (doc, frameSel = '') => {
     try {
       const ins = [...doc.querySelectorAll('input,textarea,select')].filter(vis).map(e => info(doc, e, e.tagName === 'SELECT' ? 'select' : (e.type === 'checkbox' ? 'checkbox' : 'input'), frameSel));
@@ -224,13 +291,48 @@ _SAFE_SKIP_HREF = re.compile(
 )
 
 
-async def _goto(page: Page, url: str) -> None:
-    """Navigate like the real internet works: DOMContentLoaded is the contract;
-    networkidle is only a short best-effort settle (analytics/long-polling on
-    public sites keep the network busy forever)."""
-    await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+async def _smart_settle(
+    page: Page,
+    *,
+    quiet_sec: float = 1.5,
+    timeout_sec: float = 4.0,
+) -> None:
+    """Smart navigation settle: commit, body attached, and network quiescence."""
     with contextlib.suppress(Exception):
-        await page.wait_for_load_state("networkidle", timeout=3000)
+        await page.wait_for_load_state("domcontentloaded", timeout=5000)
+    with contextlib.suppress(Exception):
+        await page.wait_for_selector("body", state="attached", timeout=5000)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=int(quiet_sec * 1000))
+    except Exception:
+        with contextlib.suppress(Exception):
+            await page.wait_for_timeout(min(int(quiet_sec * 1000), int(timeout_sec * 1000)))
+
+
+async def _goto(page: Page, url: str) -> None:
+    """Navigate like the real internet works: DOMContentLoaded or commit with smart settle."""
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+    except Exception:
+        await page.goto(url, wait_until="commit", timeout=20000)
+    await _smart_settle(page, quiet_sec=1.5, timeout_sec=4.0)
+
+
+async def _solve_captcha_for_form(page: Page, form: LoginForm, login_page: PageInfo) -> str:
+    """Solve detected CAPTCHA using shared in-browser OCR, falling back safely."""
+    if not form.captcha_input:
+        return ""
+    img_sel = (
+        form.captcha_image
+        or getattr(login_page, "captcha_image_selector", "")
+        or "img[src*='captcha' i], #img-captcha, #captcha, canvas"
+    )
+    if solve_captcha_in_page is not None:
+        with contextlib.suppress(Exception):
+            res = await solve_captcha_in_page(page, img_sel, timeout_ms=6000)
+            if res.get("status") == "solved" and res.get("text"):
+                return str(res["text"])
+    return "CAPTCHA_SOLVE"
 
 
 def _route_of(url: str, base: str) -> str:
@@ -317,19 +419,52 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=not cfg.headed)
-        ctx = await browser.new_context(viewport={"width": 1280, "height": 720})
+        context_kwargs: dict[str, object] = {"viewport": {"width": 1280, "height": 720}}
+        if cfg.storage_state_path and Path(cfg.storage_state_path).is_file():  # noqa: ASYNC240
+            context_kwargs["storage_state"] = str(cfg.storage_state_path)
+        ctx = await browser.new_context(**context_kwargs)
         page = await ctx.new_page()
         page.on(
             "console",
             lambda m: console_errors.append(m.text[:300]) if m.type == "error" else None,
         )
         page.on("pageerror", lambda e: console_errors.append(str(e)[:300]))
-        page.on(
-            "response",
-            lambda r: (
-                network_errors.append(f"{r.status} {r.url[:200]}") if r.status >= 500 else None
-            ),
-        )
+
+        def _on_response(r: Any) -> None:
+            try:
+                if getattr(r, "status", 0) >= 500:
+                    network_errors.append(f"{r.status} {str(r.url)[:200]}")
+                url_str = str(getattr(r, "url", "") or "")
+                req = getattr(r, "request", None)
+                if not req:
+                    return
+                res_type = str(getattr(req, "resource_type", "") or "")
+                is_api = (
+                    res_type in ("fetch", "xhr")
+                    or "/api/" in url_str
+                    or "application/json" in str(getattr(r, "headers", {}).get("content-type", ""))
+                )
+                clean_url = url_str.split("?", 1)[0].split("#", 1)[0].lower()
+                if not is_api or any(
+                    clean_url.endswith(ext)
+                    for ext in (".png", ".jpg", ".jpeg", ".css", ".js", ".svg", ".woff2", ".ico")
+                ):
+                    return
+                req_body = str(getattr(req, "post_data", "") or "")
+                result.intercepted_api_calls.append(
+                    ApiCallInfo(
+                        url=url_str,
+                        method=str(getattr(req, "method", "GET") or "GET").upper(),
+                        status=int(getattr(r, "status", 200) or 200),
+                        resource_type=res_type or "fetch",
+                        route=_route_of(page.url, base),
+                        request_body=req_body[:2000],
+                    )
+                )
+            except Exception as res_err:
+                _log.debug("blackbox.crawler.on_response_parse_failed", error=str(res_err))
+
+        page.on("response", _on_response)
         page.on(
             "requestfailed",
             # ERR_ABORTED = request cancelled by navigation (Next.js RSC
@@ -369,47 +504,78 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
         if cfg.selectors.login_submit:
             form.submit = _as_locator(cfg.selectors.login_submit)
         result.login = form if form.found() else None
-
         # ---- 2. perform login -------------------------------------------------
-        if result.login and cfg.auth.username and cfg.auth.password:
+        if cfg.storage_state_path and Path(cfg.storage_state_path).is_file():  # noqa: ASYNC240
+            result.storage_state_path = str(cfg.storage_state_path)
+            landed_initial = _route_of(page.url, base)
+            initial_login_route = cfg.auth.login_url or "/login"
+            if landed_initial != initial_login_route or not (result.login and result.login.found()):
+                result.login_probe = LoginProbe(
+                    attempted=True,
+                    success=True,
+                    landed_route=landed_initial,
+                    detail="authenticated via imported storage_state",
+                )
+
+        if (
+            not result.login_probe.success
+            and result.login
+            and cfg.auth.username
+            and cfg.auth.password
+        ):
             probe = LoginProbe(attempted=True)
-            try:
-                await _eval_locator(page, form.username).fill(cfg.auth.username)
-                await _eval_locator(page, form.password).fill(cfg.auth.password)
-                if form.captcha_input:
+            max_login_attempts = 3 if form.captcha_input else 1
+            for attempt in range(max_login_attempts):
+                try:
+                    await _eval_locator(page, form.username).fill(cfg.auth.username)
+                    await _eval_locator(page, form.password).fill(cfg.auth.password)
+                    if form.captcha_input:
+                        solved_c = await _solve_captcha_for_form(page, form, login_page)
+                        if solved_c:
+                            with contextlib.suppress(Exception):
+                                c_loc = page.locator(form.captcha_input)
+                                if await c_loc.count() > 0:
+                                    await c_loc.fill(solved_c)
+                    await _eval_locator(page, form.submit).click()
                     with contextlib.suppress(Exception):
-                        c_loc = page.locator(form.captcha_input)
-                        if await c_loc.count() > 0:
-                            await c_loc.fill("CAPTCHA_SOLVE")
-                await _eval_locator(page, form.submit).click()
-                with contextlib.suppress(Exception):
-                    await page.wait_for_url(
-                        lambda u: _route_of(u, base) != login_route, timeout=10000
-                    )
-                with contextlib.suppress(Exception):
-                    await page.wait_for_load_state("networkidle", timeout=5000)
-                landed = _route_of(page.url, base)
-                probe.landed_route = landed
-                probe.success = landed != login_route
-                if probe.success:
-                    state_file = evidence_dir / "storage_state.json"
-                    with contextlib.suppress(Exception):
-                        await ctx.storage_state(path=str(state_file))
-                        if state_file.is_file():
-                            result.storage_state_path = str(state_file)
-                if not probe.success:
+                        await page.wait_for_url(
+                            lambda u: _route_of(u, base) != login_route, timeout=8000
+                        )
+                    await _smart_settle(page, quiet_sec=1.5, timeout_sec=4.0)
+                    landed = _route_of(page.url, base)
+                    probe.landed_route = landed
+                    probe.success = landed != login_route
+                    if probe.success:
+                        state_file = evidence_dir / "storage_state.json"
+                        with contextlib.suppress(Exception):
+                            await ctx.storage_state(path=str(state_file))
+                            if state_file.is_file():
+                                result.storage_state_path = str(state_file)
+                        break
                     err = await page.evaluate(
                         "() => { const e = document.querySelector('[role=alert],"
                         "[class*=error],[data-testid*=error]');"
                         " return e ? (e.innerText || '').slice(0, 120) : ''; }"
                     )
-                    probe.detail = f"stayed on {landed}; error: {err or 'none shown'}"
-            except Exception as exc:
-                probe.detail = f"login interaction failed: {exc}"[:300]
+                    probe.detail = (
+                        f"attempt {attempt + 1}: stayed on {landed}; error: {err or 'none shown'}"
+                    )
+                    if attempt < max_login_attempts - 1 and form.captcha_input:
+                        refresh_sel = (
+                            getattr(login_page, "refresh_target", "")
+                            or form.captcha_image
+                            or ".refresh-captcha, img[src*='captcha' i], #img-captcha"
+                        )
+                        with contextlib.suppress(Exception):
+                            r_loc = page.locator(refresh_sel)
+                            if await r_loc.count() > 0:
+                                await r_loc.first.click()
+                                await page.wait_for_timeout(600)
+                except Exception as exc:
+                    probe.detail = f"login interaction failed on attempt {attempt + 1}: {exc}"[:300]
             result.login_probe = probe
-        elif result.login:
+        elif not result.login_probe.success and result.login:
             result.login_probe = LoginProbe(attempted=False, detail="no credentials configured")
-
         # ---- 3. BFS crawl ------------------------------------------------------
         # Seed from everywhere we already know: where we landed, the root, the
         # nav links captured on the entry page, and config includes. Without
@@ -453,6 +619,13 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
                 limit=cfg.crawl.max_routes * 3,
             )
 
+        api_calls_file = evidence_dir / "intercepted_api_calls.json"
+        with contextlib.suppress(Exception):
+            evidence_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+            api_calls_file.write_text(
+                json.dumps([c.to_json() for c in result.intercepted_api_calls], indent=2),
+                encoding="utf-8",
+            )
         await browser.close()
     return result
 
@@ -504,14 +677,14 @@ async def _analyze_one(cfg: BlackboxUiConfig, url: str, evidence_dir: Path) -> P
     network_errors: list[str] = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=not cfg.headed)
-        state_file = evidence_dir / "storage_state.json"
-        if not state_file.is_file():
-            alt_state = evidence_dir / "blackbox" / "storage_state.json"
-            if alt_state.is_file():
-                state_file = alt_state
-        state_arg = (
-            str(state_file) if state_file.is_file() and state_file.stat().st_size > 0 else None
-        )
+        state_file = None
+        if cfg.storage_state_path and Path(cfg.storage_state_path).is_file():  # noqa: ASYNC240
+            state_file = Path(cfg.storage_state_path)
+        elif (evidence_dir / "storage_state.json").is_file():
+            state_file = evidence_dir / "storage_state.json"
+        elif (evidence_dir / "blackbox" / "storage_state.json").is_file():
+            state_file = evidence_dir / "blackbox" / "storage_state.json"
+        state_arg = str(state_file) if state_file and state_file.stat().st_size > 0 else None
         ctx = await browser.new_context(
             viewport={"width": 1280, "height": 720},
             storage_state=state_arg,
@@ -548,4 +721,111 @@ def analyze_single_page(cfg: BlackboxUiConfig, url: str, evidence_dir: str | Pat
     return asyncio.run(_analyze_one(cfg, url, Path(evidence_dir)))
 
 
-__all__ = ["analyze_single_page", "discover"]
+async def _handle_gateway(
+    cfg: BlackboxUiConfig,
+    evidence_dir: Path,
+    action_trigger: str,
+    *,
+    gateway_type: str = "role_or_tenant",
+    target_value: str = "",
+) -> dict[str, Any]:
+    from playwright.async_api import async_playwright
+
+    base = cfg.target_url.rstrip("/")
+    if "://" in base and "/" in base.split("://", 1)[1]:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(base)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+    console_errors: list[str] = []
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=not cfg.headed)
+        state_file = None
+        if cfg.storage_state_path and Path(cfg.storage_state_path).is_file():  # noqa: ASYNC240
+            state_file = Path(cfg.storage_state_path)
+        elif (evidence_dir / "storage_state.json").is_file():
+            state_file = evidence_dir / "storage_state.json"
+        elif (evidence_dir / "blackbox" / "storage_state.json").is_file():
+            state_file = evidence_dir / "blackbox" / "storage_state.json"
+        state_arg = str(state_file) if state_file and state_file.stat().st_size > 0 else None
+        ctx = await browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            storage_state=state_arg,
+        )
+        page = await ctx.new_page()
+        page.on(
+            "console", lambda m: console_errors.append(m.text[:300]) if m.type == "error" else None
+        )
+        page.on("pageerror", lambda e: console_errors.append(str(e)[:300]))
+
+        try:
+            login_route = cfg.auth.login_url or "/login"
+            if login_route.startswith("http"):
+                target_nav = login_route
+            else:
+                target_nav = base.rstrip("/") + "/" + login_route.lstrip("/")
+            try:
+                await _goto(page, target_nav)
+            except Exception:
+                await _goto(page, base.rstrip("/") + "/")
+
+            if target_value:
+                with contextlib.suppress(Exception):
+                    inp = page.locator(
+                        "input:not([type=hidden]):not([type=checkbox]):not([type=radio])"
+                    ).first
+                    if await inp.count() > 0:
+                        await inp.fill(target_value)
+
+            trigger = page.locator(action_trigger)
+            if hasattr(trigger, "first"):
+                trigger = trigger.first
+            await trigger.wait_for(state="visible", timeout=10000)
+            await trigger.click()
+
+            await _smart_settle(page, quiet_sec=1.5, timeout_sec=5.0)
+
+            landed = _route_of(page.url, base)
+            evidence_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+            out_state_file = evidence_dir / "storage_state.json"
+            with contextlib.suppress(Exception):
+                await ctx.storage_state(path=str(out_state_file))
+
+            shot_path = evidence_dir / f"gateway_{gateway_type}.png"
+            with contextlib.suppress(Exception):
+                await page.screenshot(path=str(shot_path))
+
+            return {
+                "success": True,
+                "gateway_type": gateway_type,
+                "action_trigger": action_trigger,
+                "landed_route": landed,
+                "storage_state_path": str(out_state_file) if out_state_file.is_file() else "",
+                "screenshot": str(shot_path) if shot_path.is_file() else "",
+            }
+        finally:
+            await browser.close()
+
+
+def handle_gateway(
+    cfg: BlackboxUiConfig,
+    evidence_dir: str | Path,
+    action_trigger: str,
+    *,
+    gateway_type: str = "role_or_tenant",
+    target_value: str = "",
+) -> dict[str, Any]:
+    """Sync entry: execute intermediate gateway interaction and update storage_state."""
+    return asyncio.run(
+        _handle_gateway(
+            cfg,
+            Path(evidence_dir),
+            action_trigger,
+            gateway_type=gateway_type,
+            target_value=target_value,
+        )
+    )
+
+
+__all__ = ["analyze_single_page", "discover", "handle_gateway"]

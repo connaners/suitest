@@ -410,6 +410,7 @@ def _resolve(
     username: str = "",
     password: str = "",
     max_routes: int = 0,
+    storage_state_path: str = "",
     **_: Any,
 ) -> tuple[BlackboxUiConfig, Paths]:
     ui = BlackboxUiConfig()
@@ -444,6 +445,8 @@ def _resolve(
         ui.auth.password = password
     if max_routes:
         ui.crawl.max_routes = int(max_routes)
+    if storage_state_path:
+        ui.storage_state_path = storage_state_path
     if not ui.target_url:
         raise ValueError("no target: pass url=… or a config_path with ui.targetUrl/baseUrl")
     paths = build_paths(out_dir, Mode.FRONTEND)
@@ -493,7 +496,16 @@ def blackbox_discover_app(**kwargs: Any) -> dict[str, Any]:
             f"login {'ok' if discovery.login_probe.success else ('detected' if discovery.login else 'not found')}"
         ),
         data=summarize(discovery, graph=graph),
-        artifacts=[disc_path, str(graph_path), report_path],
+        artifacts=[
+            disc_path,
+            str(graph_path),
+            report_path,
+            *(
+                [str(_evidence_dir(paths) / "intercepted_api_calls.json")]
+                if (_evidence_dir(paths) / "intercepted_api_calls.json").is_file()
+                else []
+            ),
+        ],
         errors=discovery.errors,
     )
 
@@ -564,6 +576,52 @@ def blackbox_analyze_page(**kwargs: Any) -> dict[str, Any]:
         data=page.to_json(),
         artifacts=[page.screenshot] if page.screenshot else [],
     )
+
+
+def blackbox_handle_gateway(
+    action_trigger: str = "",
+    gateway_type: str = "role_or_tenant",
+    target_value: str = "",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Execute post-login intermediate gateway interaction (role/tenant, terms, OTP)."""
+    from suitest_lifecycle.blackbox.crawler import handle_gateway
+
+    if not action_trigger:
+        return _envelope(
+            success=False,
+            summary="missing action_trigger",
+            errors=["action_trigger is required"],
+        )
+    try:
+        ui, paths = _resolve(**kwargs)
+        res = handle_gateway(
+            ui,
+            _evidence_dir(paths),
+            action_trigger,
+            gateway_type=gateway_type,
+            target_value=target_value,
+        )
+        artifacts = []
+        if res.get("storage_state_path"):
+            artifacts.append(res["storage_state_path"])
+        if res.get("screenshot"):
+            artifacts.append(res["screenshot"])
+        return _envelope(
+            success=res.get("success", False),
+            summary=(
+                f"gateway '{gateway_type}' handled via {action_trigger} — "
+                f"landed on {res.get('landed_route', '/')}"
+            ),
+            data=res,
+            artifacts=artifacts,
+        )
+    except Exception as exc:
+        return _envelope(
+            success=False,
+            summary=f"gateway handling failed: {exc}"[:200],
+            errors=[str(exc)],
+        )
 
 
 def blackbox_build_interaction_graph(**kwargs: Any) -> dict[str, Any]:
@@ -1053,6 +1111,7 @@ _BROWSER_DRIVING = frozenset(
         "blackbox_perform_login",
         "blackbox_crawl_routes",
         "blackbox_analyze_page",
+        "blackbox_handle_gateway",
         "blackbox_run_playwright_tests",
     }
 )
@@ -1090,6 +1149,7 @@ _RAW_BLACKBOX_TOOLS = {
     "blackbox_run_playwright_tests": blackbox_run_playwright_tests,
     "blackbox_collect_evidence": blackbox_collect_evidence,
     "blackbox_summarize_findings": blackbox_summarize_findings,
+    "blackbox_handle_gateway": blackbox_handle_gateway,
 }
 
 BLACKBOX_TOOLS = {
