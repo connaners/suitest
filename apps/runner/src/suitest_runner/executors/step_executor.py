@@ -620,53 +620,74 @@ async def _auto_heal_hidden_or_collapsed_element(
         }};
     }})()"""
 
-    try:
-        detect_res = await invoker.invoke(
-            explicit_provider=explicit_provider,
-            tool="browser_run_code_unsafe",
-            arguments={"code": detect_script},
-            ctx=ctx,
-        )
-        res_data = (detect_res.output or {}).get("result") or {}
-        if not isinstance(res_data, dict) or not res_data.get("found"):
-            raise original_exc
-
-        toggle_sel = res_data.get("toggleSelector")
-        if toggle_sel:
-            log.info(
-                "step_executor.auto_heal.uncollapse_parent",
-                target=target,
-                toggle_selector=toggle_sel,
-            )
-            # Click the parent toggle first
-            with contextlib.suppress(Exception):
-                await invoker.invoke(
-                    explicit_provider=explicit_provider,
-                    tool=normalized_tool,
-                    arguments={"target": toggle_sel},
-                    ctx=ctx,
-                )
-                await asyncio.sleep(0.4)
-
-            # Retry target click
-            return await invoker.invoke(
+    res_data: dict[str, Any] = {}
+    for attempt in range(4):
+        try:
+            detect_res = await invoker.invoke(
                 explicit_provider=explicit_provider,
-                tool=normalized_tool,
-                arguments=clean_invoke_args,
+                tool="browser_run_code_unsafe",
+                arguments={"code": detect_script},
                 ctx=ctx,
             )
-
-        # Fallback to synthetic dispatch click
-        if res_data.get("dispatched"):
-            log.info("step_executor.auto_heal.synthetic_dispatch_click", target=target)
-            return McpToolResult(
-                stdout=f"Synthetic click dispatched on obscured/hidden element: {target}",
-                output={"healed": "synthetic_dispatch_click", "target": target},
-                ok=True,
+            data = (detect_res.output or {}).get("result") or {}
+            if isinstance(data, dict) and data.get("found"):
+                res_data = data
+                break
+        except Exception as det_err:
+            log.debug(
+                "step_executor.auto_heal.detect_poll_err", attempt=attempt, error=str(det_err)
             )
-    except Exception as heal_err:
-        log.debug("step_executor.auto_heal.uncollapse_failed", error=str(heal_err))
-        raise original_exc from heal_err
+        if attempt < 3:
+            await asyncio.sleep(0.8)
+
+    if not res_data or not res_data.get("found"):
+        raise original_exc
+
+    toggle_sel = res_data.get("toggleSelector")
+    if toggle_sel:
+        log.info(
+            "step_executor.auto_heal.uncollapse_parent",
+            target=target,
+            toggle_selector=toggle_sel,
+        )
+        # Click the parent toggle first
+        with contextlib.suppress(Exception):
+            await invoker.invoke(
+                explicit_provider=explicit_provider,
+                tool=normalized_tool,
+                arguments={"target": toggle_sel},
+                ctx=ctx,
+            )
+            await asyncio.sleep(0.4)
+
+        # Retry target click
+        return await invoker.invoke(
+            explicit_provider=explicit_provider,
+            tool=normalized_tool,
+            arguments=clean_invoke_args,
+            ctx=ctx,
+        )
+
+    # If element was found in DOM after polling (e.g. async AJAX rendering finished), retry click directly
+    try:
+        log.info("step_executor.auto_heal.retry_after_dom_settle", target=target)
+        return await invoker.invoke(
+            explicit_provider=explicit_provider,
+            tool=normalized_tool,
+            arguments=clean_invoke_args,
+            ctx=ctx,
+        )
+    except Exception:
+        pass
+
+    # Fallback to synthetic dispatch click
+    if res_data.get("dispatched"):
+        log.info("step_executor.auto_heal.synthetic_dispatch_click", target=target)
+        return McpToolResult(
+            stdout=f"Synthetic click dispatched on obscured/hidden element: {target}",
+            output={"healed": "synthetic_dispatch_click", "target": target},
+            ok=True,
+        )
 
     raise original_exc
 
@@ -996,6 +1017,7 @@ async def _invoke_tool(
                 "hidden",
                 "intercepts pointer",
                 "waiting for locator",
+                "does not match any elements",
             )
         ):
             click_res = await _auto_heal_hidden_or_collapsed_element(

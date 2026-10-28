@@ -74,9 +74,9 @@ async def test_auto_heal_synthetic_dispatch_fallback() -> None:
                 },
                 ok=True,
             ),
+            Exception("still obscured"),
         ]
     )
-
     res = await _invoke_tool(
         invoker=invoker,
         explicit_provider=None,
@@ -87,7 +87,7 @@ async def test_auto_heal_synthetic_dispatch_fallback() -> None:
 
     assert res.ok is True
     assert (res.output or {}).get("healed") == "synthetic_dispatch_click"
-    assert invoker.invoke.call_count == 2
+    assert invoker.invoke.call_count == 3
 
 
 @pytest.mark.asyncio
