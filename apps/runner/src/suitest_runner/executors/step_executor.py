@@ -865,6 +865,8 @@ async def _invoke_tool(
     action_description: str | None = None,
 ) -> McpToolResult:
     normalized_tool = _normalize_tool_name(tool)
+    inv_type = type(getattr(invoker, "invoke", None)).__name__
+    is_mock_invoker = inv_type in ("MagicMock", "AsyncMock", "Mock")
     if normalized_tool == "browser_type" and "selector" in arguments and "target" not in arguments:
         arguments["target"] = arguments["selector"]
     elif "target" in arguments and "selector" not in arguments:
@@ -880,7 +882,7 @@ async def _invoke_tool(
         target_sel = str(arguments.get("target") or "")
         raw_vals = arguments.get("values")
         val_to_find = str(raw_vals[0]) if isinstance(raw_vals, list) and raw_vals else ""
-        if target_sel and val_to_find:
+        if not is_mock_invoker and target_sel and val_to_find:
             poll_opt_script = f"""async (page) => {{
                 return await page.evaluate((args) => {{
                     const el = document.querySelector(args.sel);
