@@ -176,6 +176,7 @@ def _resolve_fixture_path(file_path: str) -> Path:
         log.debug("step_executor.resolve_fixture_path_failed", error=str(exc))
     try:
         from suitest_lifecycle.fixture_generator import create_dummy_file
+
         fname = Path(file_path).name or "dummy.pdf"
         ftype = Path(file_path).suffix.lstrip(".").lower() or "pdf"
         out_f = create_dummy_file(file_type=ftype, filename=fname, size_kb=10)
@@ -420,6 +421,7 @@ async def _handle_solve_captcha_operation(
     snap_code = build_tiny_ocr_solve_script(image_selector, frame_chain)
 
     attempts = max(1, max_retries)
+
     async def _solve_attempt(attempt: int) -> McpToolResult:
         engine_used = "tiny_ocr"
         try:
@@ -524,6 +526,7 @@ async def _handle_solve_captcha_operation(
         )
 
     return await _solve_attempt(0)
+
 
 async def _preflight_tcp_probe(
     host: str,
@@ -680,7 +683,11 @@ async def _auto_heal_hidden_or_collapsed_element(
             )
             data = (detect_res.output or {}).get("result") or {}
             if not data and detect_res.stdout:
-                m = re.search(r"^### Result\s*\n(.*?)(?=\n###|\Z)", detect_res.stdout, re.MULTILINE | re.DOTALL)
+                m = re.search(
+                    r"^### Result\s*\n(.*?)(?=\n###|\Z)",
+                    detect_res.stdout,
+                    re.MULTILINE | re.DOTALL,
+                )
                 cand = m.group(1).strip() if m else detect_res.stdout.strip()
                 with contextlib.suppress(Exception):
                     parsed_res = json.loads(cand)
@@ -764,14 +771,18 @@ async def _auto_heal_hidden_or_collapsed_element(
         except McpToolFailed as click_exc:
             exc_lower = str(click_exc).lower()
             if "strict mode violation" in exc_lower or "resolved to" in exc_lower:
-                tgt = str(clean_invoke_args.get("target") or clean_invoke_args.get("selector") or "")
+                tgt = str(
+                    clean_invoke_args.get("target") or clean_invoke_args.get("selector") or ""
+                )
                 if "nth=" not in tgt:
                     retry_nth_args = dict(clean_invoke_args)
                     healed_tgt = f"{tgt} >> nth=0"
                     retry_nth_args["target"] = healed_tgt
                     if "selector" in retry_nth_args:
                         retry_nth_args["selector"] = healed_tgt
-                    log.info("step_executor.auto_heal.uncollapse_strict_mode_nth0", target=healed_tgt)
+                    log.info(
+                        "step_executor.auto_heal.uncollapse_strict_mode_nth0", target=healed_tgt
+                    )
                     try:
                         return await invoker.invoke(
                             explicit_provider=explicit_provider,
@@ -782,7 +793,10 @@ async def _auto_heal_hidden_or_collapsed_element(
                     except McpToolFailed as nth_exc:
                         if "intercepts pointer" in str(nth_exc).lower():
                             # The modal opened and intercepted pointer events
-                            log.info("step_executor.auto_heal.modal_opened_after_click", target=healed_tgt)
+                            log.info(
+                                "step_executor.auto_heal.modal_opened_after_click",
+                                target=healed_tgt,
+                            )
                             # If modal contains a 'Pilih' button, automatically click it
                             pilih_script = """async (page) => {
                                 return await page.evaluate(() => {
@@ -876,6 +890,7 @@ async def _invoke_tool(
                     return {{ found: true, hasOpt, opts }};
                 }}, {{sel: {json.dumps(target_sel)}, targetVal: {json.dumps(val_to_find)}}});
             }}"""
+
             async def _poll_opt(attempts_left: int) -> None:
                 try:
                     res_p = await invoker.invoke(
@@ -886,7 +901,11 @@ async def _invoke_tool(
                     )
                     out_p = (res_p.output or {}).get("result") or {}
                     if not out_p and res_p.stdout:
-                        m = re.search(r"^### Result\s*\n(.*?)(?=\n###|\Z)", res_p.stdout, re.MULTILINE | re.DOTALL)
+                        m = re.search(
+                            r"^### Result\s*\n(.*?)(?=\n###|\Z)",
+                            res_p.stdout,
+                            re.MULTILINE | re.DOTALL,
+                        )
                         cand = m.group(1).strip() if m else res_p.stdout.strip()
                         with contextlib.suppress(Exception):
                             out_p = json.loads(cand)
