@@ -519,23 +519,29 @@ async def _handle_solve_captcha_operation(
 async def _preflight_tcp_probe(
     host: str,
     port: int,
-    timeout_sec: float = 2.5,
+    timeout_sec: float = 5.0,
+    retries: int = 1,
 ) -> tuple[bool, str | None]:
     """Test raw TCP socket connection to host and port to fail fast before browser navigation."""
-    writer = None
-    try:
-        async with asyncio.timeout(timeout_sec):
-            _, writer = await asyncio.open_connection(host, port)
-        return True, None
-    except TimeoutError:
-        return False, f"connection timed out after {timeout_sec}s"
-    except OSError as exc:
-        return False, str(exc)
-    finally:
-        if writer is not None:
-            writer.close()
-            with contextlib.suppress(Exception):
-                await writer.wait_closed()
+    last_err: str | None = None
+    for attempt in range(retries + 1):
+        writer = None
+        try:
+            async with asyncio.timeout(timeout_sec):
+                _, writer = await asyncio.open_connection(host, port)
+            return True, None
+        except TimeoutError:
+            last_err = f"connection timed out after {timeout_sec}s"
+        except OSError as exc:
+            last_err = str(exc)
+        finally:
+            if writer is not None:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+        if attempt < retries:
+            await asyncio.sleep(0.5)
+    return False, last_err
 
 
 async def _auto_heal_hidden_or_collapsed_element(

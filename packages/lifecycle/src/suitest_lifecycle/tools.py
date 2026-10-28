@@ -906,6 +906,10 @@ def create_test_case(
                     tgt = args.get("target") or args.get("selector") or ""
                     raw_val = args.get("value") or (args.get("values", [""])[0] if isinstance(args.get("values"), list) else "")
                     step_body_lines.append(f"    await page.locator({tgt!r}).select_option({str(raw_val)!r})")
+                elif t in ("browser_upload_file", "browser.upload_file", "browser_file_upload"):
+                    tgt = args.get("target") or args.get("selector") or ""
+                    f_path = args.get("file") or args.get("path") or (args.get("files", [""])[0] if isinstance(args.get("files"), list) else "")
+                    step_body_lines.append(f"    await page.locator({tgt!r}).set_input_files({str(f_path)!r})")
             except (json.JSONDecodeError, TypeError, KeyError) as parse_err:
                 logger.debug("create_test_case.step_code_parse_failed: %s", parse_err)
             step_body_lines.append("    await _ok(page)")
@@ -943,6 +947,13 @@ def create_test_case(
                         if "value" in c_args and "values" not in c_args:
                             val = c_args.pop("value")
                             c_args["values"] = [str(val)] if not isinstance(val, list) else [str(x) for x in val]
+                        if "selector" in c_args and "target" not in c_args:
+                            c_args["target"] = c_args.pop("selector")
+                    elif tool_name in ("browser_upload_file", "browser.upload_file", "browser_file_upload"):
+                        cd["tool"] = "browser_upload_file"
+                        c_args = cd.setdefault("arguments", {})
+                        if "path" in c_args and "file" not in c_args:
+                            c_args["file"] = c_args.pop("path")
                         if "selector" in c_args and "target" not in c_args:
                             c_args["target"] = c_args.pop("selector")
                 formatted_steps.append(
