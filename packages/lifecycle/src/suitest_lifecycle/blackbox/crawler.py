@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -35,6 +36,8 @@ except ImportError:
     solve_captcha_in_page = None
 if TYPE_CHECKING:
     from playwright.async_api import Locator, Page
+_log = logging.getLogger(__name__)
+
 
 # Rich per-element capture: every attribute the selector strategy ranks.
 _EXTRACT_JS = r"""
