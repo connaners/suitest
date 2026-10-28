@@ -535,6 +535,142 @@ async def _preflight_tcp_probe(
                 await writer.wait_closed()
 
 
+async def _auto_heal_hidden_or_collapsed_element(
+    *,
+    invoker: McpInvoker,
+    explicit_provider: str | None,
+    normalized_tool: str,
+    clean_invoke_args: dict[str, object],
+    ctx: InvokeContext,
+    original_exc: McpToolFailed,
+) -> McpToolResult:
+    """Attempt self-healing when a click fails due to element being hidden in a collapsed accordion/menu."""
+    target = str(clean_invoke_args.get("target") or clean_invoke_args.get("selector") or "")
+    if not target:
+        raise original_exc
+
+    detect_script = f"""(() => {{
+        const rawTarget = {json.dumps(target)};
+        let el = null;
+        try {{
+            if (rawTarget.includes(':has-text(')) {{
+                const m = rawTarget.match(/(.*?):has-text\\((["']?)(.*?)\\2\\)/);
+                if (m) {{
+                    const tag = m[1] || '*';
+                    const text = m[3];
+                    const candidates = Array.from(document.querySelectorAll(tag));
+                    el = candidates.find(c => (c.innerText || c.textContent || '').trim().includes(text));
+                }}
+            }}
+        }} catch (_) {{}}
+        if (!el) {{
+            try {{ el = document.querySelector(rawTarget); }} catch (_) {{}}
+        }}
+        if (!el) return {{ found: false, reason: "not_in_dom" }};
+
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        const isHidden = style.display === 'none' || style.visibility === 'hidden' || (rect.width === 0 && rect.height === 0);
+
+        // Look for collapsed parent container
+        const container = el.closest(`
+            .collapse:not(.show),
+            .kt-menu__submenu,
+            .accordion-collapse:not(.show),
+            [aria-expanded="false"],
+            details:not([open]),
+            [data-state="closed"]
+        `);
+
+        let toggleSelector = null;
+        if (container) {{
+            const parent = container.parentElement;
+            const toggle = parent ? parent.querySelector(`
+                .kt-menu__toggle,
+                [data-bs-toggle="collapse"],
+                [data-toggle="collapse"],
+                .accordion-button.collapsed,
+                summary,
+                [aria-expanded="false"]
+            `) : null;
+            if (toggle) {{
+                if (toggle.id) toggleSelector = '#' + toggle.id;
+                else if (toggle.className && typeof toggle.className === 'string') {{
+                    const c = Array.from(toggle.classList).filter(x => !x.includes(':')).join('.');
+                    if (c) toggleSelector = toggle.tagName.toLowerCase() + '.' + c;
+                }}
+                if (!toggleSelector) toggleSelector = toggle.tagName.toLowerCase();
+                const txt = (toggle.innerText || '').trim().slice(0, 30);
+                if (txt) toggleSelector += ':has-text("' + txt + '")';
+            }}
+        }}
+
+        let dispatched = false;
+        try {{
+            el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
+            dispatched = true;
+        }} catch (_) {{}}
+
+        return {{
+            found: true,
+            isHidden,
+            containerFound: !!container,
+            toggleSelector,
+            dispatched
+        }};
+    }})()"""
+
+    try:
+        detect_res = await invoker.invoke(
+            explicit_provider=explicit_provider,
+            tool="browser_run_code_unsafe",
+            arguments={"code": detect_script},
+            ctx=ctx,
+        )
+        res_data = (detect_res.output or {}).get("result") or {}
+        if not isinstance(res_data, dict) or not res_data.get("found"):
+            raise original_exc
+
+        toggle_sel = res_data.get("toggleSelector")
+        if toggle_sel:
+            log.info(
+                "step_executor.auto_heal.uncollapse_parent",
+                target=target,
+                toggle_selector=toggle_sel,
+            )
+            # Click the parent toggle first
+            with contextlib.suppress(Exception):
+                await invoker.invoke(
+                    explicit_provider=explicit_provider,
+                    tool=normalized_tool,
+                    arguments={"target": toggle_sel},
+                    ctx=ctx,
+                )
+                await asyncio.sleep(0.4)
+
+            # Retry target click
+            return await invoker.invoke(
+                explicit_provider=explicit_provider,
+                tool=normalized_tool,
+                arguments=clean_invoke_args,
+                ctx=ctx,
+            )
+
+        # Fallback to synthetic dispatch click
+        if res_data.get("dispatched"):
+            log.info("step_executor.auto_heal.synthetic_dispatch_click", target=target)
+            return McpToolResult(
+                stdout=f"Synthetic click dispatched on obscured/hidden element: {target}",
+                output={"healed": "synthetic_dispatch_click", "target": target},
+                ok=True,
+            )
+    except Exception as heal_err:
+        log.debug("step_executor.auto_heal.uncollapse_failed", error=str(heal_err))
+        raise original_exc from heal_err
+
+    raise original_exc
+
+
 async def _invoke_tool(
     *,
     invoker: McpInvoker,
@@ -828,7 +964,8 @@ async def _invoke_tool(
             ctx=ctx,
         )
     except McpToolFailed as exc:
-        if "strict mode violation" in str(exc):
+        exc_str = str(exc).lower()
+        if "strict mode violation" in exc_str:
             strict_target = str(
                 clean_invoke_args.get("target") or clean_invoke_args.get("selector") or ""
             )
@@ -851,6 +988,24 @@ async def _invoke_tool(
                 )
             else:
                 raise
+        elif normalized_tool in ("browser_click", "browser.click") and any(
+            hint in exc_str
+            for hint in (
+                "timeout",
+                "not visible",
+                "hidden",
+                "intercepts pointer",
+                "waiting for locator",
+            )
+        ):
+            click_res = await _auto_heal_hidden_or_collapsed_element(
+                invoker=invoker,
+                explicit_provider=explicit_provider,
+                normalized_tool=normalized_tool,
+                clean_invoke_args=clean_invoke_args,
+                ctx=ctx,
+                original_exc=exc,
+            )
         else:
             raise
     # Post-failure fallback: only trigger DOM inspection when a submit action actually fails

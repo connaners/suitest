@@ -345,8 +345,99 @@ def suitest_browser_click(
             loc = sess.page.locator(target)
             if hasattr(loc, "first"):
                 loc = loc.first
-            loc.wait_for(state="visible", timeout=timeout_ms)
-            loc.click()
+
+            # If not immediately visible, check for parent collapsible container
+            if not loc.is_visible():
+                uncollapse_info = sess.page.evaluate(
+                    """(rawTarget) => {
+                        let el = null;
+                        try {
+                            if (rawTarget.includes(':has-text(')) {
+                                const m = rawTarget.match(/(.*?):has-text\\((["']?)(.*?)\\2\\)/);
+                                if (m) {
+                                    const tag = m[1] || '*';
+                                    const text = m[3];
+                                    const candidates = Array.from(document.querySelectorAll(tag));
+                                    el = candidates.find(c => (c.innerText || c.textContent || '').trim().includes(text));
+                                }
+                            }
+                        } catch (_) {}
+                        if (!el) {
+                            try { el = document.querySelector(rawTarget); } catch (_) {}
+                        }
+                        if (!el) return null;
+                        const container = el.closest(`
+                            .collapse:not(.show),
+                            .kt-menu__submenu,
+                            .accordion-collapse:not(.show),
+                            [aria-expanded="false"],
+                            details:not([open]),
+                            [data-state="closed"]
+                        `);
+                        if (!container) return null;
+                        const parent = container.parentElement;
+                        const toggle = parent ? parent.querySelector(`
+                            .kt-menu__toggle,
+                            [data-bs-toggle="collapse"],
+                            [data-toggle="collapse"],
+                            .accordion-button.collapsed,
+                            summary,
+                            [aria-expanded="false"]
+                        `) : null;
+                        if (!toggle) return null;
+                        let toggleSel = '';
+                        if (toggle.id) toggleSel = '#' + toggle.id;
+                        else if (toggle.className && typeof toggle.className === 'string') {
+                            const c = Array.from(toggle.classList).filter(x => !x.includes(':')).join('.');
+                            if (c) toggleSel = toggle.tagName.toLowerCase() + '.' + c;
+                        }
+                        if (!toggleSel) toggleSel = toggle.tagName.toLowerCase();
+                        const txt = (toggle.innerText || '').trim().slice(0, 30);
+                        if (txt) toggleSel += ':has-text("' + txt + '")';
+                        return { toggleSelector: toggleSel };
+                    }""",
+                    target,
+                )
+                if uncollapse_info and uncollapse_info.get("toggleSelector"):
+                    toggle_sel = uncollapse_info["toggleSelector"]
+                    t_loc = sess.page.locator(toggle_sel).first
+                    if t_loc.is_visible():
+                        t_loc.click()
+                        sess.record_action("click", target=toggle_sel)
+                        sess.page.wait_for_timeout(400)
+
+            try:
+                loc.wait_for(state="visible", timeout=timeout_ms)
+                loc.click()
+            except Exception:
+                # Fallback to dispatch event click if element is in DOM
+                dispatched = sess.page.evaluate(
+                    """(rawTarget) => {
+                        let el = null;
+                        try {
+                            if (rawTarget.includes(':has-text(')) {
+                                const m = rawTarget.match(/(.*?):has-text\\((["']?)(.*?)\\2\\)/);
+                                if (m) {
+                                    const tag = m[1] || '*';
+                                    const text = m[3];
+                                    const candidates = Array.from(document.querySelectorAll(tag));
+                                    el = candidates.find(c => (c.innerText || c.textContent || '').trim().includes(text));
+                                }
+                            }
+                        } catch (_) {}
+                        if (!el) {
+                            try { el = document.querySelector(rawTarget); } catch (_) {}
+                        }
+                        if (el) {
+                            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                            return true;
+                        }
+                        return false;
+                    }""",
+                    target,
+                )
+                if not dispatched:
+                    raise
             sess.record_action("click", target=target)
 
         _GLOBAL_MANAGER.run_on_session(session_id, _click)
