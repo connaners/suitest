@@ -136,4 +136,29 @@ describe("<ResetPasswordRoute>", () => {
       /invalid or has expired/i,
     );
   });
+
+  it("handles whitespace-only token as missing token", async () => {
+    renderResetPassword("/reset-password?token=%20%20%20");
+    expect(await screen.findByTestId("missing-token-warning")).toBeInTheDocument();
+  });
+
+  it("handles network failure / connection drop gracefully", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.fn((_url: string, _init?: RequestInit) =>
+      Promise.reject(new TypeError("Failed to fetch")),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    renderResetPassword("/reset-password?token=valid-token");
+
+    const passInput = await screen.findByLabelText(/^new password$/i);
+    const confirmInput = screen.getByLabelText(/^confirm new password$/i);
+    const submitBtn = screen.getByRole("button", { name: /reset password/i });
+
+    await user.type(passInput, "newPassword123!");
+    await user.type(confirmInput, "newPassword123!");
+    await user.click(submitBtn);
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
 });

@@ -88,4 +88,41 @@ describe("<ForgotPasswordRoute>", () => {
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
+
+  it("trims whitespace from email before submitting", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.fn((_url: string, _init?: RequestInit) =>
+      Promise.resolve(new Response(null, { status: 202 })),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    renderForgotPassword();
+    const emailInput = await screen.findByRole("textbox", { name: /email/i });
+    await user.type(emailInput, "   spaced@example.com   ");
+    await user.click(screen.getByRole("button", { name: /send reset link/i }));
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/auth/forgot-password",
+        expect.objectContaining({
+          body: JSON.stringify({ email: "spaced@example.com" }),
+        }),
+      );
+    });
+  });
+
+  it("handles network offline/connection drop gracefully", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.fn((_url: string, _init?: RequestInit) =>
+      Promise.reject(new TypeError("Failed to fetch")),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    renderForgotPassword();
+    const emailInput = await screen.findByRole("textbox", { name: /email/i });
+    await user.type(emailInput, "offline@example.com");
+    await user.click(screen.getByRole("button", { name: /send reset link/i }));
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
 });
