@@ -86,6 +86,9 @@ _LEGACY_TOOL_ALIASES: dict[str, str] = {
     "browser.file_upload": "browser_upload_file",
     "browser.upload_file": "browser_upload_file",
     "browser.solve_captcha": "browser_solve_captcha",
+    "browser_select": "browser_select_option",
+    "browser.select": "browser_select_option",
+    "browser.select_option": "browser_select_option",
     "browser_assert_visible": "browser_wait_for",
     "browser.assert_visible": "browser_wait_for",
 }
@@ -549,79 +552,80 @@ async def _auto_heal_hidden_or_collapsed_element(
     if not target:
         raise original_exc
 
-    detect_script = f"""(() => {{
-        const rawTarget = {json.dumps(target)};
-        let el = null;
-        try {{
-            if (rawTarget.includes(':has-text(')) {{
-                const m = rawTarget.match(/(.*?):has-text\\((["']?)(.*?)\\2\\)/);
-                if (m) {{
-                    const tag = m[1] || '*';
-                    const text = m[3];
-                    const candidates = Array.from(document.querySelectorAll(tag));
-                    el = candidates.find(c => (c.innerText || c.textContent || '').trim().includes(text));
+    detect_script = f"""async (page) => {{
+        return await page.evaluate((rawTarget) => {{
+            let el = null;
+            try {{
+                if (rawTarget.includes(':has-text(')) {{
+                    const m = rawTarget.match(/(.*?):has-text\\((["']?)(.*?)\\2\\)/);
+                    if (m) {{
+                        const tag = m[1] || '*';
+                        const text = m[3];
+                        const candidates = Array.from(document.querySelectorAll(tag));
+                        el = candidates.find(c => (c.innerText || c.textContent || '').trim().includes(text));
+                    }}
+                }}
+            }} catch (_) {{}}
+            if (!el) {{
+                try {{ el = document.querySelector(rawTarget); }} catch (_) {{}}
+            }}
+            if (!el) return {{ found: false, reason: "not_in_dom" }};
+
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            const isHidden = style.display === 'none' || style.visibility === 'hidden' || (rect.width === 0 && rect.height === 0);
+
+            // Look for collapsed parent container
+            const container = el.closest(`
+                .collapse:not(.show),
+                .kt-menu__submenu,
+                .accordion-collapse:not(.show),
+                [aria-expanded="false"],
+                details:not([open]),
+                [data-state="closed"]
+            `);
+
+            let toggleSelector = null;
+            if (container) {{
+                const parent = container.parentElement;
+                const toggle = parent ? parent.querySelector(`
+                    .kt-menu__toggle,
+                    [data-bs-toggle="collapse"],
+                    [data-toggle="collapse"],
+                    .accordion-button.collapsed,
+                    summary,
+                    [aria-expanded="false"]
+                `) : null;
+                if (toggle) {{
+                    if (toggle.id) toggleSelector = '#' + toggle.id;
+                    else if (toggle.className && typeof toggle.className === 'string') {{
+                        const c = Array.from(toggle.classList).filter(x => !x.includes(':')).join('.');
+                        if (c) toggleSelector = toggle.tagName.toLowerCase() + '.' + c;
+                    }}
+                    if (!toggleSelector) toggleSelector = toggle.tagName.toLowerCase();
+                    const txt = (toggle.innerText || '').trim().slice(0, 30);
+                    if (txt) toggleSelector += ':has-text("' + txt + '")';
                 }}
             }}
-        }} catch (_) {{}}
-        if (!el) {{
-            try {{ el = document.querySelector(rawTarget); }} catch (_) {{}}
-        }}
-        if (!el) return {{ found: false, reason: "not_in_dom" }};
 
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        const isHidden = style.display === 'none' || style.visibility === 'hidden' || (rect.width === 0 && rect.height === 0);
+            let dispatched = false;
+            try {{
+                el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
+                dispatched = true;
+            }} catch (_) {{}}
 
-        // Look for collapsed parent container
-        const container = el.closest(`
-            .collapse:not(.show),
-            .kt-menu__submenu,
-            .accordion-collapse:not(.show),
-            [aria-expanded="false"],
-            details:not([open]),
-            [data-state="closed"]
-        `);
-
-        let toggleSelector = null;
-        if (container) {{
-            const parent = container.parentElement;
-            const toggle = parent ? parent.querySelector(`
-                .kt-menu__toggle,
-                [data-bs-toggle="collapse"],
-                [data-toggle="collapse"],
-                .accordion-button.collapsed,
-                summary,
-                [aria-expanded="false"]
-            `) : null;
-            if (toggle) {{
-                if (toggle.id) toggleSelector = '#' + toggle.id;
-                else if (toggle.className && typeof toggle.className === 'string') {{
-                    const c = Array.from(toggle.classList).filter(x => !x.includes(':')).join('.');
-                    if (c) toggleSelector = toggle.tagName.toLowerCase() + '.' + c;
-                }}
-                if (!toggleSelector) toggleSelector = toggle.tagName.toLowerCase();
-                const txt = (toggle.innerText || '').trim().slice(0, 30);
-                if (txt) toggleSelector += ':has-text("' + txt + '")';
-            }}
-        }}
-
-        let dispatched = false;
-        try {{
-            el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
-            dispatched = true;
-        }} catch (_) {{}}
-
-        return {{
-            found: true,
-            isHidden,
-            containerFound: !!container,
-            toggleSelector,
-            dispatched
-        }};
-    }})()"""
+            return {{
+                found: true,
+                isHidden,
+                containerFound: !!container,
+                toggleSelector,
+                dispatched
+            }};
+        }}, {json.dumps(target)});
+    }}"""
 
     res_data: dict[str, Any] = {}
-    for attempt in range(4):
+    for attempt in range(8):
         try:
             detect_res = await invoker.invoke(
                 explicit_provider=explicit_provider,
@@ -630,6 +634,13 @@ async def _auto_heal_hidden_or_collapsed_element(
                 ctx=ctx,
             )
             data = (detect_res.output or {}).get("result") or {}
+            if not data and detect_res.stdout:
+                m = re.search(r"^### Result\s*\n(.*?)(?=\n###|\Z)", detect_res.stdout, re.MULTILINE | re.DOTALL)
+                cand = m.group(1).strip() if m else detect_res.stdout.strip()
+                with contextlib.suppress(Exception):
+                    parsed_res = json.loads(cand)
+                    if isinstance(parsed_res, dict):
+                        data = parsed_res
             if isinstance(data, dict) and data.get("found"):
                 res_data = data
                 break
@@ -637,9 +648,8 @@ async def _auto_heal_hidden_or_collapsed_element(
             log.debug(
                 "step_executor.auto_heal.detect_poll_err", attempt=attempt, error=str(det_err)
             )
-        if attempt < 3:
+        if attempt < 7:
             await asyncio.sleep(0.8)
-
     if not res_data or not res_data.get("found"):
         raise original_exc
 
@@ -707,6 +717,46 @@ async def _invoke_tool(
         arguments["target"] = arguments["selector"]
     elif "target" in arguments and "selector" not in arguments:
         arguments["selector"] = arguments["target"]
+    if normalized_tool == "browser_select_option":
+        if "value" in arguments and "values" not in arguments:
+            val = arguments.pop("value")
+            arguments["values"] = [str(val)] if not isinstance(val, list) else [str(x) for x in val]
+        elif "values" in arguments and isinstance(arguments["values"], str):
+            arguments["values"] = [arguments["values"]]
+        if "selector" in arguments and "target" not in arguments:
+            arguments["target"] = arguments.pop("selector")
+        target_sel = str(arguments.get("target") or "")
+        vals = [str(x) for x in arguments.get("values", [])]
+        if target_sel and vals:
+            val_to_find = vals[0]
+            poll_opt_script = f"""async (page) => {{
+                return await page.evaluate((args) => {{
+                    const el = document.querySelector(args.sel);
+                    if (!el) return {{ found: false, reason: "no_select" }};
+                    const opts = Array.from(el.options || []).map(o => o.value);
+                    const hasOpt = opts.includes(args.targetVal);
+                    return {{ found: true, hasOpt, opts }};
+                }}, {{sel: {json.dumps(target_sel)}, targetVal: {json.dumps(val_to_find)}}});
+            }}"""
+            for _ in range(6):
+                try:
+                    res_p = await invoker.invoke(
+                        explicit_provider=explicit_provider,
+                        tool="browser_run_code_unsafe",
+                        arguments={"code": poll_opt_script},
+                        ctx=ctx,
+                    )
+                    out_p = (res_p.output or {}).get("result") or {}
+                    if not out_p and res_p.stdout:
+                        m = re.search(r"^### Result\s*\n(.*?)(?=\n###|\Z)", res_p.stdout, re.MULTILINE | re.DOTALL)
+                        cand = m.group(1).strip() if m else res_p.stdout.strip()
+                        with contextlib.suppress(Exception):
+                            out_p = json.loads(cand)
+                    if isinstance(out_p, dict) and out_p.get("hasOpt"):
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.8)
     if normalized_tool in ("browser_solve_captcha", "browser.solve_captcha"):
         return await _handle_solve_captcha_operation(
             invoker=invoker,
@@ -1009,7 +1059,14 @@ async def _invoke_tool(
                 )
             else:
                 raise
-        elif normalized_tool in ("browser_click", "browser.click") and any(
+        elif normalized_tool in (
+            "browser_click",
+            "browser.click",
+            "browser_select_option",
+            "browser.select_option",
+            "browser_type",
+            "browser.type",
+        ) and any(
             hint in exc_str
             for hint in (
                 "timeout",
@@ -1103,6 +1160,37 @@ async def _invoke_tool(
         except Exception as det_err:
             log.debug("step_executor.post_failure_captcha_detect_failed", error=str(det_err))
 
+    if is_submit_action(target, normalized_tool, action_description):
+        # Allow async post-submit navigation/redirect to settle before the next step runs
+        await asyncio.sleep(1.5)
+    elif normalized_tool in ("browser_select_option", "browser.select_option"):
+        # Explicitly dispatch change event & trigger jQuery handlers for dependent cascading dropdowns
+        target_sel = str(arguments.get("target") or arguments.get("selector") or "")
+        if target_sel:
+            change_script = f"""async (page) => {{
+                await page.evaluate((sel) => {{
+                    const el = document.querySelector(sel);
+                    if (el) {{
+                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        if (typeof window.jQuery === 'function') {{
+                            window.jQuery(el).trigger('change');
+                        }}
+                        if (typeof el.onchange === 'function') {{
+                            el.onchange();
+                        }}
+                    }}
+                }}, {json.dumps(target_sel)});
+            }}"""
+            with contextlib.suppress(Exception):
+                await invoker.invoke(
+                    explicit_provider=explicit_provider,
+                    tool="browser_run_code_unsafe",
+                    arguments={"code": change_script},
+                    ctx=ctx,
+                )
+        # Allow dependent cascading AJAX dropdowns to render
+        # Allow dependent cascading AJAX dropdowns to render
+        await asyncio.sleep(2.0)
     return click_res
 
 
