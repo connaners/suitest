@@ -458,8 +458,8 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
                         request_body=req_body[:2000],
                     )
                 )
-            except Exception:
-                pass
+            except Exception as res_err:
+                _log.debug("blackbox.crawler.on_response_parse_failed", error=str(res_err))
 
         page.on("response", _on_response)
         page.on(

@@ -420,11 +420,8 @@ async def _handle_solve_captcha_operation(
     snap_code = build_tiny_ocr_solve_script(image_selector, frame_chain)
 
     attempts = max(1, max_retries)
-    last_snap_duration: int = 10
-    last_error: Exception | None = None
-    engine_used: str = "tiny_ocr"
-
-    for attempt in range(attempts):
+    async def _solve_attempt(attempt: int) -> McpToolResult:
+        engine_used = "tiny_ocr"
         try:
             snap_result = await invoker.invoke(
                 explicit_provider=explicit_provider,
@@ -436,7 +433,6 @@ async def _handle_solve_captcha_operation(
             fast_text, image_bytes = parse_browser_eval_result(snap_result, image_selector)
 
             if fast_text:
-                engine_used = "tiny_ocr"
                 solved_text = fast_text.upper() if force_uppercase else fast_text
                 log.info(
                     "solve_captcha.fast_path_solved",
@@ -455,7 +451,6 @@ async def _handle_solve_captcha_operation(
                     captcha_type,
                 )
         except Exception as exc:
-            last_error = exc
             log.warning(
                 "solve_captcha.attempt_failed",
                 attempt=attempt,
@@ -467,7 +462,7 @@ async def _handle_solve_captcha_operation(
                     refresh_args: dict[str, object] = {"target": refresh_target}
                     if frame_selector:
                         refresh_args["frame_selector"] = frame_selector
-                    try:
+                    with contextlib.suppress(Exception):
                         await _invoke_tool(
                             invoker=invoker,
                             explicit_provider=explicit_provider,
@@ -476,34 +471,27 @@ async def _handle_solve_captcha_operation(
                             ctx=ctx,
                             captcha_solver=captcha_solver,
                         )
-                    except Exception as click_err:
-                        log.debug("solve_captcha.refresh_click_failed", error=str(click_err))
                 await asyncio.sleep(1.0)
-                continue
+                return await _solve_attempt(attempt + 1)
             raise McpToolFailed(f"CAPTCHA solver failed after {attempts} attempts: {exc}") from exc
 
         if not solved_text:
-            if refresh_target and attempt < attempts - 1:
-                log.info("solve_captcha.empty_result_retrying", attempt=attempt)
-                refresh_args = {"target": refresh_target}
-                if frame_selector:
-                    refresh_args["frame_selector"] = frame_selector
-                try:
-                    await _invoke_tool(
-                        invoker=invoker,
-                        explicit_provider=explicit_provider,
-                        tool="browser_click",
-                        arguments=refresh_args,
-                        ctx=ctx,
-                        captcha_solver=captcha_solver,
-                    )
-                except Exception as click_err:
-                    log.debug("solve_captcha.refresh_click_failed", error=str(click_err))
-                await asyncio.sleep(1.0)
-                continue
             if attempt < attempts - 1:
+                if refresh_target:
+                    refresh_args = {"target": refresh_target}
+                    if frame_selector:
+                        refresh_args["frame_selector"] = frame_selector
+                    with contextlib.suppress(Exception):
+                        await _invoke_tool(
+                            invoker=invoker,
+                            explicit_provider=explicit_provider,
+                            tool="browser_click",
+                            arguments=refresh_args,
+                            ctx=ctx,
+                            captcha_solver=captcha_solver,
+                        )
                 await asyncio.sleep(1.0)
-                continue
+                return await _solve_attempt(attempt + 1)
             raise McpToolFailed(f"CAPTCHA solver produced empty result for {image_selector}")
 
         if input_selector:
@@ -535,12 +523,7 @@ async def _handle_solve_captcha_operation(
             duration_ms=last_snap_duration,
         )
 
-    if last_error:
-        raise McpToolFailed(
-            f"Failed to solve CAPTCHA after {attempts} attempts: {last_error}"
-        ) from last_error
-    raise McpToolFailed(f"Failed to solve CAPTCHA after {attempts} attempts")
-
+    return await _solve_attempt(0)
 
 async def _preflight_tcp_probe(
     host: str,
@@ -687,8 +670,7 @@ async def _auto_heal_hidden_or_collapsed_element(
         }}, {json.dumps(target)});
     }}"""
 
-    res_data: dict[str, Any] = {}
-    for attempt in range(8):
+    async def _poll_dom(attempts_left: int) -> dict[str, Any]:
         try:
             detect_res = await invoker.invoke(
                 explicit_provider=explicit_provider,
@@ -705,14 +687,15 @@ async def _auto_heal_hidden_or_collapsed_element(
                     if isinstance(parsed_res, dict):
                         data = parsed_res
             if isinstance(data, dict) and data.get("found"):
-                res_data = data
-                break
+                return data
         except Exception as det_err:
-            log.debug(
-                "step_executor.auto_heal.detect_poll_err", attempt=attempt, error=str(det_err)
-            )
-        if attempt < 7:
+            log.debug("step_executor.auto_heal.detect_poll_err", error=str(det_err))
+        if attempts_left > 0:
             await asyncio.sleep(0.25)
+            return await _poll_dom(attempts_left - 1)
+        return {}
+
+    res_data = await _poll_dom(7)
     if not res_data or not res_data.get("found"):
         raise original_exc
 
@@ -842,8 +825,8 @@ async def _auto_heal_hidden_or_collapsed_element(
             arguments=clean_invoke_args,
             ctx=ctx,
         )
-    except Exception:
-        pass
+    except Exception as retry_err:
+        log.debug("step_executor.auto_heal.retry_after_dom_settle_failed", error=str(retry_err))
 
     # Fallback to synthetic dispatch click
     if res_data.get("dispatched"):
@@ -875,15 +858,15 @@ async def _invoke_tool(
     if normalized_tool == "browser_select_option":
         if "value" in arguments and "values" not in arguments:
             val = arguments.pop("value")
-            arguments["values"] = [str(val)] if not isinstance(val, list) else [str(x) for x in val]
+            arguments["values"] = [str(val)]
         elif "values" in arguments and isinstance(arguments["values"], str):
             arguments["values"] = [arguments["values"]]
         if "selector" in arguments and "target" not in arguments:
             arguments["target"] = arguments.pop("selector")
         target_sel = str(arguments.get("target") or "")
-        vals = [str(x) for x in arguments.get("values", [])]
-        if target_sel and vals:
-            val_to_find = vals[0]
+        raw_vals = arguments.get("values")
+        val_to_find = str(raw_vals[0]) if isinstance(raw_vals, list) and raw_vals else ""
+        if target_sel and val_to_find:
             poll_opt_script = f"""async (page) => {{
                 return await page.evaluate((args) => {{
                     const el = document.querySelector(args.sel);
@@ -893,7 +876,7 @@ async def _invoke_tool(
                     return {{ found: true, hasOpt, opts }};
                 }}, {{sel: {json.dumps(target_sel)}, targetVal: {json.dumps(val_to_find)}}});
             }}"""
-            for _ in range(6):
+            async def _poll_opt(attempts_left: int) -> None:
                 try:
                     res_p = await invoker.invoke(
                         explicit_provider=explicit_provider,
@@ -908,10 +891,14 @@ async def _invoke_tool(
                         with contextlib.suppress(Exception):
                             out_p = json.loads(cand)
                     if isinstance(out_p, dict) and out_p.get("hasOpt"):
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(0.8)
+                        return
+                except Exception as poll_err:
+                    log.debug("step_executor.select_option.poll_failed", error=str(poll_err))
+                if attempts_left > 0:
+                    await asyncio.sleep(0.8)
+                    await _poll_opt(attempts_left - 1)
+
+            await _poll_opt(5)
     if normalized_tool in ("browser_solve_captcha", "browser.solve_captcha"):
         return await _handle_solve_captcha_operation(
             invoker=invoker,
