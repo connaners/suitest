@@ -28,6 +28,11 @@ const EXPECTED_TOOLS = [
   "manage_test_case_dataset",
   "get_workspace_variables",
   "set_workspace_variable",
+  "create_test_case",
+  "run_test_case",
+  "list_suites",
+  "list_test_cases",
+  "get_test_case",
 ];
 
 function fail(msg) {

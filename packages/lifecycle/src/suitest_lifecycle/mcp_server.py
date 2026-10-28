@@ -82,6 +82,11 @@ _TOOL_DESCRIPTIONS = {
     "manage_test_case_dataset": "Inspect, define, or rename columns/rows of Data-Driven Testing (DDT) scenario matrices on a test case.",
     "get_workspace_variables": "List available workspace and suite variables for parameterization (secrets masked).",
     "set_workspace_variable": "Create or update a workspace variable with optional AES-GCM secret encryption.",
+    "list_suites": "TCM: List test suites in a project (needs project_id).",
+    "list_test_cases": "TCM: List test cases in a project or suite.",
+    "get_test_case": "TCM: Retrieve complete details and executable steps for a test case by case_id.",
+    "create_test_case": "TCM: Create a new test case with executable steps, generating a local Playwright script mirror and syncing to TCM.",
+    "run_test_case": "TCM: Trigger an immediate ad-hoc test run for a test case by case_id.",
 }
 
 
@@ -266,8 +271,104 @@ _SET_VAR_SCHEMA: dict[str, object] = {
     "required": ["key", "value"],
 }
 
+_CREATE_CASE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "suite_id": {"type": "string", "description": "Target suite ID in TCM (required)"},
+        "name": {"type": "string", "description": "Test case title / name (required)"},
+        "description": {"type": "string", "description": "Optional human description"},
+        "preconditions": {
+            "type": "string",
+            "description": "Optional prerequisites (e.g. VPN or credentials)",
+        },
+        "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
+        "steps": {
+            "type": "array",
+            "description": "List of step objects: {action, expected, code, mcp_provider, target_kind}",
+            "items": {"type": "object"},
+        },
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "output_dir": {
+            "type": "string",
+            "description": "Local directory for Playwright test script mirror",
+        },
+        "config_path": {"type": "string", "description": "Path to suitest.config.json"},
+    },
+    "required": ["suite_id", "name"],
+}
+
+_RUN_CASE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "case_id": {
+            "type": "string",
+            "description": "Test case ID or public ID to run (e.g. TC-6017)",
+        },
+        "config_path": {"type": "string", "description": "Path to suitest.config.json"},
+    },
+    "required": ["case_id"],
+}
+
+_GET_CASE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "case_id": {"type": "string", "description": "Test case ID or public ID (e.g. TC-6017)"},
+        "config_path": {"type": "string", "description": "Path to suitest.config.json"},
+    },
+    "required": ["case_id"],
+}
+
+_LIST_CASES_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "project_id": {"type": "string", "description": "Optional project ID to filter"},
+        "suite_id": {"type": "string", "description": "Optional suite ID to filter"},
+        "config_path": {"type": "string", "description": "Path to suitest.config.json"},
+    },
+    "required": [],
+}
+
+_LIST_SUITES_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "project_id": {"type": "string", "description": "Target project ID in TCM (required)"},
+        "config_path": {"type": "string", "description": "Path to suitest.config.json"},
+    },
+    "required": ["project_id"],
+}
+
 
 def _tool_schema(name: str) -> dict[str, object]:
+    if name == "create_test_case":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _CREATE_CASE_SCHEMA,
+        }
+    if name == "run_test_case":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _RUN_CASE_SCHEMA,
+        }
+    if name == "get_test_case":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _GET_CASE_SCHEMA,
+        }
+    if name == "list_test_cases":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _LIST_CASES_SCHEMA,
+        }
+    if name == "list_suites":
+        return {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "inputSchema": _LIST_SUITES_SCHEMA,
+        }
     if name == "edit_test_case_inputs":
         return {
             "name": name,

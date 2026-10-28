@@ -313,7 +313,7 @@ def _extract_snapshot_cases(snapshot_cases: list[Any]) -> list[RunCaseSummary]:
 @router.get("/runs/{run_id}", response_model=RunDetail)
 async def get_run(
     run_id: str,
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
     session: AsyncSession = Depends(get_async_session),
 ) -> RunDetail:
     """Return a run with a step-outcome summary; 404 when cross-workspace.
@@ -436,7 +436,7 @@ def _step_output(stdout: str | None) -> str | None:
 @router.get("/runs/{run_id}/steps", response_model=list[RunStepPublic])
 async def get_run_steps(
     run_id: str,
-    ctx: TenantContext = Depends(require_workspace_membership),
+    ctx: TenantContext = Depends(tenant_via_api_key_or_session),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[RunStepPublic]:
     """Return a run's steps (ordered) with outcomes + case public ids; 404 if cross-ws."""

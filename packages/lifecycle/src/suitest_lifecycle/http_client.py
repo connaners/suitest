@@ -240,6 +240,36 @@ class SuitestClient:
         result = self._request("POST", "/api/v1/runs/ingest", json_body=body)
         return result if isinstance(result, dict) else {}
 
+    def list_suites(self, *, project_id: str = "") -> list[JSONDict]:
+        path = f"/api/v1/suites?projectId={project_id}" if project_id else "/api/v1/suites"
+        result = self._request("GET", path)
+        return result if isinstance(result, list) else []
+
+    def list_cases(self, *, project_id: str = "", suite_id: str = "") -> list[JSONDict]:
+        params: list[str] = []
+        if project_id:
+            params.append(f"projectId={project_id}")
+        if suite_id:
+            params.append(f"suiteId={suite_id}")
+        query = ("?" + "&".join(params)) if params else ""
+        result = self._request("GET", f"/api/v1/test-cases{query}")
+        if isinstance(result, dict):
+            items = result.get("items", [])
+            return items if isinstance(items, list) else []
+        return result if isinstance(result, list) else []
+
+    def get_case(self, case_id: str) -> JSONDict:
+        result = self._request("GET", f"/api/v1/test-cases/{case_id}")
+        return result if isinstance(result, dict) else {}
+
+    def create_case(self, payload: JSONDict) -> JSONDict:
+        result = self._request("POST", "/api/v1/test-cases", json_body=payload)
+        return result if isinstance(result, dict) else {}
+
+    def run_case(self, case_id: str) -> JSONDict:
+        result = self._request("POST", f"/api/v1/test-cases/{case_id}/run")
+        return result if isinstance(result, dict) else {}
+
     def upload_file(self, path: str, *, content_type: str | None = None) -> str:
         """Stream multipart bytes to ``/api/v1/files`` in bounded memory.
 

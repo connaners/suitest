@@ -236,3 +236,48 @@ pre {
     transition-duration: 0s !important;
   }
 }
+
+/* ============================================================================
+   Print media styles — clean, ink-friendly output for test run reports
+   ========================================================================== */
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+  }
+
+  /* Hide app chrome, headers, navigation bars, buttons, modals, toasts */
+  header,
+  aside,
+  nav,
+  [data-testid="sidebar"],
+  [data-testid="run-minimize"],
+  [data-testid="run-rerun-button"],
+  [data-testid="run-replay-link"],
+  [data-testid="run-edit-cases-link"],
+  [data-testid="run-cancel-button"],
+  [data-testid="run-print-button"],
+  [data-testid="run-interrupted-banner"],
+  [data-testid="run-case-explorer"],
+  [data-testid="run-summary-card"],
+  [role="dialog"],
+  [data-slot="dialog-portal"],
+  [data-radix-portal],
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+
+  .print\:block {
+    display: block !important;
+  }
+
+  .print\:hidden {
+    display: none !important;
+  }
+
+  @page {
+    margin: 1.5cm;
+    size: auto;
+  }
+}
+

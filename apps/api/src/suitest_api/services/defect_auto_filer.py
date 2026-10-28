@@ -99,9 +99,10 @@ DefectDiagnoser = Callable[["AsyncSession", str, str], Awaitable["LlmDiagnosis |
 _RULES: Final[tuple[tuple[re.Pattern[str], DiagnosisKind], ...]] = (
     (
         re.compile(
-            r"(econnrefused|connection refused|503 service unavailable|"
-            r"5\d\d.*db|database is starting up|no route to host|"
-            r"network is unreachable)",
+            r"(target_unreachable|cannot connect to|err_name_not_resolved|"
+            r"err_connection_refused|econnrefused|connection refused|"
+            r"503 service unavailable|5\d\d.*db|database is starting up|"
+            r"no route to host|network is unreachable)",
             re.IGNORECASE,
         ),
         DiagnosisKind.INFRA,

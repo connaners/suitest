@@ -1,5 +1,10 @@
+import { MessageSquare } from "lucide-react";
+import { useMemo } from "react";
+
+import type { CaseGroup } from "@/components/runs/case-grouping";
 import { ProgressBar } from "@/components/shared/ProgressBar";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { Button } from "@/components/ui/button";
 import { buildRunSegments, runToBadge } from "@/lib/badge-maps";
 import { formatTimestamp } from "@/lib/date";
 import { formatDuration } from "@/lib/test-case-format";
@@ -8,6 +13,9 @@ import type { RunDetail } from "@/hooks/use-runs";
 
 interface RunSummaryCardProps {
   run: RunDetail | undefined;
+  groups?: CaseGroup[] | undefined;
+  feedback?: Record<string, string> | undefined;
+  onOpenFeedbackModal?: () => void;
 }
 
 
@@ -23,7 +31,17 @@ function coveragePercent(value: unknown): string {
   return "—";
 }
 
-export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement {
+export function RunSummaryCard({
+  run,
+  groups,
+  feedback,
+  onOpenFeedbackModal,
+}: RunSummaryCardProps): React.ReactElement {
+  const failedGroups = useMemo(
+    () => (groups ?? []).filter((g) => g.rollup === "fail" || g.rollup === "aborted"),
+    [groups],
+  );
+
   if (!run) {
     return (
       <section
@@ -195,6 +213,59 @@ export function RunSummaryCard({ run }: RunSummaryCardProps): React.ReactElement
           />
         )}
       </dl>
+
+      {failedGroups.length > 0 && onOpenFeedbackModal ? (
+        <div
+          data-testid="run-feedback-preview-section"
+          className="flex flex-col gap-2.5 border-t border-border pt-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 rounded-full bg-red" />
+              <span className="text-xs font-semibold text-fg-1">Failed Test Review</span>
+              <span className="font-mono text-[11px] text-fg-4">
+                ({failedGroups.filter((g) => Boolean(feedback?.[g.caseId]?.trim())).length} of {failedGroups.length} noted)
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="open-feedback-threads-btn"
+              onClick={onOpenFeedbackModal}
+              className="h-7 text-xs gap-1.5 border-border bg-bg-elev-2/80 hover:bg-bg-elev-3 hover:text-fg-1 text-fg-2"
+            >
+              <MessageSquare className="h-3 w-3 text-accent" />
+              Review Notes & Print ({failedGroups.length})
+            </Button>
+          </div>
+
+          <div className="flex flex-col gap-1.5 font-mono text-[11px]">
+            {failedGroups.slice(0, 2).map((g) => {
+              const note = feedback?.[g.caseId]?.trim();
+              return (
+                <div
+                  key={g.caseId}
+                  className="flex items-baseline justify-between gap-2 rounded bg-bg-elev-2/40 px-2.5 py-1 text-fg-3 border border-border/50"
+                >
+                  <span className="truncate font-sans font-medium text-fg-2">
+                    <span className="font-mono text-fg-4 mr-1.5">{g.casePublicId}:</span>
+                    {g.caseName}
+                  </span>
+                  <span className="truncate max-w-[50%] text-[10.5px] italic text-fg-4">
+                    {note || "(No notes entered yet)"}
+                  </span>
+                </div>
+              );
+            })}
+            {failedGroups.length > 2 ? (
+              <div className="text-[10px] text-fg-5 italic pl-1">
+                + {failedGroups.length - 2} more failed {failedGroups.length - 2 === 1 ? "case" : "cases"} to review
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {run.coverage_summary ? (
         <dl
           className="grid grid-cols-2 gap-3 border-t border-border pt-3 font-mono text-[11px]"

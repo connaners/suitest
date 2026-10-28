@@ -80,15 +80,18 @@ def _login_snippet(discovery: DiscoveryResult) -> str:
     captcha_snippet = ""
     if form.captcha_input:
         c_in_repr = repr(form.captcha_input)
-        desc_repr = repr(f"Solve CAPTCHA for {form.captcha_input}")
+        c_img_repr = repr(form.captcha_image or "#img-captcha")
+        desc_repr = repr(
+            f"Solve CAPTCHA on {form.captcha_image or '#img-captcha'} into {form.captcha_input}"
+        )
         captcha_snippet = f"""
     _begin("action", {desc_repr})
     try:
+        await _bb_solve_captcha(page, image_selector={c_img_repr}, input_selector={c_in_repr})
+    except Exception:
         c_loc = page.locator({c_in_repr})
         if await c_loc.count() > 0:
             await c_loc.fill("CAPTCHA_SOLVE")
-    except Exception:
-        pass
     await _ok(page)"""
     return f'''
 async def _bb_login(page):
@@ -465,7 +468,10 @@ async def _body(page):
                             f"bb:captcha {p.route}",
                             [
                                 ("action", f"Open {p.route}"),
-                                ("action", f"Solve CAPTCHA for {c_in}"),
+                                (
+                                    "action",
+                                    f"Solve CAPTCHA on {getattr(p, 'captcha_image_selector', '') or '#img-captcha'} into {c_in}",
+                                ),
                                 ("assertion", "CAPTCHA input field is populated"),
                             ],
                         ),
@@ -475,12 +481,15 @@ async def _body(page):
     await page.goto(f"{{BASE_URL}}{p.route}", wait_until="domcontentloaded")
     await page.wait_for_timeout(600)
     await _ok(page)
-    _begin("action", {f"Solve CAPTCHA for {c_in}"!r})
-    c_loc = page.locator({c_in!r})
-    await c_loc.fill("TEST_CAPTCHA")
+    _begin("action", {f"Solve CAPTCHA on {getattr(p, 'captcha_image_selector', '') or '#img-captcha'} into {c_in}"!r})
+    try:
+        await _bb_solve_captcha(page, image_selector={getattr(p, "captcha_image_selector", "") or "#img-captcha"!r}, input_selector={c_in!r})
+    except Exception:
+        c_loc = page.locator({c_in!r})
+        await c_loc.fill("TEST_CAPTCHA")
     await _ok(page)
     _begin("assertion", "CAPTCHA input field is populated")
-    val = await c_loc.input_value()
+    val = await page.locator({c_in!r}).input_value()
     assert len(val) > 0, "captcha input remained empty"
     await _ok(page)
 """,

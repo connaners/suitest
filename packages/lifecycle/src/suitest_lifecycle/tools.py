@@ -757,6 +757,222 @@ def set_workspace_variable(
         return _envelope(False, f"failed to save variable: {exc}", errors=[str(exc)])
 
 
+def list_suites(
+    project_id: str = "",
+    config_path: str = "suitest.config.json",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """List test suites in a project."""
+    from suitest_lifecycle.http_client import SuitestClient
+
+    api_url = os.environ.get("SUITEST_API_URL")
+    api_key = os.environ.get("SUITEST_API_KEY")
+    if not api_url or not api_key:
+        return _envelope(False, "SUITEST_API_URL / SUITEST_API_KEY required")
+    try:
+        with SuitestClient(api_url, token=api_key) as client:
+            suites = client.list_suites(project_id=project_id)
+            return _envelope(True, f"retrieved {len(suites)} suite(s)", data={"suites": suites})
+    except Exception as exc:
+        return _envelope(False, f"failed to list suites: {exc}", errors=[str(exc)])
+
+
+def list_test_cases(
+    project_id: str = "",
+    suite_id: str = "",
+    config_path: str = "suitest.config.json",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """List test cases in a project or suite."""
+    from suitest_lifecycle.http_client import SuitestClient
+
+    api_url = os.environ.get("SUITEST_API_URL")
+    api_key = os.environ.get("SUITEST_API_KEY")
+    if not api_url or not api_key:
+        return _envelope(False, "SUITEST_API_URL / SUITEST_API_KEY required")
+    pid = (project_id or "").strip()
+    sid = (suite_id or "").strip()
+    if (not pid and not sid) or (pid and sid):
+        return _envelope(False, "pass exactly one of project_id or suite_id")
+    try:
+        with SuitestClient(api_url, token=api_key) as client:
+            cases = client.list_cases(project_id=pid, suite_id=sid)
+            return _envelope(
+                True, f"retrieved {len(cases)} test case(s)", data={"test_cases": cases}
+            )
+    except Exception as exc:
+        return _envelope(False, f"failed to list test cases: {exc}", errors=[str(exc)])
+
+
+def get_test_case(
+    case_id: str = "",
+    config_path: str = "suitest.config.json",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """Retrieve test case details and steps by ID or public ID."""
+    from suitest_lifecycle.http_client import SuitestClient
+
+    api_url = os.environ.get("SUITEST_API_URL")
+    api_key = os.environ.get("SUITEST_API_KEY")
+    if not api_url or not api_key:
+        return _envelope(False, "SUITEST_API_URL / SUITEST_API_KEY required")
+    cid = (case_id or "").strip()
+    if not cid:
+        return _envelope(False, "case_id is required")
+    try:
+        with SuitestClient(api_url, token=api_key) as client:
+            case_data = client.get_case(cid)
+            return _envelope(True, f"retrieved test case {cid}", data=case_data)
+    except Exception as exc:
+        return _envelope(False, f"failed to get test case: {exc}", errors=[str(exc)])
+
+
+def create_test_case(
+    suite_id: str = "",
+    name: str = "",
+    description: str = "",
+    preconditions: str = "",
+    priority: str = "P2",
+    steps: list[dict[str, Any]] | None = None,
+    tags: list[str] | None = None,
+    output_dir: str = "",
+    config_path: str = "suitest.config.json",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """Create a new test case with steps, maintaining local file mirror and syncing to TCM."""
+    from suitest_lifecycle.http_client import SuitestClient
+
+    api_url = os.environ.get("SUITEST_API_URL")
+    api_key = os.environ.get("SUITEST_API_KEY")
+    if not api_url or not api_key:
+        return _envelope(False, "SUITEST_API_URL / SUITEST_API_KEY required")
+    trimmed_name = (name or "").strip()
+    if not trimmed_name:
+        return _envelope(False, "name is required")
+    if not suite_id:
+        return _envelope(False, "suite_id is required")
+
+    case_steps = steps or []
+    out_dir_path = Path(output_dir or "suitest-output/frontend").resolve()
+    created_file: Path | None = None
+    try:
+        out_dir_path.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-zA-Z0-9_]+", "_", trimmed_name.lower()).strip("_")
+        created_file = out_dir_path / f"TC_{slug}.py"
+        step_body_lines: list[str] = []
+        for idx, s in enumerate(case_steps, start=1):
+            act = s.get("action", f"Step {idx}")
+            cd = s.get("code") or "{}"
+            step_body_lines.append(f'    _begin("action", {act!r})')
+            try:
+                parsed_c = json.loads(cd) if isinstance(cd, str) else cd
+                t = parsed_c.get("tool")
+                args = parsed_c.get("arguments", {})
+                if t in ("browser_navigate", "browser.navigate"):
+                    nav_url = args.get("url", "")
+                    step_body_lines.append(
+                        f'    await page.goto({nav_url!r}, wait_until="domcontentloaded")'
+                    )
+                elif t in ("browser_type", "browser.type"):
+                    tgt = args.get("target") or args.get("selector") or ""
+                    txt = args.get("text", "")
+                    step_body_lines.append(f"    await page.locator({tgt!r}).fill({txt!r})")
+                elif t in ("browser_click", "browser.click"):
+                    tgt = args.get("target") or args.get("selector") or ""
+                    step_body_lines.append(f"    await page.locator({tgt!r}).click()")
+                elif t in ("browser_solve_captcha", "browser.solve_captcha"):
+                    img_s = args.get("image_selector", "#img-captcha")
+                    inp_s = args.get("input_selector", "#captcha")
+                    step_body_lines.append(
+                        f"    await _bb_solve_captcha(page, image_selector={img_s!r}, input_selector={inp_s!r})"
+                    )
+            except (json.JSONDecodeError, TypeError, KeyError) as parse_err:
+                logger.debug("create_test_case.step_code_parse_failed: %s", parse_err)
+            step_body_lines.append("    await _ok(page)")
+        helper_defs = (
+            "def _begin(step_type, description):\n"
+            "    pass\n\n"
+            "async def _ok(page):\n"
+            "    pass\n\n"
+            "async def _bb_solve_captcha(page, image_selector='#img-captcha', input_selector='#captcha'):\n"
+            "    pass\n\n"
+        )
+        py_content = (
+            f"# {trimmed_name}\n"
+            f"# Description: {description or 'None'}\n"
+            "import os, pytest\n"
+            "from playwright.async_api import async_playwright, expect\n\n"
+            + helper_defs
+            + "async def _body(page):\n"
+            + ("\n".join(step_body_lines) if step_body_lines else "    pass\n")
+        )
+        created_file.write_text(py_content, encoding="utf-8")
+    except Exception as exc:
+        logger.debug("create_test_case.file_write_failed: %s", exc)
+
+    try:
+        with SuitestClient(api_url, token=api_key) as client:
+            formatted_steps = []
+            for idx, s in enumerate(case_steps):
+                cd = s.get("code")
+                formatted_steps.append(
+                    {
+                        "action": s.get("action", f"Step {idx + 1}"),
+                        "expected": s.get("expected", ""),
+                        "code": json.dumps(cd) if isinstance(cd, dict) else (cd or "{}"),
+                        "mcp_provider": s.get("mcp_provider")
+                        or s.get("mcpProvider")
+                        or "playwright-mcp",
+                        "target_kind": s.get("target_kind") or s.get("targetKind") or "FE_WEB",
+                        "order": s.get("order", idx),
+                    }
+                )
+            payload: dict[str, Any] = {
+                "suiteId": suite_id,
+                "name": trimmed_name,
+                "description": description or None,
+                "preconditions": preconditions or None,
+                "priority": priority.upper() if priority else "P2",
+                "steps": formatted_steps,
+                "tags": tags or [],
+            }
+            res = client.create_case(payload)
+            public_id = res.get("public_id") or res.get("publicId") or res.get("id") or "TC"
+            artifacts = [str(created_file)] if created_file and created_file.exists() else []
+            return _envelope(
+                True,
+                f"created test case {public_id}: '{trimmed_name}' ({len(formatted_steps)} steps)",
+                data=res,
+                artifacts=artifacts,
+            )
+    except Exception as exc:
+        return _envelope(False, f"failed to create test case: {exc}", errors=[str(exc)])
+
+
+def run_test_case(
+    case_id: str = "",
+    config_path: str = "suitest.config.json",
+    **kwargs: Any,
+) -> dict[str, object]:
+    """Trigger an immediate ad-hoc test run for a test case."""
+    from suitest_lifecycle.http_client import SuitestClient
+
+    api_url = os.environ.get("SUITEST_API_URL")
+    api_key = os.environ.get("SUITEST_API_KEY")
+    if not api_url or not api_key:
+        return _envelope(False, "SUITEST_API_URL / SUITEST_API_KEY required")
+    cid = (case_id or "").strip()
+    if not cid:
+        return _envelope(False, "case_id is required")
+    try:
+        with SuitestClient(api_url, token=api_key) as client:
+            res = client.run_case(cid)
+            run_public_id = res.get("publicId") or res.get("id") or "R"
+            return _envelope(True, f"triggered run {run_public_id} for case {cid}", data=res)
+    except Exception as exc:
+        return _envelope(False, f"failed to run test case: {exc}", errors=[str(exc)])
+
+
 # Tool registry (name -> callable) used by the MCP server.
 TOOLS = {
     "analyze_project": analyze_project,
@@ -775,6 +991,11 @@ TOOLS = {
     "manage_test_case_dataset": manage_test_case_dataset,
     "get_workspace_variables": get_workspace_variables,
     "set_workspace_variable": set_workspace_variable,
+    "list_suites": list_suites,
+    "list_test_cases": list_test_cases,
+    "get_test_case": get_test_case,
+    "create_test_case": create_test_case,
+    "run_test_case": run_test_case,
     **BLACKBOX_TOOLS,
 }
 
@@ -786,6 +1007,11 @@ KWARG_TOOLS = frozenset(
         "manage_test_case_dataset",
         "get_workspace_variables",
         "set_workspace_variable",
+        "list_suites",
+        "list_test_cases",
+        "get_test_case",
+        "create_test_case",
+        "run_test_case",
     }
 )
 

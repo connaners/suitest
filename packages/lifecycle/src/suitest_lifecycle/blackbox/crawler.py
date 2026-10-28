@@ -143,13 +143,13 @@ _EXTRACT_JS = r"""
       });
       if (!cInput) return null;
       let inSel = cInput.id ? `#${cInput.id}` : (cInput.name ? `input[name="${cInput.name}"]` : 'input[type="text"]');
-      if (frameSel) inSel = `${frameSel} >> ${inSel}`;
+      if (frameSel) inSel = `${frameSel} >>> ${inSel}`;
       const container = cInput.closest('form') || cInput.parentElement?.parentElement || doc.body;
       let imgSel = '';
       const cImg = container ? container.querySelector('img[src*="captcha" i], img#img-captcha, img#captcha, canvas#captcha, img[alt*="captcha" i], canvas') : null;
       if (cImg) {
         imgSel = cImg.id ? `#${cImg.id}` : (cImg.tagName === 'CANVAS' ? 'canvas' : (cImg.getAttribute('src') && cImg.getAttribute('src').toLowerCase().includes('captcha') ? 'img[src*="captcha" i]' : 'img'));
-        if (frameSel) imgSel = `${frameSel} >> ${imgSel}`;
+        if (frameSel) imgSel = `${frameSel} >>> ${imgSel}`;
       }
       return { hasCaptcha: true, inputSelector: inSel, imageSelector: imgSel, refreshTarget: imgSel };
     } catch {
@@ -376,6 +376,11 @@ async def _discover(cfg: BlackboxUiConfig, evidence_dir: Path) -> DiscoveryResul
             try:
                 await _eval_locator(page, form.username).fill(cfg.auth.username)
                 await _eval_locator(page, form.password).fill(cfg.auth.password)
+                if form.captcha_input:
+                    with contextlib.suppress(Exception):
+                        c_loc = page.locator(form.captcha_input)
+                        if await c_loc.count() > 0:
+                            await c_loc.fill("CAPTCHA_SOLVE")
                 await _eval_locator(page, form.submit).click()
                 with contextlib.suppress(Exception):
                     await page.wait_for_url(
@@ -499,7 +504,19 @@ async def _analyze_one(cfg: BlackboxUiConfig, url: str, evidence_dir: Path) -> P
     network_errors: list[str] = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=not cfg.headed)
-        page = await (await browser.new_context(viewport={"width": 1280, "height": 720})).new_page()
+        state_file = evidence_dir / "storage_state.json"
+        if not state_file.is_file():
+            alt_state = evidence_dir / "blackbox" / "storage_state.json"
+            if alt_state.is_file():
+                state_file = alt_state
+        state_arg = (
+            str(state_file) if state_file.is_file() and state_file.stat().st_size > 0 else None
+        )
+        ctx = await browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            storage_state=state_arg,
+        )
+        page = await ctx.new_page()
         page.on(
             "console",
             lambda m: console_errors.append(m.text[:300]) if m.type == "error" else None,

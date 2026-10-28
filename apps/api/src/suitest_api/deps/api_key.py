@@ -17,6 +17,7 @@ revoked/expired key resolves to nothing (401). Keys act with the least-privilege
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -112,7 +113,7 @@ async def tenant_via_api_key_or_session(
             )
         return TenantContext(
             workspace_id=principal.workspace_id,
-            user_id=principal.user_id or principal.key_id,
+            user_id=str(principal.user_id or principal.key_id),
             role=Role.QA,
         )
 
@@ -140,3 +141,23 @@ async def tenant_via_api_key_or_session(
             detail="user is not a member of the requested workspace",
         )
     return TenantContext(workspace_id=workspace_id, user_id=str(user.id), role=membership.role)
+
+
+def require_api_key_or_role(
+    allowed: set[Role] | frozenset[Role], message: str | None = None
+) -> Callable[[TenantContext], TenantContext]:
+    """Enforce role permissions for callers authenticated via either API key or session."""
+    frozen_allowed = frozenset(allowed)
+
+    def _checker(
+        ctx: TenantContext = Depends(tenant_via_api_key_or_session),
+    ) -> TenantContext:
+        if ctx.role not in frozen_allowed:
+            detail = message or f"role '{ctx.role.value}' is not permitted on this endpoint"
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=detail,
+            )
+        return ctx
+
+    return _checker

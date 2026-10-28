@@ -356,3 +356,26 @@ def test_build_default_dataset_from_steps() -> None:
     assert step_2_code["arguments"]["text"] == "{{username}}"
     step_3_code = json.loads(param_steps[2]["code"])  # type: ignore[arg-type]
     assert step_3_code["arguments"]["text"] == "{{password}}"
+
+
+def test_captcha_extraction_with_dynamic_image_selector() -> None:
+    from suitest_lifecycle.blackbox.mcp import extract_steps_from_automation_code
+
+    code_with_captcha = """
+async def _body(page):
+    _begin("action", "Solve CAPTCHA on img#my-custom-captcha into input#security-code")
+    try:
+        await _bb_solve_captcha(page, image_selector="img#my-custom-captcha", input_selector="input#security-code")
+    except Exception:
+        pass
+    await _ok(page)
+"""
+    steps = extract_steps_from_automation_code(code_with_captcha)
+    assert len(steps) == 1
+    step = steps[0]
+    assert step["action"] == "Solve CAPTCHA on img#my-custom-captcha into input#security-code"
+    parsed = json.loads(step["code"])
+    assert parsed["tool"] == "browser_solve_captcha"
+    assert parsed["arguments"]["image_selector"] == "img#my-custom-captcha"
+    assert parsed["arguments"]["input_selector"] == "input#security-code"
+    assert parsed["arguments"]["selector"] == "img#my-custom-captcha"
