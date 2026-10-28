@@ -3,8 +3,11 @@ import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  AuthBackToLogin,
   AuthContainer,
+  AuthErrorAlert,
   AuthFooter,
+  AuthForm,
   AuthHeader,
   AuthSubmitButton,
 } from "@/components/shared/AuthLayout";
@@ -75,12 +78,7 @@ export function ForgotPassword(): React.ReactElement {
           </Link>
         </div>
       ) : (
-        <form
-          onSubmit={(event) => {
-            void onSubmit(event);
-          }}
-          className="space-y-4 rounded-lg border border-border bg-elev-1 p-5 text-left"
-        >
+        <AuthForm onSubmit={onSubmit}>
           <div className="space-y-2">
             <label htmlFor="email" className="text-[12.5px] font-medium text-fg-1">
               Email
@@ -98,14 +96,7 @@ export function ForgotPassword(): React.ReactElement {
             />
           </div>
 
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-md border border-red/30 bg-red/10 px-3 py-2 text-[12.5px] text-red"
-            >
-              {error}
-            </p>
-          ) : null}
+          <AuthErrorAlert error={error} />
 
           <AuthSubmitButton
             submitting={submitting}
@@ -113,15 +104,8 @@ export function ForgotPassword(): React.ReactElement {
             loadingLabel={t("auth.sendingResetLink", "Sending…")}
           />
 
-          <div className="pt-2 text-center">
-            <Link
-              to="/login"
-              className="text-[12.5px] text-fg-3 hover:text-accent transition-colors"
-            >
-              {t("auth.backToLogin", "Back to sign in")}
-            </Link>
-          </div>
-        </form>
+          <AuthBackToLogin label={t("auth.backToLogin", "Back to sign in")} />
+        </AuthForm>
       )}
 
       <AuthFooter />

@@ -3,9 +3,13 @@ import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  AuthBackToLogin,
   AuthContainer,
+  AuthErrorAlert,
   AuthFooter,
+  AuthForm,
   AuthHeader,
+  AuthPasswordInput,
   AuthSubmitButton,
 } from "@/components/shared/AuthLayout";
 
@@ -120,54 +124,24 @@ export function ResetPassword(): React.ReactElement {
           </Link>
         </div>
       ) : (
-        <form
-          onSubmit={(event) => {
-            void onSubmit(event);
-          }}
-          className="space-y-4 rounded-lg border border-border bg-elev-1 p-5 text-left"
-        >
-          <div className="space-y-2">
-            <label htmlFor="new-password" className="text-[12.5px] font-medium text-fg-1">
-              {t("auth.newPasswordLabel", "New password")}
-            </label>
-            <input
-              id="new-password"
-              name="newPassword"
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-              minLength={8}
-              className="w-full rounded-md border border-border bg-bg-base px-3 py-2 text-[13px] text-fg-1 outline-none placeholder:text-fg-5 focus:border-accent"
-            />
-          </div>
+        <AuthForm onSubmit={onSubmit}>
+          <AuthPasswordInput
+            id="new-password"
+            name="newPassword"
+            label={t("auth.newPasswordLabel", "New password")}
+            value={password}
+            onChange={setPassword}
+          />
 
-          <div className="space-y-2">
-            <label htmlFor="confirm-password" className="text-[12.5px] font-medium text-fg-1">
-              {t("auth.confirmPasswordLabel", "Confirm new password")}
-            </label>
-            <input
-              id="confirm-password"
-              name="confirmPassword"
-              type="password"
-              autoComplete="new-password"
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-              required
-              minLength={8}
-              className="w-full rounded-md border border-border bg-bg-base px-3 py-2 text-[13px] text-fg-1 outline-none placeholder:text-fg-5 focus:border-accent"
-            />
-          </div>
+          <AuthPasswordInput
+            id="confirm-password"
+            name="confirmPassword"
+            label={t("auth.confirmPasswordLabel", "Confirm new password")}
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+          />
 
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-md border border-red/30 bg-red/10 px-3 py-2 text-[12.5px] text-red"
-            >
-              {error}
-            </p>
-          ) : null}
+          <AuthErrorAlert error={error} />
 
           <AuthSubmitButton
             submitting={submitting}
@@ -175,15 +149,8 @@ export function ResetPassword(): React.ReactElement {
             loadingLabel={t("auth.resettingPassword", "Resetting…")}
           />
 
-          <div className="pt-2 text-center">
-            <Link
-              to="/login"
-              className="text-[12.5px] text-fg-3 hover:text-accent transition-colors"
-            >
-              {t("auth.backToLogin", "Back to sign in")}
-            </Link>
-          </div>
-        </form>
+          <AuthBackToLogin label={t("auth.backToLogin", "Back to sign in")} />
+        </AuthForm>
       )}
 
       <AuthFooter />

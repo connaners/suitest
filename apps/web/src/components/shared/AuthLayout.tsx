@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import type React from "react";
 
 export function AuthContainer({ children }: { children: React.ReactNode }): React.ReactElement {
@@ -13,6 +14,37 @@ export function AuthHeader({ subtitle }: { subtitle?: React.ReactNode }): React.
       </h2>
       {subtitle ? <p className="text-[13px] text-fg-3">{subtitle}</p> : null}
     </div>
+  );
+}
+
+export function AuthForm({
+  onSubmit,
+  children,
+}: {
+  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void | Promise<void>;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <form
+      onSubmit={(e) => {
+        void onSubmit(e);
+      }}
+      className="space-y-4 rounded-lg border border-border bg-elev-1 p-5 text-left"
+    >
+      {children}
+    </form>
+  );
+}
+
+export function AuthErrorAlert({ error }: { error: string | null }): React.ReactElement | null {
+  if (!error) return null;
+  return (
+    <p
+      role="alert"
+      className="rounded-md border border-red/30 bg-red/10 px-3 py-2 text-[12.5px] text-red"
+    >
+      {error}
+    </p>
   );
 }
 
@@ -33,6 +65,58 @@ export function AuthSubmitButton({
     >
       {submitting ? loadingLabel : label}
     </button>
+  );
+}
+
+export function AuthPasswordInput({
+  id,
+  name,
+  label,
+  value,
+  onChange,
+  autoComplete = "new-password",
+  required = true,
+  minLength = 8,
+}: {
+  id: string;
+  name: string;
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  autoComplete?: string;
+  required?: boolean;
+  minLength?: number;
+}): React.ReactElement {
+  return (
+    <div className="space-y-2">
+      <label htmlFor={id} className="text-[12.5px] font-medium text-fg-1">
+        {label}
+      </label>
+      <input
+        id={id}
+        name={name}
+        type="password"
+        autoComplete={autoComplete}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        required={required}
+        minLength={minLength}
+        className="w-full rounded-md border border-border bg-bg-base px-3 py-2 text-[13px] text-fg-1 outline-none placeholder:text-fg-5 focus:border-accent"
+      />
+    </div>
+  );
+}
+
+export function AuthBackToLogin({ label }: { label?: string }): React.ReactElement {
+  return (
+    <div className="pt-2 text-center">
+      <Link
+        to="/login"
+        className="text-[12.5px] text-fg-3 hover:text-accent transition-colors"
+      >
+        {label ?? "Back to sign in"}
+      </Link>
+    </div>
   );
 }
 

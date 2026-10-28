@@ -1,10 +1,21 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  AuthBackToLogin,
   AuthContainer,
+  AuthErrorAlert,
   AuthFooter,
   AuthHeader,
+  AuthPasswordInput,
   AuthSubmitButton,
 } from "@/components/shared/AuthLayout";
 
@@ -28,6 +39,31 @@ describe("AuthLayout components", () => {
     expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled();
   });
 
+  it("renders AuthPasswordInput with label and triggers onChange", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <AuthPasswordInput
+        id="test-pass"
+        name="testPass"
+        label="Password Label"
+        value=""
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getByLabelText("Password Label")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Password Label"), "a");
+    expect(onChange).toHaveBeenCalledWith("a");
+  });
+
+  it("renders AuthErrorAlert when error exists, null otherwise", () => {
+    const { rerender } = render(<AuthErrorAlert error="Sample error" />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Sample error");
+
+    rerender(<AuthErrorAlert error={null} />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("renders AuthFooter with copyright text", () => {
     render(<AuthFooter />);
     expect(screen.getByText(/© 2026 Suitest contributors/i)).toBeInTheDocument();
@@ -40,5 +76,28 @@ describe("AuthLayout components", () => {
       </AuthContainer>,
     );
     expect(screen.getByTestId("child-content")).toBeInTheDocument();
+  });
+
+  it("renders AuthBackToLogin with Link", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const rootRoute = createRootRoute({
+      component: () => <AuthBackToLogin label="Back to sign in" />,
+    });
+    const router = createRouter({
+      routeTree: rootRoute,
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+      context: { queryClient },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("link", { name: "Back to sign in" })).toHaveAttribute(
+      "href",
+      "/login",
+    );
   });
 });
