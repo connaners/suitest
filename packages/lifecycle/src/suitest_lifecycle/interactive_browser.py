@@ -21,10 +21,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from suitest_shared.ocr import (
-    build_tiny_ocr_element_eval_script,
-    classify_ocr_output,
-)
+try:
+    from suitest_shared.ocr import (
+        build_tiny_ocr_element_eval_script,
+        classify_ocr_output,
+    )
+except ImportError:
+    build_tiny_ocr_element_eval_script = None  # type: ignore[assignment]
+    classify_ocr_output = None  # type: ignore[assignment]
 
 from suitest_lifecycle.tool_result import envelope as _envelope
 
@@ -539,6 +543,8 @@ def suitest_browser_solve_captcha(
                 img_loc = img_loc.first
             img_loc.wait_for(state="visible", timeout=8000)
 
+            if build_tiny_ocr_element_eval_script is None:
+                raise RuntimeError("suitest_shared.ocr not available in standalone stdlib mode")
             eval_script = build_tiny_ocr_element_eval_script()
             res = img_loc.evaluate(eval_script)
 
