@@ -879,6 +879,34 @@ def _resolve_suite_and_project(
     return p_id, s_id
 
 
+def _prune_redundant_step_toggles(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prune immediate back-to-back clicks on identical targets that cause toggle re-collapse."""
+    cleaned: list[dict[str, Any]] = []
+    prev_tool = ""
+    prev_target = ""
+
+    for s in steps:
+        cd = s.get("code")
+        parsed = json.loads(cd) if isinstance(cd, str) else (cd or {})
+        t = parsed.get("tool")
+        target = str((parsed.get("arguments") or {}).get("target") or "")
+
+        if (
+            t in ("browser_click", "browser.click")
+            and prev_tool in ("browser_click", "browser.click")
+            and target
+            and target == prev_target
+        ):
+            # Skip consecutive duplicate click that re-collapses state
+            continue
+
+        cleaned.append(s)
+        prev_tool = t or ""
+        prev_target = target
+
+    return cleaned
+
+
 def create_test_case(
     suite_id: str = "",
     name: str = "",
@@ -905,7 +933,7 @@ def create_test_case(
     project_id = str(kwargs.get("project_id") or "")
     resolved_suite_id = (suite_id or "").strip()
 
-    case_steps = steps or []
+    case_steps = _prune_redundant_step_toggles(steps or [])
     out_dir_path = Path(output_dir or "suitest-output/frontend").resolve()
     created_file: Path | None = None
     try:
