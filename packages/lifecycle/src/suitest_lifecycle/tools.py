@@ -843,81 +843,6 @@ def get_test_case(
         return _envelope(False, f"failed to get test case: {exc}", errors=[str(exc)])
 
 
-def _resolve_suite_and_project(
-    client: Any,
-    project_id: str = "",
-    suite_id: str = "",
-    target_url: str = "",
-) -> tuple[str, str]:
-    """Resolve or auto-create project_id and suite_id if missing, guarding against empty query params."""
-    p_id = project_id.strip()
-    s_id = suite_id.strip()
-
-    if not p_id:
-        host = (target_url or "general-web").split("//")[-1].split("/")[0].removeprefix("www.")
-        slug = re.sub(r"[^a-z0-9]+", "-", host.lower()).strip("-")[:64] or "general-web"
-        proj = client.resolve_project(project_slug=slug, project_name=host or "General Web")
-        p_id = str(proj.get("id") or "")
-
-    if not p_id:
-        return "", ""
-
-    if not s_id:
-        existing_suites = client.list_suites(project_id=p_id)
-        if existing_suites and isinstance(existing_suites, list):
-            s_id = str(existing_suites[0].get("id") or "")
-        else:
-            if hasattr(client, "create_suite"):
-                new_suite = client.create_suite(project_id=p_id, name="General Discovered Suite")
-            else:
-                new_suite = client.post(
-                    "/api/v1/suites",
-                    json_body={"projectId": p_id, "name": "General Discovered Suite"},
-                )
-            s_id = str(new_suite.get("id") or "") if isinstance(new_suite, dict) else ""
-
-    return p_id, s_id
-
-
-def _prune_redundant_step_toggles(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Prune immediate back-to-back clicks on identical targets that cause toggle re-collapse."""
-    cleaned: list[dict[str, Any]] = []
-    prev_tool = ""
-    prev_target = ""
-
-    for s in steps:
-        cd = s.get("code")
-        parsed: dict[str, Any] = {}
-        if isinstance(cd, dict):
-            parsed = cd
-        elif isinstance(cd, str) and cd.strip():
-            try:
-                loaded = json.loads(cd)
-                if isinstance(loaded, dict):
-                    parsed = loaded
-            except Exception:
-                parsed = {}
-
-        t = str(parsed.get("tool") or "")
-        args = parsed.get("arguments")
-        args_dict = args if isinstance(args, dict) else {}
-        target = str(args_dict.get("target") or args_dict.get("selector") or "")
-        if (
-            t in ("browser_click", "browser.click")
-            and prev_tool in ("browser_click", "browser.click")
-            and target
-            and target == prev_target
-        ):
-            # Skip consecutive duplicate click that re-collapses state
-            continue
-
-        cleaned.append(s)
-        prev_tool = t or ""
-        prev_target = target
-
-    return cleaned
-
-
 def create_test_case(
     suite_id: str = "",
     name: str = "",
@@ -940,11 +865,10 @@ def create_test_case(
     trimmed_name = (name or "").strip()
     if not trimmed_name:
         return _envelope(False, "name is required")
-    target_url = str(kwargs.get("target_url") or "")
-    project_id = str(kwargs.get("project_id") or "")
-    resolved_suite_id = (suite_id or "").strip()
+    if not suite_id:
+        return _envelope(False, "suite_id is required")
 
-    case_steps = _prune_redundant_step_toggles(steps or [])
+    case_steps = steps or []
     out_dir_path = Path(output_dir or "suitest-output/frontend").resolve()
     created_file: Path | None = None
     try:
@@ -1031,12 +955,6 @@ def create_test_case(
 
     try:
         with SuitestClient(api_url, token=api_key) as client:
-            if not resolved_suite_id:
-                _, resolved_suite_id = _resolve_suite_and_project(
-                    client, project_id=project_id, suite_id="", target_url=target_url
-                )
-                if not resolved_suite_id:
-                    return _envelope(False, "unable to resolve or create suite_id")
             formatted_steps = []
             for idx, s in enumerate(case_steps):
                 cd = s.get("code")
@@ -1076,7 +994,7 @@ def create_test_case(
                     }
                 )
             payload: dict[str, Any] = {
-                "suiteId": resolved_suite_id,
+                "suiteId": suite_id,
                 "name": trimmed_name,
                 "description": description or None,
                 "preconditions": preconditions or None,
