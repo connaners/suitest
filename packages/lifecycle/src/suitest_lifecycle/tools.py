@@ -843,6 +843,42 @@ def get_test_case(
         return _envelope(False, f"failed to get test case: {exc}", errors=[str(exc)])
 
 
+def _resolve_suite_and_project(
+    client: Any,
+    project_id: str = "",
+    suite_id: str = "",
+    target_url: str = "",
+) -> tuple[str, str]:
+    """Resolve or auto-create project_id and suite_id if missing, guarding against empty query params."""
+    p_id = project_id.strip()
+    s_id = suite_id.strip()
+
+    if not p_id:
+        host = (target_url or "general-web").split("//")[-1].split("/")[0].removeprefix("www.")
+        slug = re.sub(r"[^a-z0-9]+", "-", host.lower()).strip("-")[:64] or "general-web"
+        proj = client.resolve_project(project_slug=slug, project_name=host or "General Web")
+        p_id = str(proj.get("id") or "")
+
+    if not p_id:
+        return "", ""
+
+    if not s_id:
+        existing_suites = client.list_suites(project_id=p_id)
+        if existing_suites and isinstance(existing_suites, list):
+            s_id = str(existing_suites[0].get("id") or "")
+        else:
+            if hasattr(client, "create_suite"):
+                new_suite = client.create_suite(project_id=p_id, name="General Discovered Suite")
+            else:
+                new_suite = client.post(
+                    "/api/v1/suites",
+                    json_body={"projectId": p_id, "name": "General Discovered Suite"},
+                )
+            s_id = str(new_suite.get("id") or "") if isinstance(new_suite, dict) else ""
+
+    return p_id, s_id
+
+
 def create_test_case(
     suite_id: str = "",
     name: str = "",
