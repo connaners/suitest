@@ -363,9 +363,19 @@ def suitest_browser_open(
     headless: bool = True,
     viewport: dict[str, int] | None = None,
     storage_state_path: str = "",
+    require_auth: bool = False,
+    credentials: dict[str, str] | None = None,
     **_: Any,
 ) -> dict[str, Any]:
-    """Open a new stateful interactive browser session."""
+    """Open a new stateful interactive browser session with pre-flight auth check."""
+    if require_auth and not credentials and not storage_state_path:
+        return {
+            "success": False,
+            "status": "NEEDS_CLARIFICATION",
+            "summary": "Target authentication credentials required before opening browser session. Provide credentials or storage_state_path to avoid Inactivity TTL Reaper expiration.",
+            "data": {"pending_fields": ["username", "password"]},
+            "errors": ["missing_credentials"],
+        }
     try:
         session_id = _GLOBAL_MANAGER.open_session(
             headless=headless,
