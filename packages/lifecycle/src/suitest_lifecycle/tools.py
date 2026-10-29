@@ -887,10 +887,21 @@ def _prune_redundant_step_toggles(steps: list[dict[str, Any]]) -> list[dict[str,
 
     for s in steps:
         cd = s.get("code")
-        parsed = json.loads(cd) if isinstance(cd, str) else (cd or {})
-        t = parsed.get("tool")
-        target = str((parsed.get("arguments") or {}).get("target") or "")
+        parsed: dict[str, Any] = {}
+        if isinstance(cd, dict):
+            parsed = cd
+        elif isinstance(cd, str) and cd.strip():
+            try:
+                loaded = json.loads(cd)
+                if isinstance(loaded, dict):
+                    parsed = loaded
+            except Exception:
+                parsed = {}
 
+        t = str(parsed.get("tool") or "")
+        args = parsed.get("arguments")
+        args_dict = args if isinstance(args, dict) else {}
+        target = str(args_dict.get("target") or args_dict.get("selector") or "")
         if (
             t in ("browser_click", "browser.click")
             and prev_tool in ("browser_click", "browser.click")
