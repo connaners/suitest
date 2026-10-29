@@ -67,9 +67,7 @@ def check_diff_leaks() -> list[str]:
     ]
 
     home_pattern = (
-        re.compile(r"^\+[ ]*.*(" + "|".join(patterns) + ")", re.MULTILINE)
-        if patterns
-        else None
+        re.compile(r"^\+[ ]*.*(" + "|".join(patterns) + ")", re.MULTILINE) if patterns else None
     )
 
     if home_pattern and home_pattern.search(diff_all):
@@ -88,6 +86,47 @@ def check_diff_leaks() -> list[str]:
                 )
                 break
 
+    return errors
+
+
+def check_core_domain_and_vendor_leaks(staged_files: list[str]) -> list[str]:
+    errors: list[str] = []
+    core_prefixes = ("apps/runner/src/", "packages/")
+    relevant_files = [
+        f
+        for f in staged_files
+        if any(f.startswith(p) for p in core_prefixes)
+        and not any(part in f for part in ("/tests/", "/test_", "fixtures/"))
+    ]
+    if not relevant_files:
+        return errors
+
+    file_args = " ".join(f"'{f}'" for f in relevant_files)
+    _, diff_out = run_cmd(f"git diff --cached -- {file_args}")
+    if not diff_out:
+        return errors
+
+    blocked_patterns = [
+        (
+            re.compile(r"https?://[a-zA-Z0-9.-]+\.go\.id", re.I),
+            "Government / internal client domain (*.go.id)",
+        ),
+        (re.compile(r"dev\.iboss\.go\.id", re.I), "Target staging domain (dev.iboss.go.id)"),
+        (re.compile(r"\bPassDocMulti\b"), "Proprietary vendor function (PassDocMulti)"),
+        (re.compile(r"\bSYR[0-9]{8}[A-Z0-9]+\b"), "Client requirement identifier token (SYR...)"),
+    ]
+
+    for line in diff_out.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            added = line[1:].strip()
+            for pattern, desc in blocked_patterns:
+                if pattern.search(added):
+                    errors.append(
+                        f"❌ [ANTI-LEAK] Detected {desc} in core source diff:\n"
+                        f"   Line: '{added[:100]}'\n"
+                        f"   -> Remedy: Remove client/vendor artifacts from core packages. Move to test fixtures or suitest.config.json."
+                    )
+                    break
     return errors
 
 
@@ -147,6 +186,48 @@ def check_forgeguard_relaxation(staged_files: list[str]) -> list[str]:
 
 
 def main():
+    if "--ci" in sys.argv:
+        # CI mode: inspect git diff against base branch (main/HEAD~1)
+        code_base, _ = run_cmd("git rev-parse --verify origin/main")
+        base_ref = "origin/main" if code_base == 0 else "HEAD~1"
+        _, ci_diff = run_cmd(
+            f"git diff {base_ref}...HEAD -- 'apps/runner/src/*' 'packages/*' ':!*/tests/*' ':!*/fixtures/*'"
+        )
+        ci_blocked = [
+            (
+                re.compile(r"https?://[a-zA-Z0-9.-]+\.go\.id", re.I),
+                "Government / internal client domain (*.go.id)",
+            ),
+            (re.compile(r"dev\.iboss\.go\.id", re.I), "Target staging domain (dev.iboss.go.id)"),
+            (re.compile(r"\bPassDocMulti\b"), "Proprietary vendor function (PassDocMulti)"),
+            (
+                re.compile(r"\bSYR[0-9]{8}[A-Z0-9]+\b"),
+                "Client requirement identifier token (SYR...)",
+            ),
+        ]
+        errors = []
+        for line in ci_diff.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                added = line[1:].strip()
+                for pattern, desc in ci_blocked:
+                    if pattern.search(added):
+                        errors.append(
+                            f"❌ [CI-ANTI-LEAK] Detected {desc} in PR diff:\n"
+                            f"   Line: '{added[:100]}'\n"
+                            f"   -> Remedy: Remove client/vendor artifacts from core packages."
+                        )
+                        break
+        if errors:
+            print("\n==================================================")
+            print("🛑  [CI Policy Guard] Forbidden Artifacts Detected")
+            print("==================================================")
+            for e in errors:
+                print(e)
+            print("==================================================\n")
+            sys.exit(1)
+        print("✅ [CI Policy Guard] Anti-leak scan passed cleanly.")
+        sys.exit(0)
+
     code, out = run_cmd("git diff --cached --name-only")
     if code != 0 or not out:
         sys.exit(0)
@@ -158,6 +239,7 @@ def main():
     errors = (
         check_forbidden_files(staged_files)
         + check_diff_leaks()
+        + check_core_domain_and_vendor_leaks(staged_files)
         + check_port_tampering(staged_files)
         + check_forgeguard_relaxation(staged_files)
     )

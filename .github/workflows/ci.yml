@@ -114,6 +114,9 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check apps packages
 
+      - name: Anti-leak policy scan (sensitive domains & vendor tokens)
+        run: python3 scripts/git-hooks/pre_commit_guard.py --ci
+
       - name: Mypy
         # Type-check each package/app in a separate invocation. Tests use
         # pytest's `--import-mode=importlib`, so per-package `conftest.py`
