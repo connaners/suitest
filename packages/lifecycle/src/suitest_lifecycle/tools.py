@@ -901,8 +901,9 @@ def create_test_case(
     trimmed_name = (name or "").strip()
     if not trimmed_name:
         return _envelope(False, "name is required")
-    if not suite_id:
-        return _envelope(False, "suite_id is required")
+    target_url = str(kwargs.get("target_url") or "")
+    project_id = str(kwargs.get("project_id") or "")
+    resolved_suite_id = (suite_id or "").strip()
 
     case_steps = steps or []
     out_dir_path = Path(output_dir or "suitest-output/frontend").resolve()
@@ -991,6 +992,12 @@ def create_test_case(
 
     try:
         with SuitestClient(api_url, token=api_key) as client:
+            if not resolved_suite_id:
+                _, resolved_suite_id = _resolve_suite_and_project(
+                    client, project_id=project_id, suite_id="", target_url=target_url
+                )
+                if not resolved_suite_id:
+                    return _envelope(False, "unable to resolve or create suite_id")
             formatted_steps = []
             for idx, s in enumerate(case_steps):
                 cd = s.get("code")
@@ -1030,7 +1037,7 @@ def create_test_case(
                     }
                 )
             payload: dict[str, Any] = {
-                "suiteId": suite_id,
+                "suiteId": resolved_suite_id,
                 "name": trimmed_name,
                 "description": description or None,
                 "preconditions": preconditions or None,

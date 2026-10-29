@@ -313,8 +313,16 @@ _SET_VAR_SCHEMA: dict[str, object] = {
 _CREATE_CASE_SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": {
-        "suite_id": {"type": "string", "description": "Target suite ID in TCM (required)"},
+        "suite_id": {
+            "type": "string",
+            "description": "Target suite ID in TCM (optional; auto-resolved if omitted)",
+        },
         "name": {"type": "string", "description": "Test case title / name (required)"},
+        "project_id": {"type": "string", "description": "Optional target project ID in TCM"},
+        "target_url": {
+            "type": "string",
+            "description": "Optional target URL to derive project/suite",
+        },
         "description": {"type": "string", "description": "Optional human description"},
         "preconditions": {
             "type": "string",
@@ -333,7 +341,7 @@ _CREATE_CASE_SCHEMA: dict[str, object] = {
         },
         "config_path": {"type": "string", "description": "Path to suitest.config.json"},
     },
-    "required": ["suite_id", "name"],
+    "required": ["name"],
 }
 
 _RUN_CASE_SCHEMA: dict[str, object] = {
