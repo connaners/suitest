@@ -485,7 +485,16 @@ _BROWSER_CLOSE_SCHEMA: dict[str, object] = {
         "save_as_case": {
             "type": "boolean",
             "default": False,
-            "description": "Save action history as a structured TCM test case",
+            "description": "Save action history as a structured TCM test case JSON file on disk",
+        },
+        "auto_publish": {
+            "type": "boolean",
+            "default": False,
+            "description": "Automatically publish recorded steps to Suitest TCM web platform",
+        },
+        "case_name": {
+            "type": "string",
+            "description": "Optional custom name for published test case",
         },
         "output_dir": {"type": "string", "default": "suitest-output/cases"},
     },

@@ -15,6 +15,7 @@ import concurrent.futures
 import contextlib
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -202,15 +203,75 @@ class InteractiveSessionManager:
         session.touch()
         return session
 
+    @staticmethod
+    def _format_steps(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Translate recorded interactive browser actions into standard TCM step definitions."""
+        steps: list[dict[str, Any]] = []
+        for idx, act in enumerate(actions, start=1):
+            action_type = act.get("action", "")
+            target = act.get("target", "")
+            val = act.get("value", "")
+            extra = act.get("extra") or {}
+
+            tool_name = "browser_click"
+            tool_args: dict[str, Any] = {}
+            step_action = f"Step {idx}: {action_type}"
+            step_expected = f"Successfully executed {action_type}"
+
+            if action_type == "navigate":
+                tool_name = "browser_navigate"
+                url = target or val
+                tool_args = {"url": url}
+                step_action = f"Navigate to {url}"
+                step_expected = "Page loads successfully"
+            elif action_type == "click":
+                tool_name = "browser_click"
+                tool_args = {"target": target}
+                step_action = f"Click element '{target}'"
+                step_expected = f"Element '{target}' is clicked"
+            elif action_type == "type":
+                tool_name = "browser_type"
+                tool_args = {"target": target, "text": val}
+                step_action = f"Type into '{target}'"
+                step_expected = "Input value populated"
+            elif action_type == "select":
+                tool_name = "browser_select_option"
+                tool_args = {"target": target, "values": [str(val)]}
+                step_action = f"Select option '{val}' in '{target}'"
+                step_expected = f"Option '{val}' selected"
+            elif action_type == "solve_captcha":
+                tool_name = "browser_solve_captcha"
+                tool_args = {
+                    "image_selector": extra.get("image_selector", target),
+                    "input_selector": extra.get("input_selector", val),
+                }
+                step_action = "Solve CAPTCHA challenge"
+                step_expected = "CAPTCHA resolved"
+
+            steps.append(
+                {
+                    "action": step_action,
+                    "expected": step_expected,
+                    "code": {"tool": tool_name, "arguments": tool_args},
+                    "mcp_provider": "playwright-mcp",
+                    "target_kind": "FE_WEB",
+                    "order": idx,
+                }
+            )
+        return steps
+
     def _close_session_impl(
         self,
         session_id: str,
         save_as_case: bool = False,
         output_dir: str = "suitest-output/cases",
-    ) -> tuple[list[dict[str, Any]], str]:
+        auto_publish: bool = False,
+        case_name: str = "",
+        **kwargs: Any,
+    ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
         session = self._sessions.pop(session_id, None)
         if not session:
-            return [], ""
+            return [], "", {}
 
         actions = [a.to_json() for a in session.action_history]
         session.close()
@@ -235,15 +296,46 @@ class InteractiveSessionManager:
             }
             Path(case_file).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-        return actions, case_file
+        meta: dict[str, Any] = {"session_id": session_id, "steps_count": len(actions)}
+        if auto_publish and actions:
+            from suitest_lifecycle.tools import create_test_case
+
+            tc_name = case_name or f"Interactive Test {session_id[:8]}"
+            tc_res = create_test_case(name=tc_name, steps=self._format_steps(actions), **kwargs)
+            pub_id = str((tc_res.get("data") or {}).get("public_id", "TC"))
+            web_base = (
+                (
+                    os.environ.get("SUITEST_WEB_URL")
+                    or os.environ.get("SUITEST_API_URL")
+                    or "http://localhost:5173"
+                )
+                .replace(":8000", ":5173")
+                .rstrip("/")
+            )
+            meta["auto_publish"] = True
+            meta["case_id"] = pub_id
+            meta["dashboard_url"] = f"{web_base}/cases/{pub_id}"
+
+        return actions, case_file, meta
 
     def close_session(
         self,
         session_id: str,
         save_as_case: bool = False,
         output_dir: str = "suitest-output/cases",
-    ) -> tuple[list[dict[str, Any]], str]:
-        return self._run(self._close_session_impl, session_id, save_as_case, output_dir)
+        auto_publish: bool = False,
+        case_name: str = "",
+        **kwargs: Any,
+    ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
+        return self._run(
+            self._close_session_impl,
+            session_id,
+            save_as_case,
+            output_dir,
+            auto_publish,
+            case_name,
+            **kwargs,
+        )
 
     def _close_all_impl(self) -> None:
         for sess in self._sessions.values():
@@ -655,22 +747,27 @@ def suitest_browser_close(
     session_id: str = "",
     save_as_case: bool = False,
     output_dir: str = "suitest-output/cases",
-    **_: Any,
+    auto_publish: bool = False,
+    case_name: str = "",
+    **kwargs: Any,
 ) -> dict[str, Any]:
-    """Close an active interactive browser session, optionally saving action trace."""
+    """Close an active interactive browser session, optionally saving action trace or auto-publishing to TCM."""
     if not session_id:
         return _envelope(False, "session_id is required", errors=["missing session_id"])
     try:
-        actions, case_file = _GLOBAL_MANAGER.close_session(
+        actions, case_file, meta = _GLOBAL_MANAGER.close_session(
             session_id,
             save_as_case=save_as_case,
             output_dir=output_dir,
+            auto_publish=auto_publish,
+            case_name=case_name,
+            **kwargs,
         )
         artifacts = [case_file] if case_file else []
         return _envelope(
             success=True,
             summary=f"Closed browser session '{session_id}' (recorded {len(actions)} actions)",
-            data={"session_id": session_id, "actions_count": len(actions)},
+            data={"session_id": session_id, "actions_count": len(actions), **meta},
             artifacts=artifacts,
         )
     except Exception as exc:
