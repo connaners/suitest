@@ -587,7 +587,8 @@ async def _auto_heal_hidden_or_collapsed_element(
     }"""
     if "intercepts pointer" in str(original_exc).lower():
         log.info("step_executor.auto_heal.wait_for_overlay", target=target)
-        for _ in range(10):
+
+        async def _poll_overlay(attempts_left: int) -> None:
             try:
                 chk = await invoker.invoke(
                     explicit_provider=explicit_provider,
@@ -597,10 +598,14 @@ async def _auto_heal_hidden_or_collapsed_element(
                 )
                 chk_res = (chk.output or {}).get("result") or {}
                 if isinstance(chk_res, dict) and not chk_res.get("overlayActive"):
-                    break
+                    return
             except Exception:
-                break
-            await asyncio.sleep(0.5)
+                return
+            if attempts_left > 0:
+                await asyncio.sleep(0.5)
+                await _poll_overlay(attempts_left - 1)
+
+        await _poll_overlay(10)
         return await invoker.invoke(
             explicit_provider=explicit_provider,
             tool=normalized_tool,
