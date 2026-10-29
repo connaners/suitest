@@ -478,29 +478,54 @@ def suitest_browser_click(
                             .accordion-collapse:not(.show),
                             [aria-expanded="false"],
                             details:not([open]),
-                            [data-state="closed"]
+                            [data-state="closed"],
+                            .tab-pane:not(.active),
+                            [data-ktwizard-type="step-content"]:not([data-ktwizard-state="current"])
                         `);
                         if (!container) return null;
-                        const parent = container.parentElement;
-                        const toggle = parent ? parent.querySelector(`
-                            .kt-menu__toggle,
-                            [data-bs-toggle="collapse"],
-                            [data-toggle="collapse"],
-                            .accordion-button.collapsed,
-                            summary,
-                            [aria-expanded="false"]
-                        `) : null;
-                        if (!toggle) return null;
+
                         let toggleSel = '';
-                        if (toggle.id) toggleSel = '#' + toggle.id;
-                        else if (toggle.className && typeof toggle.className === 'string') {
-                            const c = Array.from(toggle.classList).filter(x => !x.includes(':')).join('.');
-                            if (c) toggleSel = toggle.tagName.toLowerCase() + '.' + c;
+                        if (container.getAttribute('data-ktwizard-type') === 'step-content') {
+                            const allPanes = Array.from(document.querySelectorAll('[data-ktwizard-type="step-content"]'));
+                            const stepIdx = allPanes.indexOf(container);
+                            const allNavs = Array.from(document.querySelectorAll('[data-ktwizard-type="step"]'));
+                            if (stepIdx >= 0 && allNavs[stepIdx]) {
+                                const navEl = allNavs[stepIdx];
+                                const txt = (navEl.innerText || '').trim().slice(0, 30);
+                                toggleSel = '[data-ktwizard-type="step"]:has-text("' + txt + '")';
+                            }
                         }
-                        if (!toggleSel) toggleSel = toggle.tagName.toLowerCase();
-                        const txt = (toggle.innerText || '').trim().slice(0, 30);
-                        if (txt) toggleSel += ':has-text("' + txt + '")';
-                        return { toggleSelector: toggleSel };
+                        if (!toggleSel && container.classList.contains('tab-pane') && container.id) {
+                            const tabNav = document.querySelector('a[href="#' + container.id + '"], [data-bs-target="#' + container.id + '"], [data-target="#' + container.id + '"]');
+                            if (tabNav) {
+                                if (tabNav.id) toggleSel = '#' + tabNav.id;
+                                else if (tabNav.getAttribute('data-bs-target')) toggleSel = `[data-bs-target="${tabNav.getAttribute('data-bs-target')}"]`;
+                                else if (tabNav.getAttribute('data-target')) toggleSel = `[data-target="${tabNav.getAttribute('data-target')}"]`;
+                                else if (tabNav.getAttribute('href')) toggleSel = `a[href="${tabNav.getAttribute('href')}"]`;
+                                else toggleSel = '#' + container.id + '-tab, a[href="#' + container.id + '"]';
+                            }
+                        }
+                        if (!toggleSel) {
+                            const parent = container.parentElement;
+                            const toggle = parent ? parent.querySelector(`
+                                .kt-menu__toggle,
+                                [data-bs-toggle="collapse"],
+                                [data-toggle="collapse"],
+                                .accordion-button.collapsed,
+                                summary,
+                                [aria-expanded="false"]
+                            `) : null;
+                            if (!toggle) return null;
+                            if (toggle.id) toggleSel = '#' + toggle.id;
+                            else if (toggle.className && typeof toggle.className === 'string') {
+                                const c = Array.from(toggle.classList).filter(x => !x.includes(':')).join('.');
+                                if (c) toggleSel = toggle.tagName.toLowerCase() + '.' + c;
+                            }
+                            if (!toggleSel) toggleSel = toggle.tagName.toLowerCase();
+                            const txt = (toggle.innerText || '').trim().slice(0, 30);
+                            if (txt) toggleSel += ':has-text("' + txt + '")';
+                        }
+                        return toggleSel ? { toggleSelector: toggleSel } : null;
                     }""",
                     target,
                 )
