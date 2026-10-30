@@ -149,6 +149,115 @@ class InteractiveSession:
             self.browser.close()
 
 
+def _extract_session_target_url(
+    session: InteractiveSession | None,
+    actions: list[dict[str, Any]],
+    default_url: str = "",
+) -> str:
+    """Extract recorded target URL from active session or navigation history."""
+    if default_url:
+        return default_url
+    if session and getattr(session, "page", None):
+        with contextlib.suppress(Exception):
+            p_url = str(session.page.url or "")
+            if p_url and p_url.startswith(("http://", "https://")):
+                return p_url
+    for a in actions:
+        if a.get("action") == "navigate":
+            cand = str(
+                a.get("value") or a.get("target") or (a.get("extra") or {}).get("current_url") or ""
+            )
+            if cand and cand.startswith(("http://", "https://")):
+                return cand
+    return ""
+
+
+def _save_session_case_file(
+    session_id: str,
+    created_at: float,
+    actions: list[dict[str, Any]],
+    output_dir: str,
+) -> str:
+    """Persist session action trace into disk JSON case file."""
+    if not actions:
+        return ""
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    case_file = str(out_path / f"{session_id}.case.json")
+    sanitized_steps = []
+    for a in actions:
+        val = a.get("value", "")
+        if (
+            a.get("action") == "type"
+            and _is_sensitive_input(a.get("target", ""), extra=a.get("extra"), value=val)
+            and not (isinstance(val, str) and val.startswith("{{") and val.endswith("}}"))
+        ):
+            t_low = str(a.get("target", "")).lower()
+            val = "{{password}}" if ("pass" in t_low or "pwd" in t_low) else "{{secret}}"
+        sanitized_steps.append(
+            {
+                "order": a["order"],
+                "action": a["action"],
+                "target": a.get("target", ""),
+                "value": val,
+            }
+        )
+    payload = {
+        "session_id": session_id,
+        "recorded_at": created_at,
+        "steps": sanitized_steps,
+    }
+    Path(case_file).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return case_file
+
+
+def _auto_publish_session(
+    session_id: str,
+    steps: list[dict[str, Any]],
+    case_name: str = "",
+    target_url: str = "",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Auto-publish formatted steps to TCM web platform and return metadata."""
+    from suitest_lifecycle.tools import create_test_case
+
+    tc_name = case_name or f"Interactive Test {session_id[:8]}"
+    create_kwargs = dict(kwargs)
+    if target_url and "target_url" not in create_kwargs:
+        create_kwargs["target_url"] = target_url
+
+    try:
+        tc_res = create_test_case(name=tc_name, steps=steps, **create_kwargs)
+        if isinstance(tc_res, dict) and tc_res.get("success"):
+            raw_data = tc_res.get("data")
+            data_obj = raw_data if isinstance(raw_data, dict) else {}
+            pub_id = str(data_obj.get("public_id") or data_obj.get("publicId") or "TC")
+            web_base = (
+                (
+                    os.environ.get("SUITEST_WEB_URL")
+                    or os.environ.get("SUITEST_API_URL")
+                    or "http://localhost:5173"
+                )
+                .replace(":8000", ":5173")
+                .rstrip("/")
+            )
+            return {
+                "auto_publish": True,
+                "case_id": pub_id,
+                "dashboard_url": f"{web_base}/cases/{pub_id}",
+            }
+        err_msg = str(
+            (tc_res.get("summary") if isinstance(tc_res, dict) else "")
+            or "Failed to auto-publish test case to TCM"
+        )
+        errors = (
+            tc_res.get("errors") if isinstance(tc_res, dict) and tc_res.get("errors") else [err_msg]
+        )
+        return {"auto_publish": False, "publish_error": err_msg, "errors": errors}
+    except Exception as exc:
+        return {"auto_publish": False, "publish_error": str(exc), "errors": [str(exc)]}
+
+
 class InteractiveSessionManager:
     """Manages active interactive browser sessions with concurrency cap and TTL reaper."""
 
@@ -324,122 +433,32 @@ class InteractiveSessionManager:
                 f"Browser session '{session_id}' not found or has expired (TTL {int(self.DEFAULT_TTL)}s)."
             )
 
-        recorded_target_url = str(kwargs.get("target_url") or "")
-        if not recorded_target_url and getattr(session, "page", None):
-            with contextlib.suppress(Exception):
-                p_url = str(session.page.url or "")
-                if p_url and p_url.startswith(("http://", "https://")):
-                    recorded_target_url = p_url
-
         actions = [a.to_json() for a in session.action_history]
+        target_url = _extract_session_target_url(
+            session=session,
+            actions=actions,
+            default_url=str(kwargs.get("target_url") or ""),
+        )
+        created_at = session.created_at
         session.close()
 
-        if not recorded_target_url and actions:
-            for a in actions:
-                if a.get("action") == "navigate":
-                    cand = str(
-                        a.get("value")
-                        or a.get("target")
-                        or (a.get("extra") or {}).get("current_url")
-                        or ""
-                    )
-                    if cand and cand.startswith(("http://", "https://")):
-                        recorded_target_url = cand
-                        break
-
-        case_file = ""
-        if save_as_case and actions:
-            out_path = Path(output_dir)
-            out_path.mkdir(parents=True, exist_ok=True)
-            case_file = str(out_path / f"{session_id}.case.json")
-            payload = {
-                "session_id": session_id,
-                "recorded_at": session.created_at,
-                "steps": [
-                    {
-                        "order": a["order"],
-                        "action": a["action"],
-                        "target": a.get("target", ""),
-                        "value": (
-                            (
-                                a.get("value")
-                                if (
-                                    isinstance(a.get("value"), str)
-                                    and a.get("value", "").startswith("{{")
-                                    and a.get("value", "").endswith("}}")
-                                )
-                                else (
-                                    "{{password}}"
-                                    if (
-                                        "pass" in str(a.get("target", "")).lower()
-                                        or "pwd" in str(a.get("target", "")).lower()
-                                    )
-                                    else "{{secret}}"
-                                )
-                            )
-                            if (
-                                a.get("action") == "type"
-                                and _is_sensitive_input(
-                                    a.get("target", ""),
-                                    extra=a.get("extra"),
-                                    value=a.get("value", ""),
-                                )
-                            )
-                            else a.get("value", "")
-                        ),
-                    }
-                    for a in actions
-                ],
-            }
-            Path(case_file).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        case_file = (
+            _save_session_case_file(session_id, created_at, actions, output_dir)
+            if save_as_case
+            else ""
+        )
 
         meta: dict[str, Any] = {"session_id": session_id, "steps_count": len(actions)}
         if auto_publish and actions:
-            try:
-                from suitest_lifecycle.tools import create_test_case
+            pub_meta = _auto_publish_session(
+                session_id=session_id,
+                steps=self._format_steps(actions),
+                case_name=case_name,
+                target_url=target_url,
+                **kwargs,
+            )
+            meta.update(pub_meta)
 
-                tc_name = case_name or f"Interactive Test {session_id[:8]}"
-                create_kwargs = dict(kwargs)
-                if recorded_target_url and "target_url" not in create_kwargs:
-                    create_kwargs["target_url"] = recorded_target_url
-
-                tc_res = create_test_case(
-                    name=tc_name,
-                    steps=self._format_steps(actions),
-                    **create_kwargs,
-                )
-                if isinstance(tc_res, dict) and tc_res.get("success"):
-                    raw_data = tc_res.get("data")
-                    data_obj = raw_data if isinstance(raw_data, dict) else {}
-                    pub_id = str(data_obj.get("public_id") or data_obj.get("publicId") or "TC")
-                    web_base = (
-                        (
-                            os.environ.get("SUITEST_WEB_URL")
-                            or os.environ.get("SUITEST_API_URL")
-                            or "http://localhost:5173"
-                        )
-                        .replace(":8000", ":5173")
-                        .rstrip("/")
-                    )
-                    meta["auto_publish"] = True
-                    meta["case_id"] = pub_id
-                    meta["dashboard_url"] = f"{web_base}/cases/{pub_id}"
-                else:
-                    meta["auto_publish"] = False
-                    err_msg = str(
-                        (tc_res.get("summary") if isinstance(tc_res, dict) else "")
-                        or "Failed to auto-publish test case to TCM"
-                    )
-                    meta["publish_error"] = err_msg
-                    meta["errors"] = (
-                        tc_res.get("errors")
-                        if isinstance(tc_res, dict) and tc_res.get("errors")
-                        else [err_msg]
-                    )
-            except Exception as publish_exc:
-                meta["auto_publish"] = False
-                meta["publish_error"] = str(publish_exc)
-                meta["errors"] = [str(publish_exc)]
         return actions, case_file, meta
 
     def close_session(

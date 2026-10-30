@@ -561,6 +561,49 @@ async def _preflight_tcp_probe(
     return False, last_err
 
 
+_OVERLAY_CHECK_SCRIPT = """async (page) => {
+    return await page.evaluate(() => {
+        const overlay = document.querySelector(
+            '.blockUI, .blockOverlay, .spinner, .spinner-border, .loading, .modal-backdrop.show, [aria-busy="true"]'
+        );
+        if (!overlay) return { overlayActive: false };
+        const style = window.getComputedStyle(overlay);
+        const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+        return { overlayActive: isVisible };
+    });
+}"""
+
+
+async def _wait_for_transient_overlay(
+    invoker: McpInvoker,
+    explicit_provider: str | None,
+    ctx: InvokeContext,
+    attempts_left: int = 10,
+) -> bool:
+    count = max(0, min(int(attempts_left), 10))
+    if count <= 0:
+        return False
+    prov = (
+        str(explicit_provider).strip()
+        if explicit_provider and isinstance(explicit_provider, str)
+        else None
+    )
+    try:
+        chk = await invoker.invoke(
+            explicit_provider=prov,
+            tool="browser_run_code_unsafe",
+            arguments={"code": _OVERLAY_CHECK_SCRIPT},
+            ctx=ctx,
+        )
+        chk_res = (chk.output or {}).get("result") or {}
+        if isinstance(chk_res, dict) and not chk_res.get("overlayActive"):
+            return True
+    except Exception:
+        return True
+    await asyncio.sleep(0.5)
+    return await _wait_for_transient_overlay(invoker, prov, ctx, count - 1)
+
+
 async def _auto_heal_hidden_or_collapsed_element(
     *,
     invoker: McpInvoker,
@@ -574,38 +617,15 @@ async def _auto_heal_hidden_or_collapsed_element(
     target = str(clean_invoke_args.get("target") or clean_invoke_args.get("selector") or "")
     if not target:
         raise original_exc
-    overlay_check_script = """async (page) => {
-        return await page.evaluate(() => {
-            const overlay = document.querySelector(
-                '.blockUI, .blockOverlay, .spinner, .spinner-border, .loading, .modal-backdrop.show, [aria-busy="true"]'
-            );
-            if (!overlay) return { overlayActive: false };
-            const style = window.getComputedStyle(overlay);
-            const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-            return { overlayActive: isVisible };
-        });
-    }"""
     if "intercepts pointer" in str(original_exc).lower():
         log.info("step_executor.auto_heal.wait_for_overlay", target=target)
 
-        async def _poll_overlay(attempts_left: int) -> None:
-            try:
-                chk = await invoker.invoke(
-                    explicit_provider=explicit_provider,
-                    tool="browser_run_code_unsafe",
-                    arguments={"code": overlay_check_script},
-                    ctx=ctx,
-                )
-                chk_res = (chk.output or {}).get("result") or {}
-                if isinstance(chk_res, dict) and not chk_res.get("overlayActive"):
-                    return
-            except Exception:
-                return
-            if attempts_left > 0:
-                await asyncio.sleep(0.5)
-                await _poll_overlay(attempts_left - 1)
-
-        await _poll_overlay(10)
+        await _wait_for_transient_overlay(
+            invoker=invoker,
+            explicit_provider=explicit_provider,
+            ctx=ctx,
+            attempts_left=10,
+        )
         return await invoker.invoke(
             explicit_provider=explicit_provider,
             tool=normalized_tool,
