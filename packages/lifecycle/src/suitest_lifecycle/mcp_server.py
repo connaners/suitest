@@ -508,6 +508,18 @@ _BROWSER_CLOSE_SCHEMA: dict[str, object] = {
             "type": "string",
             "description": "Optional custom name for published test case",
         },
+        "target_url": {
+            "type": "string",
+            "description": "Optional target URL to resolve project and suite during auto-publish",
+        },
+        "project_id": {
+            "type": "string",
+            "description": "Optional target project ID in TCM",
+        },
+        "suite_id": {
+            "type": "string",
+            "description": "Optional target suite ID in TCM",
+        },
         "output_dir": {"type": "string", "default": "suitest-output/cases"},
     },
     "required": ["session_id"],

@@ -22,7 +22,10 @@ from typing import Any
 from suitest_lifecycle.blackbox.mcp import BLACKBOX_TOOLS
 from suitest_lifecycle.config import Config, ConfigError, load_config
 from suitest_lifecycle.fixture_generator import suitest_create_dummy_file
-from suitest_lifecycle.interactive_browser import INTERACTIVE_BROWSER_TOOLS
+from suitest_lifecycle.interactive_browser import (
+    INTERACTIVE_BROWSER_TOOLS,
+    _is_sensitive_input,
+)
 from suitest_lifecycle.models import Mode
 from suitest_lifecycle.orchestrator import LifecycleResult, generate_only, run_lifecycle
 from suitest_lifecycle.paths import build_paths
@@ -857,14 +860,17 @@ def _resolve_suite_and_project(
         host = (target_url or "general-web").split("//")[-1].split("/")[0].removeprefix("www.")
         slug = re.sub(r"[^a-z0-9]+", "-", host.lower()).strip("-")[:64] or "general-web"
         proj = client.resolve_project(project_slug=slug, project_name=host or "General Web")
-        p_id = str(proj.get("id") or "")
-
+        p_id = str(proj.get("id") or "") if isinstance(proj, dict) else ""
     if not p_id:
         return "", ""
 
     if not s_id:
         existing_suites = client.list_suites(project_id=p_id)
-        if existing_suites and isinstance(existing_suites, list):
+        if (
+            existing_suites
+            and isinstance(existing_suites, list)
+            and isinstance(existing_suites[0], dict)
+        ):
             s_id = str(existing_suites[0].get("id") or "")
         else:
             if hasattr(client, "create_suite"):
@@ -877,6 +883,34 @@ def _resolve_suite_and_project(
             s_id = str(new_suite.get("id") or "") if isinstance(new_suite, dict) else ""
 
     return p_id, s_id
+
+
+_PROVEN_TOGGLE_RE = re.compile(
+    r"(?:"
+    r"accordion|"
+    r"collapse|"
+    r"toggle|"
+    r"\[aria-expanded|"
+    r"\[aria-haspopup|"
+    r"\[data-(?:bs-)?toggle|"
+    r"\[data-(?:bs-)?target|"
+    r"\[data-ktwizard-type|"
+    r"\[data-state=[\"'](?:open|closed)[\"']|"
+    r"kt-menu__toggle|"
+    r"\bsummary\b|"
+    r"\bdetails\b|"
+    r"\[role=[\"'](?:tab|switch|checkbox|menuitemcheckbox)[\"']|"
+    r"input\[type=[\"']checkbox[\"']"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_proven_redundant_toggle(target: str) -> bool:
+    """Return True only if the target is a proven collapsible/accordion/toggle control."""
+    if not target:
+        return False
+    return bool(_PROVEN_TOGGLE_RE.search(target))
 
 
 def _prune_redundant_step_toggles(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -901,19 +935,27 @@ def _prune_redundant_step_toggles(steps: list[dict[str, Any]]) -> list[dict[str,
         t = str(parsed.get("tool") or "")
         args = parsed.get("arguments")
         args_dict = args if isinstance(args, dict) else {}
-        target = str(args_dict.get("target") or args_dict.get("selector") or "")
+        target = str(args_dict.get("target") or args_dict.get("selector") or "").strip()
         if (
             t in ("browser_click", "browser.click")
             and prev_tool in ("browser_click", "browser.click")
             and target
             and target == prev_target
+            and _is_proven_redundant_toggle(target)
         ):
-            # Skip consecutive duplicate click that re-collapses state
+            # Skip consecutive duplicate click that re-collapses state on a proven toggle,
+            # and reset tracker to prevent trailing absorption of subsequent clicks
+            prev_tool = ""
+            prev_target = ""
             continue
 
         cleaned.append(s)
         prev_tool = t or ""
         prev_target = target
+
+    for idx, s in enumerate(cleaned, start=1):
+        if "order" in s and isinstance(s["order"], int):
+            s["order"] = idx
 
     return cleaned
 
@@ -941,6 +983,19 @@ def create_test_case(
     if not trimmed_name:
         return _envelope(False, "name is required")
     target_url = str(kwargs.get("target_url") or "")
+    if not target_url and steps:
+        for s in steps:
+            cd = s.get("code")
+            if isinstance(cd, str):
+                try:
+                    cd = json.loads(cd)
+                except Exception:
+                    cd = {}
+            if isinstance(cd, dict) and cd.get("tool") in ("browser_navigate", "browser.navigate"):
+                cand = str((cd.get("arguments") or {}).get("url") or "")
+                if cand.startswith(("http://", "https://")):
+                    target_url = cand
+                    break
     project_id = str(kwargs.get("project_id") or "")
     resolved_suite_id = (suite_id or "").strip()
 
@@ -968,6 +1023,15 @@ def create_test_case(
                 elif t in ("browser_type", "browser.type"):
                     tgt = args.get("target") or args.get("selector") or ""
                     txt = args.get("text", "")
+                    if _is_sensitive_input(tgt, value=txt) and not (
+                        isinstance(txt, str) and txt.startswith("{{") and txt.endswith("}}")
+                    ):
+                        var_name = (
+                            "password"
+                            if ("pass" in str(tgt).lower() or "pwd" in str(tgt).lower())
+                            else "secret"
+                        )
+                        txt = f"{{{{{var_name}}}}}"
                     step_body_lines.append(f"    await page.locator({tgt!r}).fill({txt!r})")
                 elif t in ("browser_click", "browser.click"):
                     tgt = args.get("target") or args.get("selector") or ""
@@ -1063,6 +1127,19 @@ def create_test_case(
                             c_args["file"] = c_args.pop("path")
                         if "selector" in c_args and "target" not in c_args:
                             c_args["target"] = c_args.pop("selector")
+                    elif tool_name in ("browser_type", "browser.type"):
+                        c_args = cd.setdefault("arguments", {})
+                        tgt = c_args.get("target") or c_args.get("selector") or ""
+                        txt = c_args.get("text", "")
+                        if _is_sensitive_input(tgt, value=txt) and not (
+                            isinstance(txt, str) and txt.startswith("{{") and txt.endswith("}}")
+                        ):
+                            var_name = (
+                                "password"
+                                if ("pass" in str(tgt).lower() or "pwd" in str(tgt).lower())
+                                else "secret"
+                            )
+                            c_args["text"] = f"{{{{{var_name}}}}}"
                 formatted_steps.append(
                     {
                         "action": s.get("action", f"Step {idx + 1}"),
@@ -1085,7 +1162,11 @@ def create_test_case(
                 "tags": tags or [],
             }
             res = client.create_case(payload)
-            public_id = res.get("public_id") or res.get("publicId") or res.get("id") or "TC"
+            public_id = (
+                (res.get("public_id") or res.get("publicId") or res.get("id") or "TC")
+                if isinstance(res, dict)
+                else "TC"
+            )
             artifacts = [str(created_file)] if created_file and created_file.exists() else []
             return _envelope(
                 True,

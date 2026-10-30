@@ -16,11 +16,12 @@ import contextlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     from suitest_shared.ocr import (
@@ -34,6 +35,40 @@ except ImportError:
 from suitest_lifecycle.tool_result import envelope as _envelope
 
 logger = logging.getLogger(__name__)
+
+_SENSITIVE_INPUT_RE = re.compile(
+    r"(?:"
+    r"type=[\"']password[\"']|"
+    r"autocomplete=[\"'](?:current-|new-)?password[\"']|"
+    r"password|"
+    r"passwd|"
+    r"(?<![a-zA-Z])pass(?![a-zA-Z])|"
+    r"(?<![a-zA-Z])pwd(?![a-zA-Z])|"
+    r"pin|"
+    r"cvv|"
+    r"secret|"
+    r"token|"
+    r"api[-_]?key|"
+    r"auth[-_]?token"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_sensitive_input(
+    target: str = "",
+    extra: dict[str, Any] | None = None,
+    value: str = "",
+) -> bool:
+    """Determine whether an input represents sensitive data (e.g. password/credentials)."""
+    if extra and (
+        extra.get("is_secret")
+        or str(extra.get("input_type") or "").lower() == "password"
+        or str(extra.get("type") or "").lower() == "password"
+    ):
+        return True
+    t_lower = (target or "").lower()
+    return bool(_SENSITIVE_INPUT_RE.search(t_lower))
 
 
 @dataclass
@@ -184,7 +219,9 @@ class InteractiveSessionManager:
         viewport: dict[str, int] | None = None,
         storage_state_path: str = "",
     ) -> str:
-        return self._run(self._open_session_impl, headless, viewport, storage_state_path)
+        return cast(
+            "str", self._run(self._open_session_impl, headless, viewport, storage_state_path)
+        )
 
     def run_on_session(self, session_id: str, fn: Any) -> Any:
         def _wrapper() -> Any:
@@ -231,9 +268,21 @@ class InteractiveSessionManager:
                 step_expected = f"Element '{target}' is clicked"
             elif action_type == "type":
                 tool_name = "browser_type"
-                tool_args = {"target": target, "text": val}
-                step_action = f"Type into '{target}'"
-                step_expected = "Input value populated"
+                if _is_sensitive_input(target, extra=extra, value=val):
+                    t_lower = target.lower()
+                    var_name = "password" if ("pass" in t_lower or "pwd" in t_lower) else "secret"
+                    secret_ref = (
+                        val
+                        if (isinstance(val, str) and val.startswith("{{") and val.endswith("}}"))
+                        else f"{{{{{var_name}}}}}"
+                    )
+                    tool_args = {"target": target, "text": secret_ref}
+                    step_action = f"Type secret into '{target}'"
+                    step_expected = "Sensitive input populated via secret reference"
+                else:
+                    tool_args = {"target": target, "text": val}
+                    step_action = f"Type into '{target}'"
+                    step_expected = "Input value populated"
             elif action_type == "select":
                 tool_name = "browser_select_option"
                 tool_args = {"target": target, "values": [str(val)]}
@@ -271,10 +320,32 @@ class InteractiveSessionManager:
     ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
         session = self._sessions.pop(session_id, None)
         if not session:
-            return [], "", {}
+            raise ValueError(
+                f"Browser session '{session_id}' not found or has expired (TTL {int(self.DEFAULT_TTL)}s)."
+            )
+
+        recorded_target_url = str(kwargs.get("target_url") or "")
+        if not recorded_target_url and getattr(session, "page", None):
+            with contextlib.suppress(Exception):
+                p_url = str(session.page.url or "")
+                if p_url and p_url.startswith(("http://", "https://")):
+                    recorded_target_url = p_url
 
         actions = [a.to_json() for a in session.action_history]
         session.close()
+
+        if not recorded_target_url and actions:
+            for a in actions:
+                if a.get("action") == "navigate":
+                    cand = str(
+                        a.get("value")
+                        or a.get("target")
+                        or (a.get("extra") or {}).get("current_url")
+                        or ""
+                    )
+                    if cand and cand.startswith(("http://", "https://")):
+                        recorded_target_url = cand
+                        break
 
         case_file = ""
         if save_as_case and actions:
@@ -289,7 +360,33 @@ class InteractiveSessionManager:
                         "order": a["order"],
                         "action": a["action"],
                         "target": a.get("target", ""),
-                        "value": a.get("value", ""),
+                        "value": (
+                            (
+                                a.get("value")
+                                if (
+                                    isinstance(a.get("value"), str)
+                                    and a.get("value", "").startswith("{{")
+                                    and a.get("value", "").endswith("}}")
+                                )
+                                else (
+                                    "{{password}}"
+                                    if (
+                                        "pass" in str(a.get("target", "")).lower()
+                                        or "pwd" in str(a.get("target", "")).lower()
+                                    )
+                                    else "{{secret}}"
+                                )
+                            )
+                            if (
+                                a.get("action") == "type"
+                                and _is_sensitive_input(
+                                    a.get("target", ""),
+                                    extra=a.get("extra"),
+                                    value=a.get("value", ""),
+                                )
+                            )
+                            else a.get("value", "")
+                        ),
                     }
                     for a in actions
                 ],
@@ -298,24 +395,51 @@ class InteractiveSessionManager:
 
         meta: dict[str, Any] = {"session_id": session_id, "steps_count": len(actions)}
         if auto_publish and actions:
-            from suitest_lifecycle.tools import create_test_case
+            try:
+                from suitest_lifecycle.tools import create_test_case
 
-            tc_name = case_name or f"Interactive Test {session_id[:8]}"
-            tc_res = create_test_case(name=tc_name, steps=self._format_steps(actions), **kwargs)
-            pub_id = str((tc_res.get("data") or {}).get("public_id", "TC"))
-            web_base = (
-                (
-                    os.environ.get("SUITEST_WEB_URL")
-                    or os.environ.get("SUITEST_API_URL")
-                    or "http://localhost:5173"
+                tc_name = case_name or f"Interactive Test {session_id[:8]}"
+                create_kwargs = dict(kwargs)
+                if recorded_target_url and "target_url" not in create_kwargs:
+                    create_kwargs["target_url"] = recorded_target_url
+
+                tc_res = create_test_case(
+                    name=tc_name,
+                    steps=self._format_steps(actions),
+                    **create_kwargs,
                 )
-                .replace(":8000", ":5173")
-                .rstrip("/")
-            )
-            meta["auto_publish"] = True
-            meta["case_id"] = pub_id
-            meta["dashboard_url"] = f"{web_base}/cases/{pub_id}"
-
+                if isinstance(tc_res, dict) and tc_res.get("success"):
+                    raw_data = tc_res.get("data")
+                    data_obj = raw_data if isinstance(raw_data, dict) else {}
+                    pub_id = str(data_obj.get("public_id") or data_obj.get("publicId") or "TC")
+                    web_base = (
+                        (
+                            os.environ.get("SUITEST_WEB_URL")
+                            or os.environ.get("SUITEST_API_URL")
+                            or "http://localhost:5173"
+                        )
+                        .replace(":8000", ":5173")
+                        .rstrip("/")
+                    )
+                    meta["auto_publish"] = True
+                    meta["case_id"] = pub_id
+                    meta["dashboard_url"] = f"{web_base}/cases/{pub_id}"
+                else:
+                    meta["auto_publish"] = False
+                    err_msg = str(
+                        (tc_res.get("summary") if isinstance(tc_res, dict) else "")
+                        or "Failed to auto-publish test case to TCM"
+                    )
+                    meta["publish_error"] = err_msg
+                    meta["errors"] = (
+                        tc_res.get("errors")
+                        if isinstance(tc_res, dict) and tc_res.get("errors")
+                        else [err_msg]
+                    )
+            except Exception as publish_exc:
+                meta["auto_publish"] = False
+                meta["publish_error"] = str(publish_exc)
+                meta["errors"] = [str(publish_exc)]
         return actions, case_file, meta
 
     def close_session(
@@ -327,14 +451,17 @@ class InteractiveSessionManager:
         case_name: str = "",
         **kwargs: Any,
     ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
-        return self._run(
-            self._close_session_impl,
-            session_id,
-            save_as_case,
-            output_dir,
-            auto_publish,
-            case_name,
-            **kwargs,
+        return cast(
+            "tuple[list[dict[str, Any]], str, dict[str, Any]]",
+            self._run(
+                self._close_session_impl,
+                session_id,
+                save_as_case,
+                output_dir,
+                auto_publish,
+                case_name,
+                **kwargs,
+            ),
         )
 
     def _close_all_impl(self) -> None:
@@ -602,8 +729,23 @@ def suitest_browser_type(
             if hasattr(loc, "first"):
                 loc = loc.first
             loc.wait_for(state="visible", timeout=timeout_ms)
+            inp_type = ""
+            with contextlib.suppress(Exception):
+                inp_type = str(loc.get_attribute("type") or "")
             loc.fill(text)
-            sess.record_action("type", target=target, value=text)
+            extra_info: dict[str, Any] = {"input_type": inp_type}
+            if _is_sensitive_input(target, extra=extra_info, value=text):
+                t_lower = target.lower()
+                var_name = "password" if ("pass" in t_lower or "pwd" in t_lower) else "secret"
+                stored_val = (
+                    text
+                    if (isinstance(text, str) and text.startswith("{{") and text.endswith("}}"))
+                    else f"{{{{{var_name}}}}}"
+                )
+                extra_info["is_secret"] = True
+                sess.record_action("type", target=target, value=stored_val, **extra_info)
+            else:
+                sess.record_action("type", target=target, value=text, **extra_info)
 
         _GLOBAL_MANAGER.run_on_session(session_id, _type)
         return _envelope(
@@ -799,6 +941,16 @@ def suitest_browser_close(
             **kwargs,
         )
         artifacts = [case_file] if case_file else []
+        if auto_publish and not meta.get("auto_publish", False):
+            err_msg = meta.get("publish_error", "Failed to auto-publish test case to TCM")
+            errors = meta.get("errors") or [err_msg]
+            return _envelope(
+                success=False,
+                summary=f"Closed browser session '{session_id}' but auto-publish failed: {err_msg}",
+                data={"session_id": session_id, "actions_count": len(actions), **meta},
+                errors=errors,
+                artifacts=artifacts,
+            )
         return _envelope(
             success=True,
             summary=f"Closed browser session '{session_id}' (recorded {len(actions)} actions)",
